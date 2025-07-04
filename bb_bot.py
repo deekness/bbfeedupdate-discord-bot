@@ -416,6 +416,165 @@ class BBDiscordBot(commands.Bot):
         description = update.description[:2048] if len(update.description) <= 2048 else update.description[:2045] + "..."
         
         embed = discord.Embed(
+            title="📊 Big Brother Updates Summary (Test)",
+            description=f"**{len(mock_updates)} total updates** (simulated data)",
+            color=0x3498db,
+            timestamp=datetime.now()
+        )
+        
+        for category, cat_updates in categories.items():
+            top_updates = sorted(cat_updates, 
+                               key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                               reverse=True)[:3]
+            
+            summary_text = "\n".join([f"• {update.title}" for update in top_updates])
+            
+            embed.add_field(
+                name=f"{category} ({len(cat_updates)} updates)",
+                value=summary_text or "No updates",
+                inline=False
+            )
+        
+        embed.set_footer(text="This is a test summary with mock data")
+        await ctx.send(embed=embed)
+    
+    @commands.command(name='testfeed')
+    async def test_feed_parsing(self, ctx):
+        """Test RSS feed parsing (if available)"""
+        
+        try:
+            await ctx.send("🔍 Testing RSS feed connection...")
+            
+            feed = feedparser.parse(self.rss_url)
+            
+            embed = discord.Embed(
+                title="📡 RSS Feed Test Results",
+                color=0x2ecc71 if feed.entries else 0xe74c3c,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(name="Feed URL", value=self.rss_url, inline=False)
+            embed.add_field(name="Feed Title", value=feed.feed.get('title', 'No title'), inline=True)
+            embed.add_field(name="Total Entries", value=str(len(feed.entries)), inline=True)
+            
+            if feed.entries:
+                embed.add_field(name="Status", value="✅ Feed accessible", inline=True)
+                
+                sample_entries = feed.entries[:3]
+                for i, entry in enumerate(sample_entries, 1):
+                    title = entry.get('title', 'No title')[:100]
+                    description = entry.get('description', 'No description')[:150]
+                    
+                    embed.add_field(
+                        name=f"Sample Entry #{i}",
+                        value=f"**Title:** {title}...\n**Description:** {description}...",
+                        inline=False
+                    )
+            else:
+                embed.add_field(name="Status", value="❌ No entries found", inline=True)
+                embed.add_field(name="Note", value="This is normal when Big Brother is not currently airing", inline=False)
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            error_embed = discord.Embed(
+                title="❌ RSS Feed Test Failed",
+                description=f"Error: {str(e)}",
+                color=0xe74c3c,
+                timestamp=datetime.now()
+            )
+            await ctx.send(embed=error_embed)
+    
+    @commands.command(name='testhelp')
+    async def test_help(self, ctx):
+        """Show all available test commands"""
+        
+        embed = discord.Embed(
+            title="🧪 Big Brother Bot Test Commands",
+            description="Test the AI analysis features before Big Brother season starts",
+            color=0x9b59b6
+        )
+        
+        embed.add_field(
+            name="!bbtestanalyzer",
+            value="Test AI analysis with sample Big Brother updates",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="!bbtestembeds", 
+            value="See how different update types will look in Discord",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="!bbtestsummary",
+            value="Test summary generation with mock data",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="!bbtestfeed",
+            value="Test RSS feed connection and parsing",
+            inline=False
+        )
+        
+        embed.set_footer(text="These commands work without needing live Big Brother updates!")
+        
+        await ctx.send(embed=embed)
+
+def main():
+    """Main function to run the bot"""
+    try:
+        bot = BBDiscordBot()
+        
+        @bot.event
+        async def on_command_error(ctx, error):
+            if isinstance(error, commands.MissingPermissions):
+                await ctx.send("You don't have permission to use this command.")
+            elif isinstance(error, commands.CommandNotFound):
+                await ctx.send("Command not found. Use `!bbcommands` or `!bbtesthelp` for available commands.")
+            else:
+                logger.error(f"Command error: {error}")
+                await ctx.send("An error occurred while processing the command.")
+        
+        @bot.command(name='commands')
+        async def commands_help(ctx):
+            """Show main bot commands"""
+            embed = discord.Embed(
+                title="🏠 Big Brother Bot Commands",
+                description="Monitor Jokers Updates RSS feed with intelligent analysis",
+                color=0x3498db
+            )
+            
+            embed.add_field(name="**Main Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
+            embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates (default: 24 hours)", inline=False)
+            embed.add_field(name="!bbstatus", value="Show bot status and performance metrics", inline=False)
+            embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
+            
+            embed.add_field(name="**Test Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
+            embed.add_field(name="!bbtesthelp", value="Show all test commands for trying out AI features", inline=False)
+            embed.add_field(name="!bbtestanalyzer", value="Test AI analysis with sample updates", inline=False)
+            embed.add_field(name="!bbtestembeds", value="See how updates will look in Discord", inline=False)
+            
+            embed.set_footer(text="Use test commands to try out features before Big Brother season starts!")
+            
+            await ctx.send(embed=embed)
+        
+        bot_token = bot.config.get('bot_token')
+        if not bot_token:
+            logger.error("No bot token found!")
+            return
+        
+        logger.info("Starting Big Brother Discord Bot...")
+        bot.run(bot_token, reconnect=True)
+        
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+        logger.critical(traceback.format_exc())
+
+if __name__ == "__main__":
+    main()Embed(
             title=title,
             description=description,
             color=color,
@@ -599,49 +758,138 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error generating status: {e}")
             await ctx.send("Error generating status.")
-
-def main():
-    """Main function to run the bot"""
-    try:
-        bot = BBDiscordBot()
+    
+    # TEST COMMANDS - These work without live Big Brother updates
+    @commands.command(name='testanalyzer')
+    async def test_analyzer(self, ctx):
+        """Test the AI analyzer with sample Big Brother updates"""
         
-        @bot.event
-        async def on_command_error(ctx, error):
-            if isinstance(error, commands.MissingPermissions):
-                await ctx.send("You don't have permission to use this command.")
-            elif isinstance(error, commands.CommandNotFound):
-                await ctx.send("Command not found. Use `!bbcommands` for available commands.")
-            else:
-                logger.error(f"Command error: {error}")
-                await ctx.send("An error occurred while processing the command.")
+        sample_updates = [
+            {
+                "title": "HOH Competition Results - Week 3",
+                "description": "Sarah wins Head of Household competition after intense endurance challenge. She's already talking about backdooring Michael who has been getting too close to everyone. The house is buzzing with speculation about nominations.",
+                "author": "BBUpdater1"
+            },
+            {
+                "title": "Late Night Strategy Talk",
+                "description": "Alliance meeting in the backyard between Sarah, Jessica, and David. They're planning to nominate Michael and Lisa, with Michael being the real target. They want to keep the backdoor plan secret until after veto ceremony.",
+                "author": "NightOwlWatcher"
+            },
+            {
+                "title": "Showmance Alert",
+                "description": "Things are heating up between Jake and Amanda. They were spotted cuddling in the hammock and had a long romantic conversation under the stars. Other houseguests are starting to notice their connection.",
+                "author": "LoveWatcher"
+            },
+            {
+                "title": "Kitchen Blowup",
+                "description": "Huge argument between Lisa and Michael over dirty dishes. Lisa called Michael out for being messy and not doing his share. Michael got defensive and things escalated quickly with other houseguests taking sides.",
+                "author": "DramaAlert"
+            },
+            {
+                "title": "Power of Veto Competition",
+                "description": "Michael wins the Power of Veto in a puzzle competition, completely ruining Sarah's backdoor plan. The house dynamics are about to shift dramatically as Michael now has the power to save himself.",
+                "author": "CompWatcher"
+            }
+        ]
         
-        @bot.command(name='commands')
-        async def commands_help(ctx):
-            """Show available commands"""
-            embed = discord.Embed(
-                title="Big Brother Bot Commands",
-                description="Monitor Jokers Updates RSS feed with intelligent analysis",
-                color=0x3498db
+        embed = discord.Embed(
+            title="🧪 AI Analyzer Test Results",
+            description="Testing Big Brother update analysis with sample data",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        for i, sample in enumerate(sample_updates, 1):
+            mock_update = BBUpdate(
+                title=sample["title"],
+                description=sample["description"],
+                link=f"https://example.com/update{i}",
+                pub_date=datetime.now(),
+                content_hash=f"test_hash_{i}",
+                author=sample["author"]
             )
             
-            embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
-            embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
-            embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
-            embed.add_field(name="!bbcommands", value="Show this help message", inline=False)
+            categories = self.analyzer.categorize_update(mock_update)
+            importance = self.analyzer.analyze_strategic_importance(mock_update)
+            houseguests = self.analyzer.extract_houseguests(f"{mock_update.title} {mock_update.description}")
             
-            await ctx.send(embed=embed)
+            analysis = []
+            analysis.append(f"**Categories:** {' | '.join(categories)}")
+            analysis.append(f"**Importance:** {'⭐' * importance} ({importance}/10)")
+            if houseguests:
+                analysis.append(f"**Houseguests:** {', '.join(houseguests[:3])}")
+            
+            embed.add_field(
+                name=f"#{i}: {sample['title'][:50]}...",
+                value="\n".join(analysis),
+                inline=False
+            )
         
-        bot_token = bot.config.get('bot_token')
-        if not bot_token:
-            logger.error("No bot token found!")
-            return
+        await ctx.send(embed=embed)
+    
+    @commands.command(name='testembeds')
+    async def test_embeds(self, ctx):
+        """Test how Discord embeds will look for different update types"""
         
-        logger.info("Starting Big Brother Discord Bot...")
-        bot.run(bot_token, reconnect=True)
+        strategic_update = BBUpdate(
+            title="BREAKING: Massive Backdoor Plan Revealed",
+            description="Sarah wins HOH and immediately starts planning to backdoor Michael. She's been building this plan for weeks with her secret alliance. Jessica and David are fully on board. They plan to nominate pawns initially, then use veto ceremony to put Michael on the block. This could completely flip the house dynamics and break up the strongest duo.",
+            link="https://jokersupdates.com/strategic-update",
+            pub_date=datetime.now(),
+            content_hash="strategic_test",
+            author="StrategyWatcher"
+        )
         
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        logger.critical(traceback.format_exc())
-
-if __name__ == "__main__":
-    main()
+        strategic_embed = self.create_update_embed(strategic_update)
+        await ctx.send("**🎯 High-Stakes Strategic Update Example:**", embed=strategic_embed)
+        
+        await asyncio.sleep(2)
+        
+        drama_update = BBUpdate(
+            title="Kitchen Confrontation Escalates",
+            description="Lisa and Michael's argument about dishes turned into a house-wide conflict. Lisa accused Michael of being lazy and entitled. Michael fired back calling Lisa controlling and dramatic. Other houseguests are picking sides with Jessica backing Lisa and Jake defending Michael. The tension is thick and this could affect upcoming votes.",
+            link="https://jokersupdates.com/drama-update",
+            pub_date=datetime.now(),
+            content_hash="drama_test",
+            author="DramaAlert"
+        )
+        
+        drama_embed = self.create_update_embed(drama_update)
+        await ctx.send("**💥 Drama Update Example:**", embed=drama_embed)
+        
+        await asyncio.sleep(2)
+        
+        romance_update = BBUpdate(
+            title="Showmance Heating Up",
+            description="Jake and Amanda's relationship is getting serious. They spent the entire evening talking privately in the backyard, sharing personal stories and getting very cozy. Other houseguests are starting to notice their connection. Amanda mentioned feeling 'butterflies' when talking to the cameras. This showmance could become a powerful duo or a big target.",
+            link="https://jokersupdates.com/romance-update",
+            pub_date=datetime.now(),
+            content_hash="romance_test",
+            author="LoveWatcher"
+        )
+        
+        romance_embed = self.create_update_embed(romance_update)
+        await ctx.send("**💕 Romance Update Example:**", embed=romance_embed)
+    
+    @commands.command(name='testsummary')
+    async def test_summary(self, ctx):
+        """Test the summary generation with mock data"""
+        
+        mock_updates = [
+            BBUpdate("HOH Competition Results", "Sarah wins endurance challenge, planning backdoor strategy", "https://example.com/1", datetime.now(), "hash1", "User1"),
+            BBUpdate("Veto Competition", "Michael wins veto, saves himself from backdoor plan", "https://example.com/2", datetime.now(), "hash2", "User2"),
+            BBUpdate("Alliance Meeting", "Secret alliance discusses new targets after veto win", "https://example.com/3", datetime.now(), "hash3", "User3"),
+            BBUpdate("Kitchen Drama", "Lisa and Michael argue about house responsibilities", "https://example.com/4", datetime.now(), "hash4", "User4"),
+            BBUpdate("Showmance Update", "Jake and Amanda getting closer, other houseguests notice", "https://example.com/5", datetime.now(), "hash5", "User5"),
+            BBUpdate("Late Night Strategy", "Jessica and David plan their next moves", "https://example.com/6", datetime.now(), "hash6", "User6"),
+        ]
+        
+        categories = {}
+        for update in mock_updates:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append(update)
+        
+        embed = discord.
