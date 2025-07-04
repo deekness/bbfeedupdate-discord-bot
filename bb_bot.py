@@ -9,7 +9,7 @@ import os
 import sys
 import signal
 from datetime import datetime, timedelta
-from typing import List, Dict, Set, Tuple
+from typing import List, Dict, Set
 import logging
 from dataclasses import dataclass
 import json
@@ -19,8 +19,6 @@ from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from collections import defaultdict, Counter
-import statistics
 
 # Configure comprehensive logging
 def setup_logging():
@@ -70,13 +68,7 @@ class Config:
             "heartbeat_interval": 300,
             "max_update_age_hours": 168,
             "enable_auto_restart": True,
-            "max_consecutive_errors": 10,
-            "current_season": 27,
-            "bb27_houseguests": [
-                "Angela", "Tucker", "Makensy", "Cam", "Chelsie", 
-                "Rubina", "Kimo", "Leah", "Quinn", "Joseph",
-                "T'Kor", "Cedric", "Brooklyn", "Kenney", "Lisa"
-            ]
+            "max_consecutive_errors": 10
         }
         self.config = self.load_config()
     
@@ -93,13 +85,7 @@ class Config:
             "heartbeat_interval": int(os.getenv('HEARTBEAT_INTERVAL', '300')),
             "max_update_age_hours": int(os.getenv('MAX_UPDATE_AGE_HOURS', '168')),
             "enable_auto_restart": os.getenv('ENABLE_AUTO_RESTART', 'true').lower() == 'true',
-            "max_consecutive_errors": int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10')),
-            "current_season": int(os.getenv('CURRENT_SEASON', '27')),
-            "bb27_houseguests": [
-                "Angela", "Tucker", "Makensy", "Cam", "Chelsie", 
-                "Rubina", "Kimo", "Leah", "Quinn", "Joseph",
-                "T'Kor", "Cedric", "Brooklyn", "Kenney", "Lisa"
-            ]
+            "max_consecutive_errors": int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
         }
         
         if not config["bot_token"] and self.config_file.exists():
@@ -131,12 +117,9 @@ class BBUpdate:
     author: str = ""
 
 class BBAnalyzer:
-    """Enhanced Big Brother analyzer with advanced features"""
+    """Analyzes Big Brother updates for strategic insights"""
     
-    def __init__(self, config: Config):
-        self.config = config
-        self.houseguests = config.get('bb27_houseguests', [])
-        
+    def __init__(self):
         self.competition_keywords = [
             'hoh', 'head of household', 'power of veto', 'pov', 'nomination', 
             'eviction', 'ceremony', 'competition', 'challenge', 'immunity'
@@ -157,7 +140,13 @@ class BBAnalyzer:
             'relationship', 'attracted', 'feelings'
         ]
         
-        # Advanced analytics
+        # Enhanced features
+        self.bb27_houseguests = [
+            "Angela", "Tucker", "Makensy", "Cam", "Chelsie", 
+            "Rubina", "Kimo", "Leah", "Quinn", "Joseph",
+            "T'Kor", "Cedric", "Brooklyn", "Kenney", "Lisa"
+        ]
+        
         self.sentiment_positive = [
             'happy', 'excited', 'love', 'amazing', 'great', 'wonderful', 
             'perfect', 'fantastic', 'awesome', 'good', 'fun', 'laugh'
@@ -167,10 +156,6 @@ class BBAnalyzer:
             'angry', 'hate', 'mad', 'upset', 'annoyed', 'frustrated',
             'terrible', 'awful', 'bad', 'worst', 'annoying', 'drama'
         ]
-        
-        self.alliance_tracker = {}
-        self.relationship_matrix = defaultdict(lambda: defaultdict(int))
-        self.houseguest_stats = {}
     
     def categorize_update(self, update: BBUpdate) -> List[str]:
         """Categorize an update based on its content"""
@@ -196,7 +181,7 @@ class BBAnalyzer:
         mentioned_houseguests = []
         text_lower = text.lower()
         
-        for houseguest in self.houseguests:
+        for houseguest in self.bb27_houseguests:
             if houseguest.lower() in text_lower:
                 mentioned_houseguests.append(houseguest)
         
@@ -238,126 +223,9 @@ class BBAnalyzer:
             "negative": negative_ratio, 
             "neutral": max(0, neutral_ratio)
         }
-    
-    def track_alliances(self, update: BBUpdate) -> List[Dict]:
-        """Track alliance formations"""
-        content = f"{update.title} {update.description}".lower()
-        
-        alliance_keywords = ['alliance', 'group', 'team', 'together', 'meet', 'plan']
-        if not any(keyword in content for keyword in alliance_keywords):
-            return []
-        
-        mentioned_houseguests = self.extract_houseguests(content)
-        
-        if len(mentioned_houseguests) < 2:
-            return []
-        
-        # Track relationships
-        for i, hg1 in enumerate(mentioned_houseguests):
-            for hg2 in mentioned_houseguests[i+1:]:
-                self.relationship_matrix[hg1][hg2] += 1
-                self.relationship_matrix[hg2][hg1] += 1
-        
-        # Detect new alliances
-        new_alliances = []
-        if len(mentioned_houseguests) >= 3:
-            alliance_key = tuple(sorted(mentioned_houseguests))
-            
-            if alliance_key not in self.alliance_tracker:
-                self.alliance_tracker[alliance_key] = {
-                    'members': mentioned_houseguests,
-                    'strength': 1.0,
-                    'first_detected': update.pub_date,
-                    'last_mentioned': update.pub_date,
-                    'mentions_count': 1
-                }
-                new_alliances.append({
-                    'members': mentioned_houseguests,
-                    'type': 'new_alliance',
-                    'strength': 1.0
-                })
-        
-        return new_alliances
-    
-    def predict_eviction(self, recent_updates: List[BBUpdate]) -> Dict[str, float]:
-        """Predict eviction likelihood"""
-        eviction_indicators = {}
-        
-        for update in recent_updates:
-            content = f"{update.title} {update.description}".lower()
-            
-            campaign_keywords = ['campaign', 'vote', 'evict', 'target', 'backdoor', 'pawn']
-            if any(keyword in content for keyword in campaign_keywords):
-                for houseguest in self.houseguests:
-                    if houseguest.lower() in content:
-                        if houseguest not in eviction_indicators:
-                            eviction_indicators[houseguest] = 0.0
-                        
-                        if any(word in content for word in ['target', 'backdoor', 'evict']):
-                            eviction_indicators[houseguest] += 2.0
-                        elif 'campaign' in content:
-                            eviction_indicators[houseguest] += 1.0
-        
-        if eviction_indicators:
-            max_score = max(eviction_indicators.values())
-            if max_score > 0:
-                for houseguest in eviction_indicators:
-                    eviction_indicators[houseguest] = min(1.0, eviction_indicators[houseguest] / max_score)
-        
-        return eviction_indicators
-    
-    def calculate_power_rankings(self, updates: List[BBUpdate]) -> List[Dict]:
-        """Calculate power rankings"""
-        rankings = {}
-        
-        for houseguest in self.houseguests:
-            rankings[houseguest] = {
-                'name': houseguest,
-                'power_ranking': 0.0,
-                'hoh_wins': 0,
-                'pov_wins': 0,
-                'strategy_mentions': 0,
-                'social_connections': 0,
-                'target_level': 0.0
-            }
-        
-        for update in updates:
-            content = f"{update.title} {update.description}".lower()
-            
-            for houseguest in self.houseguests:
-                if houseguest.lower() in content:
-                    stats = rankings[houseguest]
-                    
-                    if any(word in content for word in ['strategy', 'plan', 'alliance']):
-                        stats['power_ranking'] += 2.0
-                        stats['strategy_mentions'] += 1
-                    
-                    if 'wins' in content and ('hoh' in content or 'pov' in content):
-                        stats['power_ranking'] += 3.0
-                        if 'hoh' in content:
-                            stats['hoh_wins'] += 1
-                        if 'pov' in content:
-                            stats['pov_wins'] += 1
-                    
-                    if any(word in content for word in ['target', 'backdoor', 'evict']):
-                        stats['power_ranking'] -= 2.0
-                        stats['target_level'] += 1.0
-        
-        return sorted(rankings.values(), key=lambda x: x['power_ranking'], reverse=True)
-    
-    def get_activity_heatmap(self, updates: List[BBUpdate]) -> Dict[str, int]:
-        """Get activity heatmap"""
-        activity = defaultdict(int)
-        
-        for update in updates:
-            houseguests = self.extract_houseguests(f"{update.title} {update.description}")
-            for houseguest in houseguests:
-                activity[houseguest] += 1
-        
-        return dict(activity)
 
 class BBDatabase:
-    """Database with enhanced analytics"""
+    """Handles database operations"""
     
     def __init__(self, db_path: str = "bb_updates.db"):
         self.db_path = db_path
@@ -372,203 +240,313 @@ class BBDatabase:
                 timeout=self.connection_timeout,
                 check_same_thread=False
             )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            return conn
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+    
+    def init_database(self):
+        """Initialize the database schema"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
             
-            alliances = self.analyzer.alliance_tracker
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS updates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash TEXT UNIQUE,
+                    title TEXT,
+                    description TEXT,
+                    link TEXT,
+                    pub_date TIMESTAMP,
+                    author TEXT,
+                    importance_score INTEGER DEFAULT 1,
+                    categories TEXT,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
             
-            if not alliances:
-                embed.add_field(name="No Alliances", value="No clear alliances detected yet", inline=False)
-            else:
-                for i, (alliance_key, alliance_data) in enumerate(alliances.items(), 1):
-                    members_str = ", ".join(alliance_data['members'])
-                    strength = alliance_data['strength']
-                    strength_bar = "█" * int(strength) + "░" * (10 - int(strength))
-                    
-                    embed.add_field(
-                        name=f"Alliance #{i}",
-                        value=f"**Members:** {members_str}\n**Strength:** {strength_bar} ({strength:.1f}/10)",
-                        inline=False
-                    )
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
             
-            await ctx.send(embed=embed)
+            conn.commit()
+            logger.info("Database initialized successfully")
             
         except Exception as e:
-            logger.error(f"Error showing alliances: {e}")
-            await ctx.send("Error retrieving alliance data. Please try again.")
+            logger.error(f"Database initialization error: {e}")
+            raise
+        finally:
+            conn.close()
     
-    @commands.command(name='evictionpredict')
-    async def eviction_prediction(self, ctx):
-        """Predict eviction likelihood"""
+    def is_duplicate(self, content_hash: str) -> bool:
+        """Check if update already exists"""
         try:
-            recent_updates = self.db.get_recent_updates(72)
-            predictions = self.analyzer.predict_eviction(recent_updates)
+            conn = self.get_connection()
+            cursor = conn.cursor()
             
-            embed = discord.Embed(
-                title="🎯 Eviction Predictions",
-                description="Likelihood of eviction based on recent activity",
-                color=0xe74c3c,
-                timestamp=datetime.now()
-            )
+            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
+            result = cursor.fetchone()
+            conn.close()
             
-            if not predictions:
-                embed.add_field(name="No Predictions", value="Not enough data for eviction predictions", inline=False)
-            else:
-                sorted_predictions = sorted(predictions.items(), key=lambda x: x[1], reverse=True)
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Database duplicate check error: {e}")
+            return False
+    
+    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
+        """Store a new update"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            categories_str = ",".join(categories) if categories else ""
+            
+            cursor.execute("""
+                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (update.content_hash, update.title, update.description, 
+                  update.link, update.pub_date, update.author, importance_score, categories_str))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database store error: {e}")
+            raise
+    
+    def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
+        """Get updates from the last N hours"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author
+                FROM updates 
+                WHERE pub_date > ?
+                ORDER BY pub_date DESC
+            """, (cutoff_time,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [BBUpdate(*row) for row in results]
+            
+        except Exception as e:
+            logger.error(f"Database query error: {e}")
+            return []
+
+class BBDiscordBot(commands.Bot):
+    """Main Discord bot class"""
+    
+    def __init__(self):
+        self.config = Config()
+        
+        if not self.config.get('bot_token'):
+            logger.error("Bot token not configured! Please set BOT_TOKEN environment variable")
+            sys.exit(1)
+        
+        intents = discord.Intents.default()
+        intents.message_content = True
+        super().__init__(command_prefix='!bb', intents=intents)
+        
+        self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
+        self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
+        self.analyzer = BBAnalyzer()
+        
+        self.is_shutting_down = False
+        self.last_successful_check = datetime.now()
+        self.total_updates_processed = 0
+        self.consecutive_errors = 0
+        
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        signal.signal(signal.SIGINT, self.signal_handler)
+        
+    def signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        self.is_shutting_down = True
+        asyncio.create_task(self.close())
+    
+    async def on_ready(self):
+        """Bot startup event"""
+        logger.info(f'{self.user} has connected to Discord!')
+        logger.info(f'Bot is in {len(self.guilds)} guilds')
+        
+        try:
+            self.check_rss_feed.start()
+            logger.info("RSS feed monitoring started")
+            
+        except Exception as e:
+            logger.error(f"Error starting background tasks: {e}")
+    
+    def create_content_hash(self, title: str, description: str) -> str:
+        """Create a unique hash for content deduplication"""
+        content = f"{title}|{description}".lower()
+        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
+        content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def process_rss_entries(self, entries) -> List[BBUpdate]:
+        """Process RSS entries into BBUpdate objects"""
+        updates = []
+        
+        for entry in entries:
+            try:
+                title = entry.get('title', 'No title')
+                description = entry.get('description', 'No description')
+                link = entry.get('link', '')
                 
-                for houseguest, likelihood in sorted_predictions[:5]:
-                    risk_level = "🔴 High" if likelihood > 0.7 else "🟡 Medium" if likelihood > 0.3 else "🟢 Low"
-                    percentage = f"{likelihood * 100:.1f}%"
-                    
-                    embed.add_field(
-                        name=f"{houseguest}",
-                        value=f"**Risk:** {risk_level}\n**Likelihood:** {percentage}",
-                        inline=True
-                    )
-            
-            embed.set_footer(text="Based on targeting language and campaign activity")
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error generating eviction predictions: {e}")
-            await ctx.send("Error generating predictions. Please try again.")
+                pub_date = datetime.now()
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime(*entry.published_parsed[:6])
+                
+                content_hash = self.create_content_hash(title, description)
+                author = entry.get('author', '')
+                
+                updates.append(BBUpdate(
+                    title=title,
+                    description=description,
+                    link=link,
+                    pub_date=pub_date,
+                    content_hash=content_hash,
+                    author=author
+                ))
+                
+            except Exception as e:
+                logger.error(f"Error processing RSS entry: {e}")
+                continue
+        
+        return updates
     
-    @commands.command(name='sentiment')
-    async def house_sentiment(self, ctx, hours: int = 24):
-        """Show house sentiment analysis"""
+    def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
+        """Filter out duplicate updates"""
+        new_updates = []
+        seen_hashes = set()
+        
+        for update in updates:
+            if not self.db.is_duplicate(update.content_hash):
+                if update.content_hash not in seen_hashes:
+                    new_updates.append(update)
+                    seen_hashes.add(update.content_hash)
+        
+        return new_updates
+    
+    def create_update_embed(self, update: BBUpdate) -> discord.Embed:
+        """Create a Discord embed for an update"""
+        categories = self.analyzer.categorize_update(update)
+        importance = self.analyzer.analyze_strategic_importance(update)
+        houseguests = self.analyzer.extract_houseguests(f"{update.title} {update.description}")
+        sentiment = self.analyzer.analyze_sentiment(f"{update.title} {update.description}")
+        
+        colors = {
+            1: 0x95a5a6, 2: 0x3498db, 3: 0x2ecc71, 4: 0xf39c12, 5: 0xe74c3c
+        }
+        color = colors.get(min(importance // 2 + 1, 5), 0x95a5a6)
+        
+        title = update.title[:256] if len(update.title) <= 256 else update.title[:253] + "..."
+        description = update.description[:2048] if len(update.description) <= 2048 else update.description[:2045] + "..."
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            url=update.link,
+            timestamp=update.pub_date
+        )
+        
+        if categories:
+            embed.add_field(name="Categories", value=" | ".join(categories), inline=True)
+        
+        importance_stars = "⭐" * importance
+        embed.add_field(name="Strategic Importance", value=f"{importance_stars} ({importance}/10)", inline=True)
+        
+        # Add sentiment indicator
+        if sentiment["positive"] > 0.1:
+            embed.add_field(name="House Mood", value="😊 Positive", inline=True)
+        elif sentiment["negative"] > 0.1:
+            embed.add_field(name="House Mood", value="😤 Tense", inline=True)
+        else:
+            embed.add_field(name="House Mood", value="😐 Neutral", inline=True)
+        
+        if houseguests:
+            houseguests_text = ", ".join(houseguests[:5])
+            if len(houseguests) > 5:
+                houseguests_text += f" +{len(houseguests) - 5} more"
+            embed.add_field(name="Houseguests Mentioned", value=houseguests_text, inline=False)
+        
+        if update.author:
+            embed.set_footer(text=f"Reported by: {update.author}")
+        
+        return embed
+    
+    async def send_update_to_channel(self, update: BBUpdate):
+        """Send an update to the configured channel"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured")
+            return
+        
         try:
-            recent_updates = self.db.get_recent_updates(hours)
-            
-            if not recent_updates:
-                await ctx.send(f"No updates found in the last {hours} hours.")
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
                 return
             
-            total_positive = 0
-            total_negative = 0
-            total_neutral = 0
-            
-            for update in recent_updates:
-                sentiment = self.analyzer.analyze_sentiment(f"{update.title} {update.description}")
-                total_positive += sentiment["positive"]
-                total_negative += sentiment["negative"]
-                total_neutral += sentiment["neutral"]
-            
-            count = len(recent_updates)
-            avg_positive = total_positive / count
-            avg_negative = total_negative / count
-            avg_neutral = total_neutral / count
-            
-            if avg_positive > avg_negative and avg_positive > avg_neutral:
-                mood = "😊 Positive"
-                color = 0x2ecc71
-            elif avg_negative > avg_positive and avg_negative > avg_neutral:
-                mood = "😤 Tense"
-                color = 0xe74c3c
-            else:
-                mood = "😐 Neutral"
-                color = 0x95a5a6
-            
-            embed = discord.Embed(
-                title="🏠 House Sentiment Analysis",
-                description=f"Overall house mood: {mood}",
-                color=color,
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(name="😊 Positive", value=f"{avg_positive * 100:.1f}%", inline=True)
-            embed.add_field(name="😤 Negative", value=f"{avg_negative * 100:.1f}%", inline=True)
-            embed.add_field(name="😐 Neutral", value=f"{avg_neutral * 100:.1f}%", inline=True)
-            
-            await ctx.send(embed=embed)
+            embed = self.create_update_embed(update)
+            await channel.send(embed=embed)
             
         except Exception as e:
-            logger.error(f"Error generating sentiment analysis: {e}")
-            await ctx.send("Error generating sentiment analysis. Please try again.")
+            logger.error(f"Error sending update to channel: {e}")
     
-    @commands.command(name='heatmap')
-    async def activity_heatmap(self, ctx, hours: int = 24):
-        """Show activity heatmap"""
+    @tasks.loop(minutes=2)
+    async def check_rss_feed(self):
+        """Check RSS feed for new updates"""
+        if self.is_shutting_down:
+            return
+        
         try:
-            recent_updates = self.db.get_recent_updates(hours)
-            activity = self.analyzer.get_activity_heatmap(recent_updates)
+            feed = feedparser.parse(self.rss_url)
             
-            embed = discord.Embed(
-                title="🔥 Activity Heatmap",
-                description=f"Houseguest mentions in the last {hours} hours",
-                color=0xf39c12,
-                timestamp=datetime.now()
-            )
+            if not feed.entries:
+                logger.warning("No entries returned from RSS feed")
+                return
             
-            if not activity:
-                embed.add_field(name="No Activity", value="No houseguests mentioned in recent updates", inline=False)
-            else:
-                sorted_activity = sorted(activity.items(), key=lambda x: x[1], reverse=True)
-                
-                for houseguest, mentions in sorted_activity[:10]:
-                    heat_level = "🔥🔥🔥" if mentions > 10 else "🔥🔥" if mentions > 5 else "🔥" if mentions > 2 else "💤"
+            updates = self.process_rss_entries(feed.entries)
+            new_updates = self.filter_duplicates(updates)
+            
+            for update in new_updates:
+                try:
+                    categories = self.analyzer.categorize_update(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
                     
-                    embed.add_field(
-                        name=f"{houseguest}",
-                        value=f"{heat_level} {mentions} mentions",
-                        inline=True
-                    )
+                    self.db.store_update(update, importance, categories)
+                    await self.send_update_to_channel(update)
+                    
+                    self.total_updates_processed += 1
+                    await asyncio.sleep(1)
+                    
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+                    self.consecutive_errors += 1
             
-            await ctx.send(embed=embed)
+            self.last_successful_check = datetime.now()
+            self.consecutive_errors = 0
             
+            if new_updates:
+                logger.info(f"Processed {len(new_updates)} new updates")
+                
         except Exception as e:
-            logger.error(f"Error generating activity heatmap: {e}")
-            await ctx.send("Error generating heatmap. Please try again.")
+            logger.error(f"Error in RSS check: {e}")
+            self.consecutive_errors += 1
     
-    @commands.command(name='predict')
-    async def prediction_game(self, ctx, prediction_type: str = None, target: str = None, *, value: str = None):
-        """Make predictions"""
-        if not prediction_type:
-            embed = discord.Embed(
-                title="🔮 Prediction Game",
-                description="Make predictions about Big Brother events",
-                color=0x9b59b6
-            )
-            
-            embed.add_field(
-                name="How to Use",
-                value="!bbpredict [type] [target] [value]",
-                inline=False
-            )
-            
-            embed.add_field(
-                name="Examples",
-                value="• `!bbpredict eviction Michael`\n• `!bbpredict hoh Sarah`",
-                inline=False
-            )
-            
-            await ctx.send(embed=embed)
-            return
-        
-        if not target:
-            await ctx.send("Please provide a target. Use `!bbpredict` for help.")
-            return
-        
-        try:
-            self.db.store_prediction(str(ctx.author.id), prediction_type, target, value or target, 0.5)
-            
-            embed = discord.Embed(
-                title="🔮 Prediction Recorded",
-                description=f"Your prediction has been saved!",
-                color=0x2ecc71,
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(name="Type", value=prediction_type.title(), inline=True)
-            embed.add_field(name="Target", value=target, inline=True)
-            
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error storing prediction: {e}")
-            await ctx.send("Error storing prediction. Please try again.")
-    
-    # ORIGINAL COMMANDS
     @commands.command(name='summary')
     async def daily_summary(self, ctx, hours: int = 24):
-        """Generate enhanced summary"""
+        """Generate a summary of updates"""
         try:
             if hours < 1 or hours > 168:
                 await ctx.send("Hours must be between 1 and 168")
@@ -589,7 +567,7 @@ class BBDatabase:
                     categories[category].append(update)
             
             embed = discord.Embed(
-                title=f"📊 Enhanced Big Brother Summary ({hours}h)",
+                title=f"📊 Big Brother Updates Summary ({hours}h)",
                 description=f"**{len(updates)} total updates**",
                 color=0x3498db,
                 timestamp=datetime.now()
@@ -600,8 +578,8 @@ class BBDatabase:
                                    key=lambda x: self.analyzer.analyze_strategic_importance(x), 
                                    reverse=True)[:3]
                 
-                summary_text = "\n".join([f"• {update.title[:80]}..." 
-                                        if len(update.title) > 80 
+                summary_text = "\n".join([f"• {update.title[:100]}..." 
+                                        if len(update.title) > 100 
                                         else f"• {update.title}" 
                                         for update in top_updates])
                 
@@ -620,7 +598,7 @@ class BBDatabase:
     @commands.command(name='setchannel')
     @commands.has_permissions(administrator=True)
     async def set_update_channel(self, ctx, channel_id: int):
-        """Set update channel"""
+        """Set the channel for RSS updates"""
         try:
             channel = self.get_channel(channel_id)
             if not channel:
@@ -644,7 +622,7 @@ class BBDatabase:
         """Show bot status"""
         try:
             embed = discord.Embed(
-                title="🤖 Enhanced Big Brother Bot Status",
+                title="🤖 Big Brother Bot Status",
                 color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
                 timestamp=datetime.now()
             )
@@ -659,9 +637,6 @@ class BBDatabase:
             time_since_check = datetime.now() - self.last_successful_check
             embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
             
-            embed.add_field(name="🧠 AI Features", value="✅ Active", inline=True)
-            embed.add_field(name="📊 Analytics", value="✅ Tracking", inline=True)
-            
             await ctx.send(embed=embed)
             
         except Exception as e:
@@ -671,23 +646,29 @@ class BBDatabase:
     # TEST COMMANDS
     @commands.command(name='testanalyzer')
     async def test_analyzer(self, ctx):
-        """Test enhanced analyzer"""
+        """Test the AI analyzer with sample updates"""
+        
         sample_updates = [
             {
-                "title": "HOH Competition Results - Sarah Wins",
-                "description": "Sarah wins Head of Household after intense endurance challenge. She's planning to backdoor Michael and is meeting with her alliance tonight.",
+                "title": "HOH Competition Results - Week 3",
+                "description": "Sarah wins Head of Household competition after intense endurance challenge. She's already talking about backdooring Michael who has been getting too close to everyone. The house is buzzing with speculation about nominations.",
                 "author": "BBUpdater1"
             },
             {
-                "title": "Kitchen Drama Escalates",
-                "description": "Huge argument between Lisa and Michael over dishes. Lisa called him out and the house is taking sides. Very tense atmosphere.",
+                "title": "Kitchen Blowup",
+                "description": "Huge argument between Lisa and Michael over dirty dishes. Lisa called Michael out for being messy and not doing his share. Michael got defensive and things escalated quickly with other houseguests taking sides.",
                 "author": "DramaAlert"
+            },
+            {
+                "title": "Showmance Alert",
+                "description": "Things are heating up between Jake and Amanda. They were spotted cuddling in the hammock and had a long romantic conversation under the stars. Other houseguests are starting to notice their connection.",
+                "author": "LoveWatcher"
             }
         ]
         
         embed = discord.Embed(
-            title="🧪 Enhanced AI Test Results",
-            description="Testing advanced Big Brother analytics",
+            title="🧪 AI Analyzer Test Results",
+            description="Testing Big Brother update analysis with sample data",
             color=0x9b59b6,
             timestamp=datetime.now()
         )
@@ -722,44 +703,71 @@ class BBDatabase:
                 analysis.append(f"**Houseguests:** {', '.join(houseguests[:3])}")
             
             embed.add_field(
-                name=f"#{i}: {sample['title'][:40]}...",
+                name=f"#{i}: {sample['title'][:50]}...",
                 value="\n".join(analysis),
                 inline=False
             )
         
         await ctx.send(embed=embed)
     
+    @commands.command(name='testembeds')
+    async def test_embeds(self, ctx):
+        """Test how Discord embeds will look"""
+        
+        strategic_update = BBUpdate(
+            title="BREAKING: Massive Backdoor Plan Revealed",
+            description="Sarah wins HOH and immediately starts planning to backdoor Michael. She's been building this plan for weeks with her secret alliance. Jessica and David are fully on board. They plan to nominate pawns initially, then use veto ceremony to put Michael on the block.",
+            link="https://jokersupdates.com/strategic-update",
+            pub_date=datetime.now(),
+            content_hash="strategic_test",
+            author="StrategyWatcher"
+        )
+        
+        strategic_embed = self.create_update_embed(strategic_update)
+        await ctx.send("**🎯 High-Stakes Strategic Update Example:**", embed=strategic_embed)
+        
+        await asyncio.sleep(2)
+        
+        drama_update = BBUpdate(
+            title="Kitchen Confrontation Escalates",
+            description="Lisa and Michael's argument about dishes turned into a house-wide conflict. Lisa accused Michael of being lazy and entitled. Michael fired back calling Lisa controlling and dramatic. Other houseguests are picking sides and the tension is thick.",
+            link="https://jokersupdates.com/drama-update",
+            pub_date=datetime.now(),
+            content_hash="drama_test",
+            author="DramaAlert"
+        )
+        
+        drama_embed = self.create_update_embed(drama_update)
+        await ctx.send("**💥 Drama Update Example:**", embed=drama_embed)
+    
     @commands.command(name='testhelp')
     async def test_help(self, ctx):
-        """Show test commands"""
+        """Show all available test commands"""
+        
         embed = discord.Embed(
-            title="🧪 Enhanced Test Commands",
-            description="Test all advanced features",
+            title="🧪 Big Brother Bot Test Commands",
+            description="Test the AI analysis features",
             color=0x9b59b6
         )
         
         embed.add_field(
-            name="**Basic Tests**",
-            value="• `!bbtestanalyzer` - Test enhanced AI\n• `!bbpowerrankings` - Test power rankings",
+            name="!bbtestembeds", 
+            value="See how different update types will look in Discord",
             inline=False
         )
         
         embed.add_field(
-            name="**Analytics Tests**",
-            value="• `!bballiances` - Test alliance detection\n• `!bbsentiment` - Test sentiment analysis\n• `!bbheatmap` - Test activity heatmap",
+            name="!bbsummary [hours]",
+            value="Generate summary of updates (works with test data)",
             inline=False
         )
         
-        embed.add_field(
-            name="**Prediction Tests**",
-            value="• `!bbpredict eviction Angela` - Test predictions\n• `!bbevictionpredict` - Test eviction predictions",
-            inline=False
-        )
+        embed.set_footer(text="These commands work without needing live Big Brother updates!")
         
         await ctx.send(embed=embed)
 
 def main():
-    """Main function"""
+    """Main function to run the bot"""
     try:
         bot = BBDiscordBot()
         
@@ -775,36 +783,24 @@ def main():
         
         @bot.command(name='commands')
         async def commands_help(ctx):
-            """Show all commands"""
+            """Show available commands"""
             embed = discord.Embed(
-                title="🏠 Enhanced Big Brother Bot Commands",
-                description="AI-powered Big Brother analysis with advanced features",
+                title="🏠 Big Brother Bot Commands",
+                description="AI-powered Big Brother analysis",
                 color=0x3498db
             )
             
-            embed.add_field(
-                name="**📊 Main Commands**",
-                value="• `!bbsummary [hours]` - Enhanced summary\n• `!bbstatus` - Bot status\n• `!bbsetchannel [ID]` - Set channel (Admin)",
-                inline=False
-            )
+            embed.add_field(name="**Main Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
+            embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
+            embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
+            embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
             
-            embed.add_field(
-                name="**🏆 Analytics Commands**",
-                value="• `!bbpowerrankings` - Power rankings\n• `!bballiances` - Alliance detection\n• `!bbsentiment` - House mood\n• `!bbheatmap` - Activity heatmap",
-                inline=False
-            )
+            embed.add_field(name="**Test Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
+            embed.add_field(name="!bbtesthelp", value="Show all test commands", inline=False)
+            embed.add_field(name="!bbtestanalyzer", value="Test AI analysis with sample updates", inline=False)
+            embed.add_field(name="!bbtestembeds", value="See how updates will look in Discord", inline=False)
             
-            embed.add_field(
-                name="**🔮 Prediction Commands**",
-                value="• `!bbpredict [type] [target]` - Make predictions\n• `!bbevictionpredict` - Eviction likelihood",
-                inline=False
-            )
-            
-            embed.add_field(
-                name="**🧪 Test Commands**",
-                value="• `!bbtesthelp` - Show all test commands\n• `!bbtestanalyzer` - Test AI features",
-                inline=False
-            )
+            embed.set_footer(text="Use test commands to try out features before Big Brother starts!")
             
             await ctx.send(embed=embed)
         
@@ -813,7 +809,7 @@ def main():
             logger.error("No bot token found!")
             return
         
-        logger.info("Starting Enhanced Big Brother Discord Bot...")
+        logger.info("Starting Big Brother Discord Bot...")
         bot.run(bot_token, reconnect=True)
         
     except Exception as e:
@@ -821,391 +817,10 @@ def main():
         logger.critical(traceback.format_exc())
 
 if __name__ == "__main__":
-    main()
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            return conn
-        except Exception as e:
-            logger.error(f"Database connection error: {e}")
-            raise
-    
-    def init_database(self):
-        """Initialize database"""
-        conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS updates (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content_hash TEXT UNIQUE,
-                    title TEXT,
-                    description TEXT,
-                    link TEXT,
-                    pub_date TIMESTAMP,
-                    author TEXT,
-                    importance_score INTEGER DEFAULT 1,
-                    categories TEXT,
-                    sentiment_positive REAL DEFAULT 0.0,
-                    sentiment_negative REAL DEFAULT 0.0,
-                    sentiment_neutral REAL DEFAULT 1.0,
-                    mentioned_houseguests TEXT,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS predictions (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    user_id TEXT,
-                    prediction_type TEXT,
-                    prediction_target TEXT,
-                    prediction_value TEXT,
-                    confidence REAL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    resolved_at TIMESTAMP,
-                    was_correct BOOLEAN
-                )
-            """)
-            
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
-            
-            conn.commit()
-            logger.info("Enhanced database initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Database initialization error: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def is_duplicate(self, content_hash: str) -> bool:
-        """Check if update exists"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            return result is not None
-            
-        except Exception as e:
-            logger.error(f"Database duplicate check error: {e}")
-            return False
-    
-    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None, 
-                    sentiment: Dict[str, float] = None, mentioned_houseguests: List[str] = None):
-        """Store update with analytics"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            categories_str = ",".join(categories) if categories else ""
-            houseguests_str = ",".join(mentioned_houseguests) if mentioned_houseguests else ""
-            
-            sentiment = sentiment or {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
-            
-            cursor.execute("""
-                INSERT INTO updates (content_hash, title, description, link, pub_date, author, 
-                                   importance_score, categories, sentiment_positive, sentiment_negative, 
-                                   sentiment_neutral, mentioned_houseguests)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (update.content_hash, update.title, update.description, update.link, 
-                  update.pub_date, update.author, importance_score, categories_str,
-                  sentiment["positive"], sentiment["negative"], sentiment["neutral"],
-                  houseguests_str))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Database store error: {e}")
-            raise
-    
-    def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
-        """Get recent updates"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author
-                FROM updates 
-                WHERE pub_date > ?
-                ORDER BY pub_date DESC
-            """, (cutoff_time,))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            return [BBUpdate(*row) for row in results]
-            
-        except Exception as e:
-            logger.error(f"Database query error: {e}")
-            return []
-    
-    def store_prediction(self, user_id: str, prediction_type: str, target: str, value: str, confidence: float):
-        """Store prediction"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                INSERT INTO predictions (user_id, prediction_type, prediction_target, prediction_value, confidence)
-                VALUES (?, ?, ?, ?, ?)
-            """, (user_id, prediction_type, target, value, confidence))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Error storing prediction: {e}")
-
-class BBDiscordBot(commands.Bot):
-    """Enhanced Discord bot"""
-    
-    def __init__(self):
-        self.config = Config()
-        
-        if not self.config.get('bot_token'):
-            logger.error("Bot token not configured! Please set BOT_TOKEN environment variable")
-            sys.exit(1)
-        
-        intents = discord.Intents.default()
-        intents.message_content = True
-        super().__init__(command_prefix='!bb', intents=intents)
-        
-        self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
-        self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
-        self.analyzer = BBAnalyzer(self.config)
-        
-        self.is_shutting_down = False
-        self.last_successful_check = datetime.now()
-        self.total_updates_processed = 0
-        self.consecutive_errors = 0
-        
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        signal.signal(signal.SIGINT, self.signal_handler)
-    
-    def signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
-        self.is_shutting_down = True
-        asyncio.create_task(self.close())
-    
-    async def on_ready(self):
-        """Bot startup event"""
-        logger.info(f'{self.user} has connected to Discord!')
-        logger.info(f'Bot is in {len(self.guilds)} guilds')
-        
-        try:
-            self.check_rss_feed.start()
-            logger.info("RSS feed monitoring started")
-        except Exception as e:
-            logger.error(f"Error starting background tasks: {e}")
-    
-    def create_content_hash(self, title: str, description: str) -> str:
-        """Create content hash"""
-        content = f"{title}|{description}".lower()
-        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
-        content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
-        return hashlib.md5(content.encode()).hexdigest()
-    
-    def process_rss_entries(self, entries) -> List[BBUpdate]:
-        """Process RSS entries"""
-        updates = []
-        
-        for entry in entries:
-            try:
-                title = entry.get('title', 'No title')
-                description = entry.get('description', 'No description')
-                link = entry.get('link', '')
-                
-                pub_date = datetime.now()
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    pub_date = datetime(*entry.published_parsed[:6])
-                
-                content_hash = self.create_content_hash(title, description)
-                author = entry.get('author', '')
-                
-                updates.append(BBUpdate(
-                    title=title,
-                    description=description,
-                    link=link,
-                    pub_date=pub_date,
-                    content_hash=content_hash,
-                    author=author
-                ))
-                
-            except Exception as e:
-                logger.error(f"Error processing RSS entry: {e}")
-                continue
-        
-        return updates
-    
-    def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
-        """Filter duplicates"""
-        new_updates = []
-        seen_hashes = set()
-        
-        for update in updates:
-            if not self.db.is_duplicate(update.content_hash):
-                if update.content_hash not in seen_hashes:
-                    new_updates.append(update)
-                    seen_hashes.add(update.content_hash)
-        
-        return new_updates
-    
-    def create_update_embed(self, update: BBUpdate) -> discord.Embed:
-        """Create Discord embed"""
-        categories = self.analyzer.categorize_update(update)
-        importance = self.analyzer.analyze_strategic_importance(update)
-        houseguests = self.analyzer.extract_houseguests(f"{update.title} {update.description}")
-        sentiment = self.analyzer.analyze_sentiment(f"{update.title} {update.description}")
-        
-        colors = {
-            1: 0x95a5a6, 2: 0x3498db, 3: 0x2ecc71, 4: 0xf39c12, 5: 0xe74c3c
-        }
-        color = colors.get(min(importance // 2 + 1, 5), 0x95a5a6)
-        
-        title = update.title[:256] if len(update.title) <= 256 else update.title[:253] + "..."
-        description = update.description[:2048] if len(update.description) <= 2048 else update.description[:2045] + "..."
-        
-        embed = discord.Embed(
-            title=title,
-            description=description,
-            color=color,
-            url=update.link,
-            timestamp=update.pub_date
+    main()!bbtestanalyzer",
+            value="Test AI analysis with sample Big Brother updates",
+            inline=False
         )
         
-        if categories:
-            embed.add_field(name="Categories", value=" | ".join(categories), inline=True)
-        
-        importance_stars = "⭐" * importance
-        embed.add_field(name="Strategic Importance", value=f"{importance_stars} ({importance}/10)", inline=True)
-        
-        if sentiment["positive"] > 0.1:
-            embed.add_field(name="House Mood", value="😊 Positive", inline=True)
-        elif sentiment["negative"] > 0.1:
-            embed.add_field(name="House Mood", value="😤 Tense", inline=True)
-        else:
-            embed.add_field(name="House Mood", value="😐 Neutral", inline=True)
-        
-        if houseguests:
-            houseguests_text = ", ".join(houseguests[:5])
-            if len(houseguests) > 5:
-                houseguests_text += f" +{len(houseguests) - 5} more"
-            embed.add_field(name="Houseguests Mentioned", value=houseguests_text, inline=False)
-        
-        if update.author:
-            embed.set_footer(text=f"Reported by: {update.author}")
-        
-        return embed
-    
-    async def send_update_to_channel(self, update: BBUpdate):
-        """Send update to channel"""
-        channel_id = self.config.get('update_channel_id')
-        if not channel_id:
-            return
-        
-        try:
-            channel = self.get_channel(channel_id)
-            if not channel:
-                return
-            
-            embed = self.create_update_embed(update)
-            await channel.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error sending update to channel: {e}")
-    
-    @tasks.loop(minutes=2)
-    async def check_rss_feed(self):
-        """Check RSS feed"""
-        if self.is_shutting_down:
-            return
-        
-        try:
-            feed = feedparser.parse(self.rss_url)
-            
-            if not feed.entries:
-                logger.warning("No entries returned from RSS feed")
-                return
-            
-            updates = self.process_rss_entries(feed.entries)
-            new_updates = self.filter_duplicates(updates)
-            
-            for update in new_updates:
-                try:
-                    categories = self.analyzer.categorize_update(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    houseguests = self.analyzer.extract_houseguests(f"{update.title} {update.description}")
-                    sentiment = self.analyzer.analyze_sentiment(f"{update.title} {update.description}")
-                    
-                    self.db.store_update(update, importance, categories, sentiment, houseguests)
-                    self.analyzer.track_alliances(update)
-                    
-                    await self.send_update_to_channel(update)
-                    
-                    self.total_updates_processed += 1
-                    await asyncio.sleep(1)
-                    
-                except Exception as e:
-                    logger.error(f"Error processing update: {e}")
-                    self.consecutive_errors += 1
-            
-            self.last_successful_check = datetime.now()
-            self.consecutive_errors = 0
-            
-            if new_updates:
-                logger.info(f"Processed {len(new_updates)} new updates")
-                
-        except Exception as e:
-            logger.error(f"Error in RSS check: {e}")
-            self.consecutive_errors += 1
-    
-    # ENHANCED COMMANDS
-    @commands.command(name='powerrankings')
-    async def power_rankings(self, ctx):
-        """Show power rankings"""
-        try:
-            recent_updates = self.db.get_recent_updates(168)
-            rankings = self.analyzer.calculate_power_rankings(recent_updates)
-            
-            embed = discord.Embed(
-                title="🏆 Big Brother Power Rankings",
-                description="Weekly power rankings based on strategic positioning",
-                color=0xf39c12,
-                timestamp=datetime.now()
-            )
-            
-            for i, player in enumerate(rankings[:10], 1):
-                rank_emoji = {1: "🥇", 2: "🥈", 3: "🥉"}.get(i, f"{i}.")
-                
-                embed.add_field(
-                    name=f"{rank_emoji} {player['name']}",
-                    value=f"**Score:** {player['power_ranking']:.1f}\n**Strategy:** {player['strategy_mentions']} mentions",
-                    inline=True
-                )
-            
-            embed.set_footer(text="Based on strategic mentions and game activity")
-            await ctx.send(embed=embed)
-            
-        except Exception as e:
-            logger.error(f"Error generating power rankings: {e}")
-            await ctx.send("Error generating power rankings. Please try again.")
-    
-    @commands.command(name='alliances')
-    async def show_alliances(self, ctx):
-        """Show detected alliances"""
-        try:
-            embed = discord.Embed(
-                title="🤝 Detected Alliances",
-                description="Active alliances based on update analysis",
-                color=0x9b59b6,
-                timestamp=datetime.now()
+        embed.add_field(
+            name="
