@@ -26,22 +26,27 @@ def setup_logging():
     log_dir = Path("logs")
     log_dir.mkdir(exist_ok=True)
     
+    # Create formatters
     detailed_formatter = logging.Formatter(
         '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
     )
     
+    # File handler for all logs
     file_handler = logging.FileHandler(log_dir / "bb_bot.log")
     file_handler.setLevel(logging.INFO)
     file_handler.setFormatter(detailed_formatter)
     
+    # Error file handler
     error_handler = logging.FileHandler(log_dir / "bb_bot_errors.log")
     error_handler.setLevel(logging.ERROR)
     error_handler.setFormatter(detailed_formatter)
     
+    # Console handler
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(logging.INFO)
     console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
     
+    # Root logger
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     root_logger.addHandler(file_handler)
@@ -74,6 +79,7 @@ class Config:
     
     def load_config(self) -> dict:
         """Load configuration from environment variables or file"""
+        # Try environment variables first (for cloud deployment)
         config = {
             "bot_token": os.getenv('BOT_TOKEN', ''),
             "update_channel_id": int(os.getenv('UPDATE_CHANNEL_ID', '0')) or None,
@@ -88,6 +94,7 @@ class Config:
             "max_consecutive_errors": int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
         }
         
+        # If no bot token from environment, try config file
         if not config["bot_token"] and self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
@@ -139,23 +146,6 @@ class BBAnalyzer:
             'showmance', 'romance', 'flirting', 'cuddle', 'kiss',
             'relationship', 'attracted', 'feelings'
         ]
-        
-        # Enhanced features
-        self.bb27_houseguests = [
-            "Angela", "Tucker", "Makensy", "Cam", "Chelsie", 
-            "Rubina", "Kimo", "Leah", "Quinn", "Joseph",
-            "T'Kor", "Cedric", "Brooklyn", "Kenney", "Lisa"
-        ]
-        
-        self.sentiment_positive = [
-            'happy', 'excited', 'love', 'amazing', 'great', 'wonderful', 
-            'perfect', 'fantastic', 'awesome', 'good', 'fun', 'laugh'
-        ]
-        
-        self.sentiment_negative = [
-            'angry', 'hate', 'mad', 'upset', 'annoyed', 'frustrated',
-            'terrible', 'awful', 'bad', 'worst', 'annoying', 'drama'
-        ]
     
     def categorize_update(self, update: BBUpdate) -> List[str]:
         """Categorize an update based on its content"""
@@ -178,14 +168,11 @@ class BBAnalyzer:
     
     def extract_houseguests(self, text: str) -> List[str]:
         """Extract houseguest names from text"""
-        mentioned_houseguests = []
-        text_lower = text.lower()
+        houseguest_pattern = r'\b[A-Z][a-z]+\b'
+        potential_names = re.findall(houseguest_pattern, text)
         
-        for houseguest in self.bb27_houseguests:
-            if houseguest.lower() in text_lower:
-                mentioned_houseguests.append(houseguest)
-        
-        return mentioned_houseguests
+        exclude_words = {'The', 'This', 'That', 'They', 'Some', 'Many', 'Other', 'First', 'Last'}
+        return [name for name in potential_names if name not in exclude_words]
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
         """Rate strategic importance from 1-10"""
@@ -202,30 +189,9 @@ class BBAnalyzer:
             score += 2
         
         return min(score, 10)
-    
-    def analyze_sentiment(self, text: str) -> Dict[str, float]:
-        """Analyze sentiment of text"""
-        text_lower = text.lower()
-        
-        positive_score = sum(1 for word in self.sentiment_positive if word in text_lower)
-        negative_score = sum(1 for word in self.sentiment_negative if word in text_lower)
-        
-        total_words = len(text_lower.split())
-        if total_words == 0:
-            return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
-        
-        positive_ratio = positive_score / total_words
-        negative_ratio = negative_score / total_words
-        neutral_ratio = 1 - (positive_ratio + negative_ratio)
-        
-        return {
-            "positive": positive_ratio,
-            "negative": negative_ratio, 
-            "neutral": max(0, neutral_ratio)
-        }
 
 class BBDatabase:
-    """Handles database operations"""
+    """Handles database operations with connection pooling and error recovery"""
     
     def __init__(self, db_path: str = "bb_updates.db"):
         self.db_path = db_path
@@ -233,7 +199,7 @@ class BBDatabase:
         self.init_database()
     
     def get_connection(self):
-        """Get database connection"""
+        """Get database connection with proper error handling"""
         try:
             conn = sqlite3.connect(
                 self.db_path, 
@@ -248,7 +214,7 @@ class BBDatabase:
             raise
     
     def init_database(self):
-        """Initialize the database schema"""
+        """Initialize the database schema with proper indexing"""
         conn = self.get_connection()
         try:
             cursor = conn.cursor()
@@ -341,7 +307,7 @@ class BBDatabase:
             return []
 
 class BBDiscordBot(commands.Bot):
-    """Main Discord bot class"""
+    """Main Discord bot class with 24/7 reliability features"""
     
     def __init__(self):
         self.config = Config()
@@ -440,8 +406,6 @@ class BBDiscordBot(commands.Bot):
         """Create a Discord embed for an update"""
         categories = self.analyzer.categorize_update(update)
         importance = self.analyzer.analyze_strategic_importance(update)
-        houseguests = self.analyzer.extract_houseguests(f"{update.title} {update.description}")
-        sentiment = self.analyzer.analyze_sentiment(f"{update.title} {update.description}")
         
         colors = {
             1: 0x95a5a6, 2: 0x3498db, 3: 0x2ecc71, 4: 0xf39c12, 5: 0xe74c3c
@@ -465,14 +429,7 @@ class BBDiscordBot(commands.Bot):
         importance_stars = "⭐" * importance
         embed.add_field(name="Strategic Importance", value=f"{importance_stars} ({importance}/10)", inline=True)
         
-        # Add sentiment indicator
-        if sentiment["positive"] > 0.1:
-            embed.add_field(name="House Mood", value="😊 Positive", inline=True)
-        elif sentiment["negative"] > 0.1:
-            embed.add_field(name="House Mood", value="😤 Tense", inline=True)
-        else:
-            embed.add_field(name="House Mood", value="😐 Neutral", inline=True)
-        
+        houseguests = self.analyzer.extract_houseguests(f"{update.title} {update.description}")
         if houseguests:
             houseguests_text = ", ".join(houseguests[:5])
             if len(houseguests) > 5:
@@ -567,7 +524,7 @@ class BBDiscordBot(commands.Bot):
                     categories[category].append(update)
             
             embed = discord.Embed(
-                title=f"📊 Big Brother Updates Summary ({hours}h)",
+                title=f"Big Brother Updates Summary ({hours}h)",
                 description=f"**{len(updates)} total updates**",
                 color=0x3498db,
                 timestamp=datetime.now()
@@ -622,7 +579,7 @@ class BBDiscordBot(commands.Bot):
         """Show bot status"""
         try:
             embed = discord.Embed(
-                title="🤖 Big Brother Bot Status",
+                title="Big Brother Bot Status",
                 color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
                 timestamp=datetime.now()
             )
@@ -642,129 +599,6 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error generating status: {e}")
             await ctx.send("Error generating status.")
-    
-    # TEST COMMANDS
-    @commands.command(name='testanalyzer')
-    async def test_analyzer(self, ctx):
-        """Test the AI analyzer with sample updates"""
-        
-        sample_updates = [
-            {
-                "title": "HOH Competition Results - Week 3",
-                "description": "Sarah wins Head of Household competition after intense endurance challenge. She's already talking about backdooring Michael who has been getting too close to everyone. The house is buzzing with speculation about nominations.",
-                "author": "BBUpdater1"
-            },
-            {
-                "title": "Kitchen Blowup",
-                "description": "Huge argument between Lisa and Michael over dirty dishes. Lisa called Michael out for being messy and not doing his share. Michael got defensive and things escalated quickly with other houseguests taking sides.",
-                "author": "DramaAlert"
-            },
-            {
-                "title": "Showmance Alert",
-                "description": "Things are heating up between Jake and Amanda. They were spotted cuddling in the hammock and had a long romantic conversation under the stars. Other houseguests are starting to notice their connection.",
-                "author": "LoveWatcher"
-            }
-        ]
-        
-        embed = discord.Embed(
-            title="🧪 AI Analyzer Test Results",
-            description="Testing Big Brother update analysis with sample data",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        for i, sample in enumerate(sample_updates, 1):
-            mock_update = BBUpdate(
-                title=sample["title"],
-                description=sample["description"],
-                link=f"https://example.com/update{i}",
-                pub_date=datetime.now(),
-                content_hash=f"test_hash_{i}",
-                author=sample["author"]
-            )
-            
-            categories = self.analyzer.categorize_update(mock_update)
-            importance = self.analyzer.analyze_strategic_importance(mock_update)
-            houseguests = self.analyzer.extract_houseguests(f"{mock_update.title} {mock_update.description}")
-            sentiment = self.analyzer.analyze_sentiment(f"{mock_update.title} {mock_update.description}")
-            
-            analysis = []
-            analysis.append(f"**Categories:** {' | '.join(categories)}")
-            analysis.append(f"**Importance:** {'⭐' * importance} ({importance}/10)")
-            
-            if sentiment["positive"] > 0.1:
-                analysis.append(f"**Sentiment:** 😊 Positive")
-            elif sentiment["negative"] > 0.1:
-                analysis.append(f"**Sentiment:** 😤 Negative")
-            else:
-                analysis.append(f"**Sentiment:** 😐 Neutral")
-            
-            if houseguests:
-                analysis.append(f"**Houseguests:** {', '.join(houseguests[:3])}")
-            
-            embed.add_field(
-                name=f"#{i}: {sample['title'][:50]}...",
-                value="\n".join(analysis),
-                inline=False
-            )
-        
-        await ctx.send(embed=embed)
-    
-    @commands.command(name='testembeds')
-    async def test_embeds(self, ctx):
-        """Test how Discord embeds will look"""
-        
-        strategic_update = BBUpdate(
-            title="BREAKING: Massive Backdoor Plan Revealed",
-            description="Sarah wins HOH and immediately starts planning to backdoor Michael. She's been building this plan for weeks with her secret alliance. Jessica and David are fully on board. They plan to nominate pawns initially, then use veto ceremony to put Michael on the block.",
-            link="https://jokersupdates.com/strategic-update",
-            pub_date=datetime.now(),
-            content_hash="strategic_test",
-            author="StrategyWatcher"
-        )
-        
-        strategic_embed = self.create_update_embed(strategic_update)
-        await ctx.send("**🎯 High-Stakes Strategic Update Example:**", embed=strategic_embed)
-        
-        await asyncio.sleep(2)
-        
-        drama_update = BBUpdate(
-            title="Kitchen Confrontation Escalates",
-            description="Lisa and Michael's argument about dishes turned into a house-wide conflict. Lisa accused Michael of being lazy and entitled. Michael fired back calling Lisa controlling and dramatic. Other houseguests are picking sides and the tension is thick.",
-            link="https://jokersupdates.com/drama-update",
-            pub_date=datetime.now(),
-            content_hash="drama_test",
-            author="DramaAlert"
-        )
-        
-        drama_embed = self.create_update_embed(drama_update)
-        await ctx.send("**💥 Drama Update Example:**", embed=drama_embed)
-    
-    @commands.command(name='testhelp')
-    async def test_help(self, ctx):
-        """Show all available test commands"""
-        
-        embed = discord.Embed(
-            title="🧪 Big Brother Bot Test Commands",
-            description="Test the AI analysis features",
-            color=0x9b59b6
-        )
-        
-        embed.add_field(
-            name="!bbtestembeds", 
-            value="See how different update types will look in Discord",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="!bbsummary [hours]",
-            value="Generate summary of updates (works with test data)",
-            inline=False
-        )
-        
-        embed.set_footer(text="These commands work without needing live Big Brother updates!")
-        
-        await ctx.send(embed=embed)
 
 def main():
     """Main function to run the bot"""
@@ -785,22 +619,15 @@ def main():
         async def commands_help(ctx):
             """Show available commands"""
             embed = discord.Embed(
-                title="🏠 Big Brother Bot Commands",
-                description="AI-powered Big Brother analysis",
+                title="Big Brother Bot Commands",
+                description="Monitor Jokers Updates RSS feed with intelligent analysis",
                 color=0x3498db
             )
             
-            embed.add_field(name="**Main Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
             embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
             embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
             embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
-            
-            embed.add_field(name="**Test Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
-            embed.add_field(name="!bbtesthelp", value="Show all test commands", inline=False)
-            embed.add_field(name="!bbtestanalyzer", value="Test AI analysis with sample updates", inline=False)
-            embed.add_field(name="!bbtestembeds", value="See how updates will look in Discord", inline=False)
-            
-            embed.set_footer(text="Use test commands to try out features before Big Brother starts!")
+            embed.add_field(name="!bbcommands", value="Show this help message", inline=False)
             
             await ctx.send(embed=embed)
         
@@ -817,10 +644,4 @@ def main():
         logger.critical(traceback.format_exc())
 
 if __name__ == "__main__":
-    main()!bbtestanalyzer",
-            value="Test AI analysis with sample Big Brother updates",
-            inline=False
-        )
-        
-        embed.add_field(
-            name="
+    main()
