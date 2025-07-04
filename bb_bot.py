@@ -610,13 +610,13 @@ def main():
             if isinstance(error, commands.MissingPermissions):
                 await ctx.send("You don't have permission to use this command.")
             elif isinstance(error, commands.CommandNotFound):
-                await ctx.send("Command not found. Use `!bbhelp` for available commands.")
+                await ctx.send("Command not found. Use `!bbcommands` for available commands.")
             else:
                 logger.error(f"Command error: {error}")
                 await ctx.send("An error occurred while processing the command.")
         
-       @bot.command(name='bbhelp')
-        async def help_command(ctx):
+        @bot.command(name='commands')
+        async def commands_help(ctx):
             """Show available commands"""
             embed = discord.Embed(
                 title="Big Brother Bot Commands",
@@ -627,6 +627,7 @@ def main():
             embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
             embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
             embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
+            embed.add_field(name="!bbcommands", value="Show this help message", inline=False)
             
             await ctx.send(embed=embed)
         
