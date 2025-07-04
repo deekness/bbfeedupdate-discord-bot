@@ -219,6 +219,7 @@ class BBDatabase:
         try:
             cursor = conn.cursor()
             
+            # Updates table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS updates (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -234,8 +235,28 @@ class BBDatabase:
                 )
             """)
             
+            # Predictions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    user_id TEXT,
+                    user_name TEXT,
+                    prediction_type TEXT,
+                    prediction_target TEXT,
+                    prediction_value TEXT,
+                    confidence INTEGER DEFAULT 5,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    resolved_at TIMESTAMP,
+                    was_correct BOOLEAN,
+                    season INTEGER DEFAULT 27
+                )
+            """)
+            
+            # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_user ON predictions(user_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_type ON predictions(prediction_type)")
             
             conn.commit()
             logger.info("Database initialized successfully")
@@ -305,6 +326,95 @@ class BBDatabase:
         except Exception as e:
             logger.error(f"Database query error: {e}")
             return []
+    
+    def store_prediction(self, user_id: str, user_name: str, prediction_type: str, 
+                        prediction_target: str, prediction_value: str, confidence: int = 5):
+        """Store a user prediction"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO predictions (user_id, user_name, prediction_type, prediction_target, 
+                                       prediction_value, confidence, season)
+                VALUES (?, ?, ?, ?, ?, ?, 27)
+            """, (user_id, user_name, prediction_type, prediction_target, prediction_value, confidence))
+            
+            conn.commit()
+            conn.close()
+            logger.info(f"Stored prediction: {user_name} predicts {prediction_type} - {prediction_target}")
+            
+        except Exception as e:
+            logger.error(f"Error storing prediction: {e}")
+            raise
+    
+    def get_user_predictions(self, user_id: str) -> List[Dict]:
+        """Get all predictions for a user"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT prediction_type, prediction_target, prediction_value, confidence, 
+                       created_at, was_correct, resolved_at
+                FROM predictions 
+                WHERE user_id = ? AND season = 27
+                ORDER BY created_at DESC
+            """, (user_id,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            predictions = []
+            for row in results:
+                predictions.append({
+                    'type': row[0],
+                    'target': row[1],
+                    'value': row[2],
+                    'confidence': row[3],
+                    'created_at': row[4],
+                    'was_correct': row[5],
+                    'resolved_at': row[6]
+                })
+            
+            return predictions
+            
+        except Exception as e:
+            logger.error(f"Error getting user predictions: {e}")
+            return []
+    
+    def get_user_prediction_stats(self, user_id: str) -> Dict:
+        """Get prediction statistics for a user"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Total predictions
+            cursor.execute("SELECT COUNT(*) FROM predictions WHERE user_id = ? AND season = 27", (user_id,))
+            total = cursor.fetchone()[0]
+            
+            # Correct predictions
+            cursor.execute("SELECT COUNT(*) FROM predictions WHERE user_id = ? AND season = 27 AND was_correct = 1", (user_id,))
+            correct = cursor.fetchone()[0]
+            
+            # Resolved predictions
+            cursor.execute("SELECT COUNT(*) FROM predictions WHERE user_id = ? AND season = 27 AND resolved_at IS NOT NULL", (user_id,))
+            resolved = cursor.fetchone()[0]
+            
+            conn.close()
+            
+            accuracy = (correct / resolved * 100) if resolved > 0 else 0
+            
+            return {
+                'total_predictions': total,
+                'correct_predictions': correct,
+                'resolved_predictions': resolved,
+                'accuracy_percentage': accuracy
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting prediction stats: {e}")
+            return {'total_predictions': 0, 'correct_predictions': 0, 'resolved_predictions': 0, 'accuracy_percentage': 0}
 
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
@@ -501,6 +611,217 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
     
+    # PREDICTION GAME COMMANDS
+    @commands.command(name='predict')
+    async def make_prediction(self, ctx, prediction_type: str = None, *, prediction_target: str = None):
+        """Make a prediction about Big Brother events"""
+        
+        if not prediction_type:
+            # Show help message
+            embed = discord.Embed(
+                title="🔮 Big Brother Prediction Game",
+                description="Make predictions about Big Brother events and track your accuracy!",
+                color=0x9b59b6
+            )
+            
+            embed.add_field(
+                name="How to Use",
+                value="`!bbpredict [type] [target/details]`",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Prediction Types",
+                value="• `eviction` - Who will be evicted\n• `hoh` - Who will win HOH\n• `pov` - Who will win Power of Veto\n• `winner` - Who will win Big Brother\n• `jury` - Who will make jury",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="Examples",
+                value="• `!bbpredict eviction Tucker`\n• `!bbpredict hoh Angela week 4`\n• `!bbpredict winner Chelsie`\n• `!bbpredict jury Makensy and Cam`",
+                inline=False
+            )
+            
+            embed.set_footer(text="Your predictions are tracked for accuracy scoring!")
+            await ctx.send(embed=embed)
+            return
+        
+        if not prediction_target:
+            await ctx.send("Please specify what you're predicting! Use `!bbpredict` for examples.")
+            return
+        
+        # Validate prediction type
+        valid_types = ['eviction', 'hoh', 'pov', 'winner', 'jury', 'finale']
+        if prediction_type.lower() not in valid_types:
+            await ctx.send(f"Invalid prediction type. Valid types: {', '.join(valid_types)}")
+            return
+        
+        try:
+            # Store the prediction
+            user_id = str(ctx.author.id)
+            user_name = ctx.author.display_name
+            
+            self.db.store_prediction(
+                user_id=user_id,
+                user_name=user_name,
+                prediction_type=prediction_type.lower(),
+                prediction_target=prediction_target.lower(),
+                prediction_value=prediction_target,
+                confidence=5
+            )
+            
+            # Create confirmation embed
+            embed = discord.Embed(
+                title="🔮 Prediction Recorded!",
+                description=f"Your prediction has been saved and will be tracked for accuracy.",
+                color=0x2ecc71,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(name="Type", value=prediction_type.title(), inline=True)
+            embed.add_field(name="Prediction", value=prediction_target, inline=True)
+            embed.add_field(name="Predictor", value=ctx.author.display_name, inline=True)
+            
+            embed.set_footer(text="Use !bbmypredictions to see all your predictions")
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error storing prediction: {e}")
+            await ctx.send("Error saving your prediction. Please try again.")
+    
+    @commands.command(name='mypredictions')
+    async def show_my_predictions(self, ctx):
+        """Show all predictions made by the user"""
+        try:
+            user_id = str(ctx.author.id)
+            predictions = self.db.get_user_predictions(user_id)
+            
+            if not predictions:
+                embed = discord.Embed(
+                    title="🔮 Your Predictions",
+                    description="You haven't made any predictions yet! Use `!bbpredict` to get started.",
+                    color=0x9b59b6
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            embed = discord.Embed(
+                title="🔮 Your Big Brother Predictions",
+                description=f"You've made {len(predictions)} predictions for BB27",
+                color=0x9b59b6,
+                timestamp=datetime.now()
+            )
+            
+            # Show recent predictions (last 10)
+            recent_predictions = predictions[:10]
+            
+            for prediction in recent_predictions:
+                # Format date
+                created_date = datetime.fromisoformat(prediction['created_at'])
+                date_str = created_date.strftime("%m/%d")
+                
+                # Status
+                if prediction['was_correct'] is None:
+                    status = "⏳ Pending"
+                elif prediction['was_correct']:
+                    status = "✅ Correct"
+                else:
+                    status = "❌ Wrong"
+                
+                embed.add_field(
+                    name=f"{prediction['type'].title()}: {prediction['value']}",
+                    value=f"**Made:** {date_str}\n**Status:** {status}",
+                    inline=True
+                )
+            
+            if len(predictions) > 10:
+                embed.set_footer(text=f"Showing 10 most recent predictions out of {len(predictions)} total")
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error showing predictions: {e}")
+            await ctx.send("Error retrieving your predictions. Please try again.")
+    
+    @commands.command(name='mystats')
+    async def show_my_stats(self, ctx):
+        """Show prediction accuracy statistics"""
+        try:
+            user_id = str(ctx.author.id)
+            stats = self.db.get_user_prediction_stats(user_id)
+            
+            if stats['total_predictions'] == 0:
+                embed = discord.Embed(
+                    title="📊 Your Prediction Stats",
+                    description="You haven't made any predictions yet! Use `!bbpredict` to get started.",
+                    color=0x9b59b6
+                )
+                await ctx.send(embed=embed)
+                return
+            
+            # Determine color based on accuracy
+            accuracy = stats['accuracy_percentage']
+            if accuracy >= 80:
+                color = 0x2ecc71  # Green
+            elif accuracy >= 60:
+                color = 0xf39c12  # Orange
+            elif accuracy >= 40:
+                color = 0xe74c3c  # Red
+            else:
+                color = 0x95a5a6  # Gray
+            
+            embed = discord.Embed(
+                title="📊 Your Prediction Stats",
+                description=f"Season 27 prediction performance for {ctx.author.display_name}",
+                color=color,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(
+                name="Total Predictions",
+                value=str(stats['total_predictions']),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Resolved",
+                value=str(stats['resolved_predictions']),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="Correct",
+                value=str(stats['correct_predictions']),
+                inline=True
+            )
+            
+            # Accuracy with visual representation
+            embed.add_field(
+                name="Accuracy",
+                value=f"{accuracy_bar}\n{accuracy:.1f}%",
+                inline=False
+            )
+            
+            # Add some encouragement based on performance
+            if accuracy >= 80:
+                embed.add_field(name="🏆 Status", value="Big Brother Oracle! Amazing accuracy!", inline=False)
+            elif accuracy >= 60:
+                embed.add_field(name="🎯 Status", value="Strategic Mastermind! Great predictions!", inline=False)
+            elif accuracy >= 40:
+                embed.add_field(name="📈 Status", value="Getting better! Keep making predictions!", inline=False)
+            elif stats['resolved_predictions'] == 0:
+                embed.add_field(name="⏳ Status", value="Waiting for predictions to be resolved!", inline=False)
+            else:
+                embed.add_field(name="🎲 Status", value="Everyone starts somewhere! Keep predicting!", inline=False)
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error showing prediction stats: {e}")
+            await ctx.send("Error retrieving your stats. Please try again.")
+    
+    # ORIGINAL COMMANDS
     @commands.command(name='summary')
     async def daily_summary(self, ctx, hours: int = 24):
         """Generate a summary of updates"""
@@ -624,10 +945,17 @@ def main():
                 color=0x3498db
             )
             
+            embed.add_field(name="📊 **Main Commands**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
             embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
             embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
             embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
-            embed.add_field(name="!bbcommands", value="Show this help message", inline=False)
+            
+            embed.add_field(name="🔮 **Prediction Game**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
+            embed.add_field(name="!bbpredict [type] [target]", value="Make predictions about BB events", inline=False)
+            embed.add_field(name="!bbmypredictions", value="View your prediction history", inline=False)
+            embed.add_field(name="!bbmystats", value="View your prediction accuracy", inline=False)
+            
+            embed.set_footer(text="Start making predictions now - they'll be tracked for accuracy!")
             
             await ctx.send(embed=embed)
         
@@ -636,7 +964,7 @@ def main():
             logger.error("No bot token found!")
             return
         
-        logger.info("Starting Big Brother Discord Bot...")
+        logger.info("Starting Big Brother Discord Bot with Prediction Game...")
         bot.run(bot_token, reconnect=True)
         
     except Exception as e:
