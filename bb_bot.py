@@ -146,6 +146,34 @@ class BBAnalyzer:
             'showmance', 'romance', 'flirting', 'cuddle', 'kiss',
             'relationship', 'attracted', 'feelings'
         ]
+        
+        # Eviction likelihood analysis keywords
+        self.targeting_keywords = [
+            'target', 'backdoor', 'going home', 'evict', 'vote out', 
+            'get rid of', 'eliminate', 'wants out', 'sending home'
+        ]
+        
+        self.safety_keywords = [
+            'safe', 'protected', 'immune', 'alliance', 'tight with',
+            'good with', 'working with', 'keeping', 'trust'
+        ]
+        
+        self.campaign_keywords = [
+            'campaigning', 'campaign', 'votes', 'staying', 'fighting',
+            'talking to', 'convincing', 'pleading', 'begging'
+        ]
+        
+        self.isolation_keywords = [
+            'alone', 'isolated', 'no allies', 'everyone against',
+            'outsider', 'bottom', 'expendable', 'floater'
+        ]
+        
+        # Current BB27 houseguests for analysis
+        self.houseguests = [
+            'Angela', 'Tucker', 'Makensy', 'Cam', 'Chelsie', 
+            'Rubina', 'Kimo', 'Leah', 'Quinn', 'Joseph',
+            'T\'Kor', 'Cedric', 'Brooklyn', 'Kenney', 'Lisa'
+        ]
     
     def categorize_update(self, update: BBUpdate) -> List[str]:
         """Categorize an update based on its content"""
@@ -167,12 +195,99 @@ class BBAnalyzer:
         return categories if categories else ["📝 General"]
     
     def extract_houseguests(self, text: str) -> List[str]:
-        """Extract houseguest names from text"""
-        houseguest_pattern = r'\b[A-Z][a-z]+\b'
-        potential_names = re.findall(houseguest_pattern, text)
+        """Extract houseguest names from text using known houseguest list"""
+        mentioned_houseguests = []
+        text_lower = text.lower()
         
-        exclude_words = {'The', 'This', 'That', 'They', 'Some', 'Many', 'Other', 'First', 'Last'}
-        return [name for name in potential_names if name not in exclude_words]
+        for houseguest in self.houseguests:
+            if houseguest.lower() in text_lower:
+                mentioned_houseguests.append(houseguest)
+        
+        return mentioned_houseguests
+    
+    def analyze_eviction_likelihood(self, updates: List[BBUpdate]) -> Dict[str, Dict]:
+        """Analyze eviction likelihood for each houseguest based on recent updates"""
+        
+        # Initialize likelihood scores for each houseguest
+        likelihood_scores = {}
+        for houseguest in self.houseguests:
+            likelihood_scores[houseguest] = {
+                'target_score': 0,
+                'safety_score': 0,
+                'campaign_score': 0,
+                'isolation_score': 0,
+                'total_mentions': 0,
+                'reasons': [],
+                'likelihood_percentage': 0,
+                'trend': 'stable'
+            }
+        
+        # Analyze each update
+        for update in updates:
+            content = f"{update.title} {update.description}".lower()
+            mentioned_houseguests = self.extract_houseguests(content)
+            
+            for houseguest in mentioned_houseguests:
+                hg_data = likelihood_scores[houseguest]
+                hg_data['total_mentions'] += 1
+                
+                # Check for targeting language
+                if any(keyword in content for keyword in self.targeting_keywords):
+                    hg_data['target_score'] += 3
+                    hg_data['reasons'].append(f"Mentioned as target in: {update.title[:50]}...")
+                
+                # Check for safety indicators
+                if any(keyword in content for keyword in self.safety_keywords):
+                    hg_data['safety_score'] += 2
+                    hg_data['reasons'].append(f"Mentioned as safe in: {update.title[:50]}...")
+                
+                # Check for campaign activity
+                if any(keyword in content for keyword in self.campaign_keywords):
+                    hg_data['campaign_score'] += 1
+                    hg_data['reasons'].append(f"Campaign activity in: {update.title[:50]}...")
+                
+                # Check for isolation indicators
+                if any(keyword in content for keyword in self.isolation_keywords):
+                    hg_data['isolation_score'] += 2
+                    hg_data['reasons'].append(f"Isolation mentioned in: {update.title[:50]}...")
+        
+        # Calculate final likelihood percentages
+        for houseguest, data in likelihood_scores.items():
+            if data['total_mentions'] == 0:
+                data['likelihood_percentage'] = 0
+                data['confidence'] = 'No Data'
+                continue
+            
+            # Calculate weighted score
+            danger_score = (data['target_score'] * 1.5) + (data['isolation_score'] * 1.2) + (data['campaign_score'] * 0.8)
+            safety_score = data['safety_score']
+            
+            # Net risk score
+            net_score = danger_score - safety_score
+            
+            # Convert to percentage (0-100)
+            if net_score <= 0:
+                likelihood = 0
+            else:
+                # Scale based on mention frequency and danger indicators
+                likelihood = min(100, (net_score / data['total_mentions']) * 20)
+            
+            data['likelihood_percentage'] = likelihood
+            
+            # Determine confidence level
+            if data['total_mentions'] >= 5:
+                data['confidence'] = 'High'
+            elif data['total_mentions'] >= 3:
+                data['confidence'] = 'Medium'
+            elif data['total_mentions'] >= 1:
+                data['confidence'] = 'Low'
+            else:
+                data['confidence'] = 'No Data'
+            
+            # Limit reasons to top 3
+            data['reasons'] = data['reasons'][:3]
+        
+        return likelihood_scores
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
         """Rate strategic importance from 1-10"""
@@ -611,7 +726,192 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
     
-    # PREDICTION GAME COMMANDS
+    # EVICTION LIKELIHOOD COMMAND
+    @commands.command(name='eviction')
+    async def eviction_likelihood(self, ctx, hours: int = 72):
+        """Show eviction likelihood analysis based on recent updates"""
+        try:
+            if hours < 1 or hours > 168:
+                await ctx.send("Hours must be between 1 and 168 (1 week max)")
+                return
+            
+            # Get recent updates
+            updates = self.db.get_recent_updates(hours)
+            
+            if not updates:
+                await ctx.send(f"No updates found in the last {hours} hours to analyze.")
+                return
+            
+            # Analyze eviction likelihood
+            likelihood_data = self.analyzer.analyze_eviction_likelihood(updates)
+            
+            # Filter out houseguests with no mentions and sort by likelihood
+            analyzed_houseguests = {k: v for k, v in likelihood_data.items() if v['total_mentions'] > 0}
+            
+            if not analyzed_houseguests:
+                await ctx.send("No houseguests mentioned in recent updates.")
+                return
+            
+            # Sort by likelihood percentage (highest first)
+            sorted_houseguests = sorted(analyzed_houseguests.items(), 
+                                      key=lambda x: x[1]['likelihood_percentage'], 
+                                      reverse=True)
+            
+            # Create main embed
+            embed = discord.Embed(
+                title="🎯 Eviction Likelihood Analysis",
+                description=f"Based on {len(updates)} updates from the last {hours} hours",
+                color=0xe74c3c,
+                timestamp=datetime.now()
+            )
+            
+            # Add top 8 houseguests (to fit in embed)
+            for i, (houseguest, data) in enumerate(sorted_houseguests[:8]):
+                likelihood = data['likelihood_percentage']
+                confidence = data['confidence']
+                
+                # Risk level indicators
+                if likelihood >= 70:
+                    risk_emoji = "🔴"
+                    risk_level = "EXTREME"
+                elif likelihood >= 50:
+                    risk_emoji = "🟠"
+                    risk_level = "HIGH"
+                elif likelihood >= 30:
+                    risk_emoji = "🟡"
+                    risk_level = "MEDIUM"
+                elif likelihood >= 10:
+                    risk_emoji = "🟢"
+                    risk_level = "LOW"
+                else:
+                    risk_emoji = "⚪"
+                    risk_level = "MINIMAL"
+                
+                # Create progress bar
+                bar_length = 10
+                filled_length = int(likelihood / 10)
+                progress_bar = "█" * filled_length + "░" * (bar_length - filled_length)
+                
+                field_value = f"{risk_emoji} **{risk_level}** - {likelihood:.1f}%\n"
+                field_value += f"{progress_bar}\n"
+                field_value += f"**Confidence:** {confidence} ({data['total_mentions']} mentions)"
+                
+                embed.add_field(
+                    name=f"#{i+1} {houseguest}",
+                    value=field_value,
+                    inline=True
+                )
+            
+            # Add analysis summary
+            total_analyzed = len(analyzed_houseguests)
+            high_risk_count = sum(1 for _, data in analyzed_houseguests.items() if data['likelihood_percentage'] >= 50)
+            
+            embed.add_field(
+                name="📊 Analysis Summary",
+                value=f"• **{total_analyzed}** houseguests analyzed\n• **{high_risk_count}** in high danger\n• **{len(updates)}** updates processed",
+                inline=False
+            )
+            
+            embed.set_footer(text="Analysis based on targeting language, campaign activity, and social positioning")
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error generating eviction likelihood: {e}")
+            await ctx.send("Error analyzing eviction likelihood. Please try again.")
+    
+    @commands.command(name='danger')
+    async def danger_details(self, ctx, houseguest: str = None):
+        """Show detailed danger analysis for a specific houseguest"""
+        try:
+            if not houseguest:
+                await ctx.send("Please specify a houseguest! Example: `!bbdanger Tucker`")
+                return
+            
+            # Find matching houseguest (case insensitive)
+            houseguest_match = None
+            for hg in self.analyzer.houseguests:
+                if hg.lower() == houseguest.lower():
+                    houseguest_match = hg
+                    break
+            
+            if not houseguest_match:
+                await ctx.send(f"Houseguest '{houseguest}' not found. Available: {', '.join(self.analyzer.houseguests)}")
+                return
+            
+            # Get recent updates and analyze
+            updates = self.db.get_recent_updates(72)  # Last 3 days
+            likelihood_data = self.analyzer.analyze_eviction_likelihood(updates)
+            
+            hg_data = likelihood_data.get(houseguest_match)
+            if not hg_data or hg_data['total_mentions'] == 0:
+                await ctx.send(f"{houseguest_match} hasn't been mentioned in recent updates.")
+                return
+            
+            likelihood = hg_data['likelihood_percentage']
+            
+            # Determine color based on risk level
+            if likelihood >= 70:
+                color = 0xe74c3c  # Red
+                risk_level = "🔴 EXTREME DANGER"
+            elif likelihood >= 50:
+                color = 0xf39c12  # Orange
+                risk_level = "🟠 HIGH DANGER"
+            elif likelihood >= 30:
+                color = 0xf1c40f  # Yellow
+                risk_level = "🟡 MEDIUM DANGER"
+            elif likelihood >= 10:
+                color = 0x2ecc71  # Green
+                risk_level = "🟢 LOW DANGER"
+            else:
+                color = 0x95a5a6  # Gray
+                risk_level = "⚪ MINIMAL DANGER"
+            
+            embed = discord.Embed(
+                title=f"🎯 Danger Analysis: {houseguest_match}",
+                description=f"**Risk Level:** {risk_level}",
+                color=color,
+                timestamp=datetime.now()
+            )
+            
+            # Likelihood with progress bar
+            bar_length = 20
+            filled_length = int(likelihood / 5)
+            progress_bar = "█" * filled_length + "░" * (bar_length - filled_length)
+            
+            embed.add_field(
+                name="Eviction Likelihood",
+                value=f"{progress_bar}\n**{likelihood:.1f}%** chance of eviction",
+                inline=False
+            )
+            
+            # Detailed scores
+            embed.add_field(
+                name="📊 Threat Indicators",
+                value=f"**Target Score:** {hg_data['target_score']}\n**Safety Score:** {hg_data['safety_score']}\n**Campaign Activity:** {hg_data['campaign_score']}\n**Isolation Level:** {hg_data['isolation_score']}",
+                inline=True
+            )
+            
+            embed.add_field(
+                name="📈 Analysis Data",
+                value=f"**Total Mentions:** {hg_data['total_mentions']}\n**Confidence:** {hg_data['confidence']}\n**Analysis Period:** 72 hours",
+                inline=True
+            )
+            
+            # Recent reasons
+            if hg_data['reasons']:
+                reasons_text = "\n".join([f"• {reason}" for reason in hg_data['reasons']])
+                embed.add_field(
+                    name="🔍 Recent Activity",
+                    value=reasons_text,
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error generating danger details: {e}")
+            await ctx.send("Error analyzing danger details. Please try again.")
     @commands.command(name='predict')
     async def make_prediction(self, ctx, prediction_type: str = None, *, prediction_target: str = None):
         """Make a prediction about Big Brother events"""
@@ -949,6 +1249,10 @@ def main():
             embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
             embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
             embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
+            
+            embed.add_field(name="🎯 **Eviction Analysis**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
+            embed.add_field(name="!bbeviction [hours]", value="Show eviction likelihood rankings", inline=False)
+            embed.add_field(name="!bbdanger [houseguest]", value="Detailed danger analysis for specific houseguest", inline=False)
             
             embed.add_field(name="🔮 **Prediction Game**", value="━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━", inline=False)
             embed.add_field(name="!bbpredict [type] [target]", value="Make predictions about BB events", inline=False)
