@@ -615,7 +615,7 @@ def main():
                 logger.error(f"Command error: {error}")
                 await ctx.send("An error occurred while processing the command.")
         
-        @bot.command(name='help')
+       @bot.command(name='bbhelp')
         async def help_command(ctx):
             """Show available commands"""
             embed = discord.Embed(
