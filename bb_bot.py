@@ -60,7 +60,7 @@ def setup_logging():
 logger = setup_logging()
 
 class Config:
-    """Configuration management for the bot"""
+    """Enhanced configuration management"""
     
     def __init__(self):
         self.config_file = Path("config.json")
@@ -78,36 +78,56 @@ class Config:
             "max_consecutive_errors": 10,
             "anthropic_api_key": "",
             "enable_llm_summaries": True,
-            "llm_model": "claude-3-haiku-20240307"
+            "llm_model": "claude-3-haiku-20240307",
+            "batch_mode": "intelligent",
+            "min_batch_size": 3,
+            "max_batch_wait_minutes": 30,
+            "urgent_batch_threshold": 2
         }
         self.config = self.load_config()
     
     def load_config(self) -> dict:
-        """Load configuration from environment variables or file"""
-        # Try environment variables first (for cloud deployment)
-        config = {
-            "bot_token": os.getenv('BOT_TOKEN', ''),
-            "update_channel_id": int(os.getenv('UPDATE_CHANNEL_ID', '0')) or None,
-            "rss_check_interval": int(os.getenv('RSS_CHECK_INTERVAL', '2')),
-            "max_retries": int(os.getenv('MAX_RETRIES', '3')),
-            "retry_delay": int(os.getenv('RETRY_DELAY', '5')),
-            "database_path": os.getenv('DATABASE_PATH', 'bb_updates.db'),
-            "enable_heartbeat": os.getenv('ENABLE_HEARTBEAT', 'true').lower() == 'true',
-            "heartbeat_interval": int(os.getenv('HEARTBEAT_INTERVAL', '300')),
-            "max_update_age_hours": int(os.getenv('MAX_UPDATE_AGE_HOURS', '168')),
-            "enable_auto_restart": os.getenv('ENABLE_AUTO_RESTART', 'true').lower() == 'true',
-            "max_consecutive_errors": int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10')),
-            "anthropic_api_key": os.getenv('ANTHROPIC_API_KEY', ''),
-            "enable_llm_summaries": os.getenv('ENABLE_LLM_SUMMARIES', 'true').lower() == 'true',
-            "llm_model": os.getenv('LLM_MODEL', 'claude-3-haiku-20240307')
+        """Load configuration with better validation"""
+        config = self.default_config.copy()
+        
+        # Environment variables (priority 1)
+        env_mappings = {
+            'BOT_TOKEN': 'bot_token',
+            'UPDATE_CHANNEL_ID': 'update_channel_id',
+            'ANTHROPIC_API_KEY': 'anthropic_api_key',
+            'RSS_CHECK_INTERVAL': 'rss_check_interval',
+            'LLM_MODEL': 'llm_model',
+            'BATCH_MODE': 'batch_mode'
         }
         
-        # If no bot token from environment, try config file
-        if not config["bot_token"] and self.config_file.exists():
+        for env_var, config_key in env_mappings.items():
+            env_value = os.getenv(env_var)
+            if env_value:
+                # Type conversion
+                if config_key == 'update_channel_id':
+                    try:
+                        config[config_key] = int(env_value) if env_value != '0' else None
+                    except ValueError:
+                        logger.warning(f"Invalid channel ID: {env_value}")
+                elif config_key in ['rss_check_interval', 'max_retries', 'retry_delay']:
+                    try:
+                        config[config_key] = int(env_value)
+                    except ValueError:
+                        logger.warning(f"Invalid integer for {config_key}: {env_value}")
+                elif config_key in ['enable_heartbeat', 'enable_llm_summaries']:
+                    config[config_key] = env_value.lower() == 'true'
+                else:
+                    config[config_key] = env_value
+        
+        # Config file (priority 2)
+        if self.config_file.exists():
             try:
                 with open(self.config_file, 'r') as f:
                     file_config = json.load(f)
-                    config.update(file_config)
+                    # Only use file config for missing env vars
+                    for key, value in file_config.items():
+                        if key in config and not os.getenv(key.upper()):
+                            config[key] = value
             except Exception as e:
                 logger.error(f"Error loading config file: {e}")
         
@@ -206,22 +226,34 @@ class UpdateBatcher:
         self.analyzer = analyzer
         self.update_queue = []
         self.last_batch_time = datetime.now()
-        self.processed_hashes = set()  # Prevent duplicate processing
+        self.processed_hashes = set()
         
-        # Initialize Anthropic client if API key provided
+        # Initialize Anthropic client with better error handling
         self.llm_client = None
-        if api_key:
+        self.llm_model = "claude-3-haiku-20240307"
+        
+        if api_key and api_key.strip():
             try:
-                self.llm_client = anthropic.Anthropic(api_key=api_key)
-                logger.info("LLM integration initialized")
+                self.llm_client = anthropic.Anthropic(api_key=api_key.strip())
+                # Test the connection
+                test_response = self.llm_client.messages.create(
+                    model=self.llm_model,
+                    max_tokens=10,
+                    messages=[{"role": "user", "content": "Test"}]
+                )
+                logger.info("LLM integration initialized successfully")
             except Exception as e:
                 logger.error(f"Failed to initialize LLM: {e}")
+                self.llm_client = None
+        else:
+            logger.warning("No valid Anthropic API key provided")
         
         # Game-defining moments that need immediate attention
         self.urgent_keywords = [
             'evicted', 'eliminated', 'wins hoh', 'wins pov', 'backdoor', 
             'self-evict', 'expelled', 'quit', 'medical', 'pandora', 'coup',
-            'diamond veto', 'secret power', 'battle back', 'return', 'winner'
+            'diamond veto', 'secret power', 'battle back', 'return', 'winner',
+            'final', 'jury vote', 'finale night'
         ]
     
     def should_send_batch(self) -> bool:
@@ -233,7 +265,7 @@ class UpdateBatcher:
         
         # Check for urgent updates
         has_urgent = any(self._is_urgent(update) for update in self.update_queue)
-        if has_urgent and len(self.update_queue) >= 3:
+        if has_urgent and len(self.update_queue) >= 2:
             return True
         
         # High activity mode: 10+ updates or 15 minutes
@@ -268,7 +300,7 @@ class UpdateBatcher:
         if self.llm_client:
             embeds = self._create_llm_summary()
         else:
-            embeds = self._create_pattern_summary()
+            embeds = self._create_pattern_summary_with_explanation("LLM unavailable")
         
         # Clear queue after processing
         self.update_queue.clear()
@@ -277,168 +309,267 @@ class UpdateBatcher:
         return embeds
     
     def _create_llm_summary(self) -> List[discord.Embed]:
-        """Use Claude to create intelligent summaries"""
+        """Use Claude to create intelligent summaries with enhanced prompting"""
         try:
-            # Prepare updates for LLM
-            updates_text = "\n".join([
-                f"{update.pub_date.strftime('%I:%M %p')} - {update.title}"
-                for update in self.update_queue
-            ])
+            # Prepare comprehensive update data for LLM
+            updates_data = []
+            for update in self.update_queue:
+                time_str = update.pub_date.strftime('%I:%M %p')
+                updates_data.append({
+                    'time': time_str,
+                    'title': update.title,
+                    'description': update.description[:200] if update.description != update.title else ""
+                })
             
-            # Create prompt for Claude
-            prompt = f"""You are a Big Brother superfan analyst (like Taran Armstrong). 
-Analyze these updates and create a strategic summary:
+            # Create enhanced prompt with Big Brother context
+            prompt = f"""You are Taran Armstrong, the ultimate Big Brother superfan and strategy expert. You're known for your detailed game analysis and ability to spot strategic patterns that casual viewers miss.
 
-{updates_text}
+Analyze these {len(updates_data)} Big Brother updates from the live feeds and create a strategic summary:
 
-Provide:
-1. A headline that captures the most important event
-2. A brief summary grouping similar events (like multiple votes for the same person)
-3. Strategic analysis of what this means for the game
-4. Key players mentioned and their roles
+UPDATES:
+{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
 
-Format your response as JSON with these fields:
-- headline: string
-- summary: string (2-3 sentences max)
-- strategic_analysis: string (1-2 sentences)
-- key_players: list of strings
-- event_type: one of [competition, voting, strategy, drama, finale]
-- importance: number 1-10"""
+As a Big Brother superfan, provide your analysis in this exact JSON format:
+{{
+    "headline": "A compelling headline that captures the most important strategic development",
+    "summary": "2-3 sentence summary focusing on strategic implications, not just what happened",
+    "strategic_analysis": "Your expert take on what this means for the game moving forward",
+    "key_players": ["list", "of", "houseguests", "involved"],
+    "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
+    "strategic_importance": 8,
+    "power_dynamics": "How this affects the house power structure",
+    "predictions": "What you think will happen next based on these developments"
+}}
 
-            # Get LLM response
+Focus on:
+- Strategic implications over surface-level drama
+- Power shifts and alliance dynamics
+- Competition strategy and positioning
+- Vote predictions and campaign developments
+- Game-changing moments that affect the winner's path
+
+Remember: You're analyzing for other superfans who want strategic depth, not casual recaps."""
+
+            # Get LLM response with proper error handling
             response = self.llm_client.messages.create(
-                model="claude-3-haiku-20240307",
-                max_tokens=500,
+                model=self.llm_model,
+                max_tokens=1000,
                 temperature=0.3,
-                messages=[
-                    {"role": "user", "content": prompt}
-                ]
+                messages=[{"role": "user", "content": prompt}]
             )
             
-            # Parse response
-            import json
+            # Parse JSON response with fallback
             try:
-                analysis = json.loads(response.content[0].text)
-            except:
-                # If JSON parsing fails, use the text as-is
-                analysis = {
-                    "headline": "Big Brother Update",
-                    "summary": response.content[0].text[:200],
-                    "strategic_analysis": "Analysis pending.",
-                    "key_players": [],
-                    "event_type": "general",
-                    "importance": 5
-                }
+                response_text = response.content[0].text
+                logger.debug(f"LLM Raw Response: {response_text}")
+                
+                # Try to extract JSON if it's wrapped in other text
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                if json_start != -1 and json_end != -1:
+                    json_text = response_text[json_start:json_end]
+                    analysis = json.loads(json_text)
+                else:
+                    raise ValueError("No JSON found in response")
+                    
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"JSON parsing failed: {e}, using text response")
+                # Fallback to structured text parsing
+                analysis = self._parse_text_response(response_text)
             
-            # Create main embed
-            color_map = {
-                "competition": 0xf39c12,
-                "voting": 0xe74c3c,
-                "strategy": 0x3498db,
-                "drama": 0x9b59b6,
-                "finale": 0xffd700,
-                "general": 0x95a5a6
+            # Create main embed with enhanced design
+            game_phase_colors = {
+                "early_game": 0x3498db,    # Blue
+                "jury_phase": 0xf39c12,    # Orange  
+                "final_weeks": 0xe74c3c,   # Red
+                "finale_night": 0xffd700   # Gold
             }
+            
+            color = game_phase_colors.get(analysis.get('game_phase', 'early_game'), 0x3498db)
             
             main_embed = discord.Embed(
                 title=f"🎭 {analysis['headline']}",
-                description=f"**{len(self.update_queue)} updates** from the last batch period\n\n{analysis['summary']}",
-                color=color_map.get(analysis['event_type'], 0x3498db),
+                description=f"**{len(self.update_queue)} feed updates** • {analysis.get('game_phase', 'Current Phase').replace('_', ' ').title()}\n\n{analysis['summary']}",
+                color=color,
                 timestamp=datetime.now()
             )
             
-            # Add strategic analysis
-            if analysis['strategic_analysis']:
+            # Add strategic analysis (the key differentiator)
+            if analysis.get('strategic_analysis'):
                 main_embed.add_field(
-                    name="🎯 Superfan Analysis",
+                    name="🎯 Strategic Analysis",
                     value=analysis['strategic_analysis'],
                     inline=False
                 )
             
-            # Add key players
-            if analysis['key_players']:
+            # Add power dynamics if available
+            if analysis.get('power_dynamics'):
                 main_embed.add_field(
-                    name="👥 Key Players",
-                    value=", ".join(analysis['key_players']),
+                    name="⚖️ Power Dynamics",
+                    value=analysis['power_dynamics'],
                     inline=False
                 )
             
+            # Add predictions
+            if analysis.get('predictions'):
+                main_embed.add_field(
+                    name="🔮 Predictions",
+                    value=analysis['predictions'],
+                    inline=False
+                )
+            
+            # Add key players with better formatting
+            if analysis.get('key_players'):
+                players = analysis['key_players'][:8]  # Limit to prevent embed overflow
+                main_embed.add_field(
+                    name="👥 Key Players",
+                    value=" • ".join(players),
+                    inline=False
+                )
+            
+            # Add strategic importance indicator
+            importance = analysis.get('strategic_importance', 5)
+            importance_bar = "🔥" * min(importance, 10)
+            main_embed.add_field(
+                name="🎲 Strategic Importance",
+                value=f"{importance_bar} {importance}/10",
+                inline=True
+            )
+            
+            # Add footer with superfan branding
+            main_embed.set_footer(
+                text="Analyzed by BB Superfan AI • Live Feed Intelligence"
+            )
+            
             embeds = [main_embed]
             
-            # Add detailed breakdown if many updates
-            if len(self.update_queue) > 5:
-                detail_embed = self._create_detail_embed_llm(analysis['event_type'])
-                if detail_embed:
-                    embeds.append(detail_embed)
+            # Add detailed timeline if many updates
+            if len(self.update_queue) > 7:
+                timeline_embed = self._create_timeline_embed(analysis.get('game_phase', 'current'))
+                if timeline_embed:
+                    embeds.append(timeline_embed)
             
             return embeds
             
         except Exception as e:
             logger.error(f"LLM summary failed: {e}")
-            # Fall back to pattern matching
-            return self._create_pattern_summary()
+            logger.error(traceback.format_exc())
+            # Fall back to pattern matching with explanation
+            return self._create_pattern_summary_with_explanation("LLM analysis unavailable")
     
-    def _create_pattern_summary(self) -> List[discord.Embed]:
-        """Fallback pattern-based summary when LLM unavailable"""
-        # Group updates by type
+    def _parse_text_response(self, response_text: str) -> dict:
+        """Parse LLM response when JSON parsing fails"""
+        # Create a basic analysis from the text response
+        analysis = {
+            "headline": "Big Brother Strategy Update",
+            "summary": response_text[:300] + "..." if len(response_text) > 300 else response_text,
+            "strategic_analysis": "Analysis available in summary above.",
+            "key_players": [],
+            "game_phase": "current",
+            "strategic_importance": 5,
+            "power_dynamics": "See summary for details.",
+            "predictions": "Developments ongoing."
+        }
+        
+        # Try to extract key information with regex
+        try:
+            # Look for houseguest names (capitalized words)
+            names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
+            # Filter out common words
+            exclude = {'The', 'This', 'That', 'Big', 'Brother', 'House', 'Game', 'Vote', 'Player'}
+            analysis['key_players'] = [name for name in names if name not in exclude][:5]
+            
+        except Exception as e:
+            logger.debug(f"Text parsing error: {e}")
+        
+        return analysis
+    
+    def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
+        """Enhanced pattern-based summary with explanation"""
         grouped = self._group_updates_pattern()
         
-        # Create main summary
         total_updates = sum(len(updates) for updates in grouped.values())
         headline = self._get_headline_pattern(grouped)
         
         embed = discord.Embed(
             title=f"🎭 {headline}",
-            description=f"**{total_updates} updates** from the last batch period",
+            description=f"**{total_updates} updates** from the last batch period\n\n*{reason} - Using pattern analysis*",
             color=self._get_batch_color_pattern(grouped),
             timestamp=datetime.now()
         )
         
-        # Add summaries for each type
-        if grouped.get('votes'):
-            vote_summary = self._summarize_votes_pattern(grouped['votes'])
-            embed.add_field(
-                name="🗳️ Voting Update",
-                value=vote_summary,
-                inline=False
-            )
+        # Add grouped summaries
+        for category, updates in grouped.items():
+            if updates:
+                summary = self._create_category_summary(category, updates)
+                embed.add_field(
+                    name=f"{self._get_category_emoji(category)} {category.title()} ({len(updates)})",
+                    value=summary,
+                    inline=False
+                )
         
         return [embed]
     
-    def _create_detail_embed_llm(self, event_type: str) -> Optional[discord.Embed]:
-        """Create detailed breakdown embed"""
-        colors = {
-            'voting': 0xe74c3c,
-            'competition': 0xf1c40f,
-            'strategy': 0x3498db,
-            'drama': 0x9b59b6,
-            'finale': 0xffd700
+    def _create_category_summary(self, category: str, updates: List[BBUpdate]) -> str:
+        """Create better category summaries"""
+        if category == 'votes':
+            return self._summarize_votes_pattern(updates)
+        elif category == 'competitions':
+            return self._summarize_competitions(updates)
+        elif category == 'nominations':
+            return self._summarize_nominations(updates)
+        else:
+            # General summary
+            if len(updates) <= 3:
+                return "\n".join([f"• {u.title[:80]}..." if len(u.title) > 80 else f"• {u.title}" for u in updates])
+            else:
+                return f"• {updates[0].title[:80]}...\n• {updates[1].title[:80]}...\n• And {len(updates)-2} more updates"
+    
+    def _get_category_emoji(self, category: str) -> str:
+        """Get emoji for category"""
+        emoji_map = {
+            'votes': '🗳️',
+            'competitions': '🏆',
+            'nominations': '🎯',
+            'general': '📝',
+            'strategy': '🧠',
+            'drama': '💥'
+        }
+        return emoji_map.get(category, '📝')
+    
+    def _create_timeline_embed(self, game_phase: str) -> Optional[discord.Embed]:
+        """Create detailed timeline embed"""
+        phase_colors = {
+            'early_game': 0x3498db,
+            'jury_phase': 0xf39c12,
+            'final_weeks': 0xe74c3c,
+            'finale_night': 0xffd700
         }
         
         embed = discord.Embed(
-            title=f"📋 Detailed Timeline",
-            color=colors.get(event_type, 0x95a5a6),
+            title=f"📋 Live Feed Timeline",
+            description=f"Detailed breakdown of the last {len(self.update_queue)} updates",
+            color=phase_colors.get(game_phase, 0x95a5a6),
             timestamp=datetime.now()
         )
         
-        # Add updates with proper timestamps
-        for update in self.update_queue[-10:]:  # Last 10 to avoid embed limits
-            # Remove duplicate content
-            content = update.title
-            if update.title == update.description:
-                content = update.title
-            
-            # Format timestamp properly
+        # Add updates chronologically
+        for i, update in enumerate(self.update_queue[-8:], 1):  # Last 8 to avoid limits
             time_str = update.pub_date.strftime("%I:%M %p")
+            content = update.title
+            
+            # Truncate long titles
+            if len(content) > 100:
+                content = content[:97] + "..."
             
             embed.add_field(
-                name=time_str,
-                value=content[:100] + "..." if len(content) > 100 else content,
+                name=f"{i}. {time_str}",
+                value=content,
                 inline=False
             )
         
-        if len(self.update_queue) > 10:
-            embed.set_footer(text=f"Showing last 10 of {len(self.update_queue)} updates")
+        if len(self.update_queue) > 8:
+            embed.set_footer(text=f"Showing last 8 of {len(self.update_queue)} updates")
         
         return embed
     
@@ -499,6 +630,34 @@ Format your response as JSON with these fields:
                 summaries.append(f"**{votee}** received votes from: {', '.join(voters)} ({len(voters)} votes)")
         
         return "\n".join(summaries) if summaries else "Votes were cast"
+    
+    def _summarize_competitions(self, comp_updates: List[BBUpdate]) -> str:
+        """Summarize competition updates"""
+        if not comp_updates:
+            return "No competition updates"
+        
+        summaries = []
+        for update in comp_updates[:3]:  # Show top 3
+            summaries.append(f"• {update.title[:80]}...")
+        
+        if len(comp_updates) > 3:
+            summaries.append(f"• And {len(comp_updates) - 3} more competition updates")
+        
+        return "\n".join(summaries)
+    
+    def _summarize_nominations(self, nom_updates: List[BBUpdate]) -> str:
+        """Summarize nomination updates"""
+        if not nom_updates:
+            return "No nomination updates"
+        
+        summaries = []
+        for update in nom_updates[:3]:  # Show top 3
+            summaries.append(f"• {update.title[:80]}...")
+        
+        if len(nom_updates) > 3:
+            summaries.append(f"• And {len(nom_updates) - 3} more nomination updates")
+        
+        return "\n".join(summaries)
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
@@ -1001,7 +1160,8 @@ async def commands_slash(interaction: discord.Interaction):
         ("/status", "Show bot status and statistics"),
         ("/setchannel", "Set update channel (Admin only)"),
         ("/commands", "Show this help message"),
-        ("/forcebatch", "Force send any queued updates (Admin only)")
+        ("/forcebatch", "Force send any queued updates (Admin only)"),
+        ("/testllm", "Test LLM connection (Admin only)")
     ]
     
     for name, description in commands_list:
@@ -1034,6 +1194,56 @@ async def forcebatch_slash(interaction: discord.Interaction):
     except Exception as e:
         logger.error(f"Error forcing batch: {e}")
         await interaction.followup.send("Error sending batch.", ephemeral=True)
+
+@bot.tree.command(name="testllm", description="Test LLM connection and functionality")
+async def test_llm_slash(interaction: discord.Interaction):
+    """Test LLM integration"""
+    try:
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        # Test API key presence
+        api_key = bot.config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY', '')
+        if not api_key:
+            await interaction.followup.send("❌ No Anthropic API key found!", ephemeral=True)
+            return
+        
+        # Test connection
+        if not bot.update_batcher.llm_client:
+            await interaction.followup.send("❌ LLM client not initialized", ephemeral=True)
+            return
+        
+        # Test actual API call
+        try:
+            test_response = bot.update_batcher.llm_client.messages.create(
+                model=bot.update_batcher.llm_model,
+                max_tokens=100,
+                messages=[{
+                    "role": "user", 
+                    "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love Big Brother strategy."
+                }]
+            )
+            
+            response_text = test_response.content[0].text
+            
+            embed = discord.Embed(
+                title="✅ LLM Connection Test",
+                description=f"**Model**: {bot.update_batcher.llm_model}\n**Response**: {response_text}",
+                color=0x2ecc71,
+                timestamp=datetime.now()
+            )
+            
+            await interaction.followup.send(embed=embed, ephemeral=True)
+            
+        except Exception as e:
+            await interaction.followup.send(f"❌ LLM API call failed: {str(e)}", ephemeral=True)
+            
+    except Exception as e:
+        logger.error(f"Error testing LLM: {e}")
+        await interaction.followup.send("Error testing LLM connection.", ephemeral=True)
 
 def main():
     """Main function to run the bot"""
