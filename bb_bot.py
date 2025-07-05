@@ -630,7 +630,8 @@ class BBDiscordBot(commands.Bot):
             ("/summary [hours]", "Get a summary of recent updates (default: 24h)"),
             ("/status", "Show bot status and statistics"),
             ("/setchannel #channel", "Set update channel (Admin only)"),
-            ("/commands", "Show this help message")
+            ("/commands", "Show this help message"),
+            ("/test", "Send test updates (Admin only)")
         ]
         
         for name, description in commands_list:
@@ -639,6 +640,72 @@ class BBDiscordBot(commands.Bot):
         embed.set_footer(text="All commands are ephemeral (only you can see the response)")
         
         await interaction.response.send_message(embed=embed, ephemeral=True)
+
+    @app_commands.command(name="test", description="Test bot with sample updates")
+    @app_commands.default_permissions(administrator=True)
+    async def test_updates(self, interaction: discord.Interaction):
+        """Send test updates to see formatting"""
+        try:
+            await interaction.response.defer(ephemeral=True)
+            
+            # Create sample updates
+            test_updates = [
+                BBUpdate(
+                    title="Angela wins HOH Competition",
+                    description="After a grueling 3-hour endurance competition, Angela has won the Head of Household! She celebrated with Tucker and mentioned targeting the 'other side of the house'.",
+                    link="https://example.com",
+                    pub_date=datetime.now(),
+                    content_hash="test1",
+                    author="JokersUpdates"
+                ),
+                BBUpdate(
+                    title="Drama in the Kitchen",
+                    description="Massive blowup between Matt and Brooklyn over the dishes. Chelsea tried to mediate but it escalated when Joseph jumped in defending Brooklyn. The whole house is now divided.",
+                    link="https://example.com",
+                    pub_date=datetime.now() - timedelta(minutes=30),
+                    content_hash="test2",
+                    author="BBUpdater"
+                ),
+                BBUpdate(
+                    title="New Alliance Formed",
+                    description="Late night meeting in HOH room: Angela, Tucker, Rubina, and T'Kor have formed 'The Pentagon' alliance. They plan to backdoor Cedric if they win veto.",
+                    link="https://example.com",
+                    pub_date=datetime.now() - timedelta(hours=1),
+                    content_hash="test3",
+                    author="FeedWatcher"
+                ),
+                BBUpdate(
+                    title="Showmance Alert",
+                    description="Tucker and Rubina were spotted cuddling in the hammock. Earlier they were flirting in the pool. Joseph told cameras he's jealous.",
+                    link="https://example.com",
+                    pub_date=datetime.now() - timedelta(hours=2),
+                    content_hash="test4",
+                    author="BBRomance"
+                )
+            ]
+            
+            # Get the update channel
+            channel_id = self.config.get('update_channel_id')
+            if not channel_id:
+                await interaction.followup.send("Please set an update channel first with /setchannel", ephemeral=True)
+                return
+                
+            channel = self.get_channel(channel_id)
+            if not channel:
+                await interaction.followup.send("Update channel not found!", ephemeral=True)
+                return
+            
+            # Send each test update
+            for update in test_updates:
+                embed = self.create_update_embed(update)
+                await channel.send(embed=embed)
+                await asyncio.sleep(1)
+            
+            await interaction.followup.send(f"Sent {len(test_updates)} test updates to {channel.mention}!", ephemeral=True)
+            
+        except Exception as e:
+            logger.error(f"Error in test command: {e}")
+            await interaction.followup.send("Error sending test updates.", ephemeral=True)
 
 def main():
     """Main function to run the bot"""
