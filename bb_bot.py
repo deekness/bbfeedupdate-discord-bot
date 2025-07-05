@@ -871,8 +871,8 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
             
             # Add selected highlights
             for i, (update, importance) in enumerate(selected_updates, 1):
-                # Use consistent time format with main embed
-                time_str = update.pub_date.strftime("%I:%M %p")
+                # Extract correct time from content rather than pub_date
+                time_str = self._extract_correct_time(update)
                 
                 # Show full update title for highlights (these are the key moments)
                 title = update.title
