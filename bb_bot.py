@@ -506,8 +506,36 @@ class UpdateBatcher:
             # Parse response
             analysis = self._parse_llm_response(response.content[0].text)
             
-            # Create embeds
-            return self._create_embeds_from_analysis(analysis, is_finale_night)
+            # Create main embed
+            embeds = self._create_embeds_from_analysis(analysis, is_finale_night)
+            
+            # Add highlights embed for batches with 7+ updates if rate limits allow
+            if len(self.update_queue) >= 7:
+                logger.info(f"Creating highlights embed for {len(self.update_queue)} updates")
+                try:
+                    # Check if we can make another LLM call
+                    if await self._can_make_llm_request():
+                        highlights_embed = await self._create_llm_highlights_embed(analysis.get('game_phase', 'current'))
+                        if highlights_embed:
+                            embeds.append(highlights_embed)
+                            logger.info("Added LLM-curated highlights embed")
+                        else:
+                            logger.warning("LLM highlights embed creation returned None")
+                    else:
+                        logger.warning("Rate limit reached - creating pattern-based highlights embed")
+                        highlights_embed = self._create_pattern_highlights_embed()
+                        if highlights_embed:
+                            embeds.append(highlights_embed)
+                            logger.info("Added pattern-based highlights embed")
+                except Exception as e:
+                    logger.error(f"Error creating highlights embed: {e}")
+                    # Fallback to pattern-based highlights
+                    highlights_embed = self._create_pattern_highlights_embed()
+                    if highlights_embed:
+                        embeds.append(highlights_embed)
+                        logger.info("Added fallback highlights embed")
+            
+            return embeds
             
         except Exception as e:
             logger.error(f"LLM request failed: {e}")
@@ -817,6 +845,55 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
     def get_rate_limit_stats(self) -> Dict[str, int]:
         """Get current rate limiting statistics"""
         return self.rate_limiter.get_stats()
+
+    def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
+        """Create highlights embed using pattern matching when LLM unavailable"""
+        try:
+            # Sort updates by importance score
+            updates_with_importance = [
+                (update, self.analyzer.analyze_strategic_importance(update))
+                for update in self.update_queue
+            ]
+            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top 5-8 most important updates
+            selected_updates = updates_with_importance[:min(8, len(updates_with_importance))]
+            
+            if not selected_updates:
+                return None
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Mattered",
+                description=f"Key moments from this period ({len(selected_updates)} of {len(self.update_queue)} updates)",
+                color=0x95a5a6,
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, (update, importance) in enumerate(selected_updates, 1):
+                time_str = update.pub_date.strftime("%I:%M %p")
+                
+                # Format the highlight
+                title = update.title
+                if len(title) > 100:
+                    title = title[:97] + "..."
+                
+                # Add importance indicators
+                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                
+                embed.add_field(
+                    name=f"{importance_emoji} {time_str}",
+                    value=title,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Pattern-based Analysis • {len(selected_updates)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Pattern highlights creation failed: {e}")
+            return None
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
