@@ -1,0 +1,20 @@
+version: '3.8'
+
+services:
+  bb-bot:
+    build: .
+    container_name: bb-discord-bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - UPDATE_CHANNEL_ID=${UPDATE_CHANNEL_ID}
+      - TZ=America/New_York
+    volumes:
+      - ./logs:/app/logs
+      - ./bb_updates.db:/app/bb_updates.db
+      - ./config.json:/app/config.json:ro
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
