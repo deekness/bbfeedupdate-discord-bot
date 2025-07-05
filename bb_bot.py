@@ -1192,6 +1192,119 @@ Focus on creating a cohesive daily story from these summaries."""
             logger.error(f"Pattern highlights creation failed: {e}")
             return None
 
+    async def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
+        """Create LLM-curated highlights embed showing the most important moments"""
+        if not self.llm_client:
+            logger.debug("No LLM client for highlights embed")
+            return None
+            
+        try:
+            # Wait for rate limit
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare update data for LLM curation
+            updates_data = []
+            for i, update in enumerate(self.update_queue):
+                time_str = update.pub_date.strftime('%I:%M %p')
+                updates_data.append({
+                    'index': i + 1,
+                    'time': time_str,
+                    'title': update.title[:100],  # Truncate for prompt
+                })
+            
+            # Create LLM prompt for highlight curation
+            prompt = f"""As a Big Brother superfan, select the most important moments from these {len(updates_data)} updates.
+
+UPDATES:
+{chr(10).join([f"{u['index']}. {u['time']} - {u['title']}" for u in updates_data])}
+
+Select 5-8 of the MOST NOTEWORTHY updates that tell the story of this period. Focus on:
+- Strategic developments (alliances, targets, plans)
+- Competition results or preparations  
+- Social dynamics and relationship changes
+- Entertainment moments (drama, funny interactions)
+- Game-changing conversations
+
+AVOID routine activities, commercial breaks, and repetitive updates.
+
+Respond with ONLY the numbers separated by commas.
+Example: 1, 3, 7, 12, 15
+
+Your selection:"""
+
+            # Get LLM response
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=50,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse the response to get selected indices
+            response_text = response.content[0].text.strip()
+            logger.debug(f"LLM highlights selection: {response_text}")
+            
+            # Extract numbers from response
+            selected_indices = []
+            try:
+                numbers = [int(x.strip()) for x in response_text.split(',') if x.strip().isdigit()]
+                selected_indices = [num - 1 for num in numbers if 1 <= num <= len(self.update_queue)]
+            except:
+                logger.warning("Failed to parse LLM highlights selection")
+            
+            # Fallback: if LLM selection failed, use top importance scores
+            if not selected_indices or len(selected_indices) < 3:
+                logger.info("Using importance fallback for highlights")
+                updates_with_importance = [(i, self.analyzer.analyze_strategic_importance(update)) 
+                                         for i, update in enumerate(self.update_queue)]
+                updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+                selected_indices = [i for i, _ in updates_with_importance[:6]]
+            
+            # Create the highlights embed
+            phase_colors = {
+                'early_game': 0x3498db,
+                'jury_phase': 0xf39c12,
+                'final_weeks': 0xe74c3c,
+                'finale_night': 0xffd700
+            }
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Mattered",
+                description=f"Key moments from this period ({len(selected_indices)} of {len(self.update_queue)} updates)",
+                color=phase_colors.get(game_phase, 0x95a5a6),
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, update_idx in enumerate(selected_indices[:8], 1):
+                if update_idx < len(self.update_queue):
+                    update = self.update_queue[update_idx]
+                    time_str = self._extract_correct_time(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    
+                    # Format the highlight
+                    title = update.title
+                    if len(title) > 1000:
+                        title = title[:997] + "..."
+                    
+                    # Add importance indicators
+                    importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                    
+                    embed.add_field(
+                        name=f"{importance_emoji} {time_str}",
+                        value=title,
+                        inline=False
+                    )
+            
+            embed.set_footer(text=f"Curated by BB Superfan AI • {len(selected_indices)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"LLM highlights curation failed: {e}")
+            return None
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
@@ -1285,6 +1398,33 @@ class BBDatabase:
             logger.error(f"Database store error: {e}")
             raise
     
+    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates from a specific 24-hour period"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author, importance_score
+                FROM updates 
+                WHERE pub_date >= ? AND pub_date < ?
+                ORDER BY pub_date ASC
+            """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database daily query error: {e}")
+            return []
+
     def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
         """Get updates from the last N hours"""
         try:
@@ -1308,98 +1448,64 @@ class BBDatabase:
             logger.error(f"Database query error: {e}")
             return []
 
-    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
-        """Get all updates from a specific 24-hour period"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author, importance_score
-                FROM updates 
-                WHERE pub_date >= ? AND pub_date < ?
-                ORDER BY pub_date ASC
-            """, (start_time, end_time))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            updates = []
-            for row in results:
-                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
-                updates.append(update)
-            
-            return updates
-            
-        except Exception as e:
-            logger.error(f"Database daily query error: {e}")
-            return []
-
 class AllianceTracker:
-    """Tracks and manages Big Brother alliances"""
+    """Simple alliance tracker for Big Brother"""
     
-    def __init__(self, database: BBDatabase):
-        self.database = database
-        self.alliance_cache = {}
-        self.last_update = None
+    def __init__(self):
+        # For now, just return sample data - we can enhance this later
+        pass
     
-    def get_current_alliances(self) -> Dict[str, Dict]:
-        """Get current alliance status"""
-        # This would be enhanced with database storage in a real implementation
-        # For now, return a sample structure
+    def get_current_alliances(self):
+        """Return current alliance data"""
         return {
             "The Cookout": {
                 "members": ["Sarah", "Mike", "Jake", "Tom"],
                 "strength": "Strong",
-                "formed": "Day 12",
-                "leader": "Sarah",
+                "formed_day": 12,
                 "status": "Active"
             },
             "Showmance Duo": {
                 "members": ["Lisa", "Quinn"],
-                "strength": "Medium",
-                "formed": "Day 8",
-                "leader": "Lisa",
+                "strength": "Medium", 
+                "formed_day": 8,
                 "status": "Active"
             },
             "The Underdogs": {
                 "members": ["Amy", "David", "Brooklyn"],
                 "strength": "Weak",
-                "formed": "Day 18",
-                "leader": "Amy",
+                "formed_day": 18,
                 "status": "Suspected"
             }
         }
     
-    def create_alliance_embed(self) -> discord.Embed:
-        """Create alliance tracker embed"""
+    def create_alliance_embed(self):
+        """Create alliance boxes embed"""
         alliances = self.get_current_alliances()
         
         embed = discord.Embed(
             title="🤝 Alliance Tracker",
-            description="Current alliance landscape in the Big Brother house",
-            color=0xe67e22,  # Orange color for alliances
+            description="Current Big Brother house alliances",
+            color=0xe67e22,
             timestamp=datetime.now()
         )
         
         if not alliances:
             embed.add_field(
                 name="No Active Alliances",
-                value="No clear alliances detected yet. Early game chaos! 🌪️",
+                value="Early game chaos! 🌪️",
                 inline=False
             )
             return embed
         
-        # Group alliances by strength
+        # Group by strength
         strong_alliances = []
         medium_alliances = []
         weak_alliances = []
         
         for name, data in alliances.items():
-            strength = data.get('strength', 'Unknown')
-            if strength == 'Strong':
+            if data.get('strength') == 'Strong':
                 strong_alliances.append((name, data))
-            elif strength == 'Medium':
+            elif data.get('strength') == 'Medium':
                 medium_alliances.append((name, data))
             else:
                 weak_alliances.append((name, data))
@@ -1408,15 +1514,11 @@ class AllianceTracker:
         if strong_alliances:
             strong_text = ""
             for name, data in strong_alliances:
-                leader = data.get('leader', 'Unknown')
-                formed = data.get('formed', 'Unknown')
                 strong_text += f"┌─────────────────┐\n"
-                strong_text += f"│  **{name}**  │\n"
-                strong_text += f"│  👑 {leader} (Leader)  │\n"
+                strong_text += f"│  **{name}**\n"
                 for member in data['members']:
-                    if member != leader:
-                        strong_text += f"│  • {member}  │\n"
-                strong_text += f"│  📅 {formed}  │\n"
+                    strong_text += f"│  • {member}\n"
+                strong_text += f"│  📅 Day {data['formed_day']}\n"
                 strong_text += f"└─────────────────┘\n\n"
             
             embed.add_field(
@@ -1425,19 +1527,15 @@ class AllianceTracker:
                 inline=False
             )
         
-        # Add medium alliances
+        # Add medium alliances  
         if medium_alliances:
             medium_text = ""
             for name, data in medium_alliances:
-                leader = data.get('leader', 'Unknown')
-                formed = data.get('formed', 'Unknown')
                 medium_text += f"┌─────────────────┐\n"
-                medium_text += f"│  **{name}**  │\n"
-                medium_text += f"│  ⭐ {leader} (Leader)  │\n"
+                medium_text += f"│  **{name}**\n"
                 for member in data['members']:
-                    if member != leader:
-                        medium_text += f"│  • {member}  │\n"
-                medium_text += f"│  📅 {formed}  │\n"
+                    medium_text += f"│  • {member}\n"
+                medium_text += f"│  📅 Day {data['formed_day']}\n"
                 medium_text += f"└─────────────────┘\n\n"
             
             embed.add_field(
@@ -1446,18 +1544,15 @@ class AllianceTracker:
                 inline=False
             )
         
-        # Add weak/suspected alliances
+        # Add weak alliances
         if weak_alliances:
             weak_text = ""
             for name, data in weak_alliances:
-                status = data.get('status', 'Unknown')
-                formed = data.get('formed', 'Unknown')
                 weak_text += f"┌─────────────────┐\n"
-                weak_text += f"│  **{name}**  │\n"
-                weak_text += f"│  🤔 {status}  │\n"
+                weak_text += f"│  **{name}**\n"
                 for member in data['members']:
-                    weak_text += f"│  • {member}  │\n"
-                weak_text += f"│  📅 {formed}  │\n"
+                    weak_text += f"│  • {member}\n"
+                weak_text += f"│  📅 Day {data['formed_day']}\n"
                 weak_text += f"└─────────────────┘\n\n"
             
             embed.add_field(
@@ -1466,156 +1561,8 @@ class AllianceTracker:
                 inline=False
             )
         
-        embed.add_field(
-            name="📊 Alliance Stats",
-            value=f"**Total Active**: {len([a for a in alliances.values() if a.get('status') == 'Active'])}\n"
-                  f"**Total Suspected**: {len([a for a in alliances.values() if a.get('status') == 'Suspected'])}\n"
-                  f"**Last Updated**: Just now",
-            inline=True
-        )
-        
-        embed.set_footer(text="Alliance Tracker • BB Superfan AI • Use with caution - alliances shift quickly!")
-        
+        embed.set_footer(text="Alliance Tracker • BB Superfan AI")
         return embed
-    """Handles database operations with connection pooling and error recovery"""
-    
-    def __init__(self, db_path: str = "bb_updates.db"):
-        self.db_path = db_path
-        self.connection_timeout = 30
-        self.init_database()
-    
-    def get_connection(self):
-        """Get database connection with proper error handling"""
-        try:
-            conn = sqlite3.connect(
-                self.db_path, 
-                timeout=self.connection_timeout,
-                check_same_thread=False
-            )
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            return conn
-        except Exception as e:
-            logger.error(f"Database connection error: {e}")
-            raise
-    
-    def init_database(self):
-        """Initialize the database schema with proper indexing"""
-        conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS updates (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content_hash TEXT UNIQUE,
-                    title TEXT,
-                    description TEXT,
-                    link TEXT,
-                    pub_date TIMESTAMP,
-                    author TEXT,
-                    importance_score INTEGER DEFAULT 1,
-                    categories TEXT,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
-            
-            conn.commit()
-            logger.info("Database initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Database initialization error: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def is_duplicate(self, content_hash: str) -> bool:
-        """Check if update already exists"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            return result is not None
-            
-        except Exception as e:
-            logger.error(f"Database duplicate check error: {e}")
-            return False
-    
-    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
-        """Store a new update"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            categories_str = ",".join(categories) if categories else ""
-            
-            cursor.execute("""
-                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (update.content_hash, update.title, update.description, 
-                  update.link, update.pub_date, update.author, importance_score, categories_str))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Database store error: {e}")
-            raise
-    
-    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
-        """Get all updates from a specific 24-hour period"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author, importance_score
-                FROM updates 
-                WHERE pub_date >= ? AND pub_date < ?
-                ORDER BY pub_date ASC
-            """, (start_time, end_time))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            updates = []
-            for row in results:
-                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
-                updates.append(update)
-            
-            return updates
-            
-        except Exception as e:
-            logger.error(f"Database daily query error: {e}")
-            return []
-        """Get updates from the last N hours"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author
-                FROM updates 
-                WHERE pub_date > ?
-                ORDER BY pub_date DESC
-            """, (cutoff_time,))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            return [BBUpdate(*row) for row in results]
-            
-        except Exception as e:
-            logger.error(f"Database query error: {e}")
-            return []
 
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
@@ -1632,7 +1579,7 @@ class BBDiscordBot(commands.Bot):
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
-        self.alliance_tracker = AllianceTracker(self.db)
+        self.alliance_tracker = AllianceTracker()
         
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
@@ -1744,6 +1691,20 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error generating summary: {e}")
                 await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
+
+        @self.tree.command(name="alliances", description="Show current alliance tracker")
+        async def alliances_slash(interaction: discord.Interaction, visibility: str = "private"):
+            """Show alliance tracker"""
+            try:
+                is_ephemeral = visibility.lower() == "private"
+                await interaction.response.defer(ephemeral=is_ephemeral)
+                
+                alliance_embed = self.alliance_tracker.create_alliance_embed()
+                await interaction.followup.send(embed=alliance_embed, ephemeral=is_ephemeral)
+                
+            except Exception as e:
+                logger.error(f"Error showing alliances: {e}")
+                await interaction.followup.send("Error showing alliances.", ephemeral=True)
 
         @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
         async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -1884,41 +1845,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error testing LLM: {e}")
                 await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
 
-        @self.tree.command(name="alliances", description="Show current Big Brother alliance tracker")
-        async def alliances_slash(interaction: discord.Interaction, visibility: str = "private"):
-            """Show alliance tracker with visibility option"""
-            try:
-                # Validate visibility parameter
-                if visibility.lower() not in ["public", "private"]:
-                    await interaction.response.send_message(
-                        "Visibility must be 'public' or 'private'. Defaulting to private.", 
-                        ephemeral=True
-                    )
-                    visibility = "private"
-                
-                is_ephemeral = visibility.lower() == "private"
-                
-                await interaction.response.defer(ephemeral=is_ephemeral)
-                
-                # Create alliance tracker embed
-                alliance_embed = self.alliance_tracker.create_alliance_embed()
-                
-                # Add visibility indicator to footer
-                current_footer = alliance_embed.footer.text if alliance_embed.footer else ""
-                visibility_text = f" • {visibility.title()} View"
-                alliance_embed.set_footer(text=current_footer + visibility_text)
-                
-                await interaction.followup.send(embed=alliance_embed, ephemeral=is_ephemeral)
-                
-                logger.info(f"Alliance tracker requested by {interaction.user.name} ({visibility} view)")
-                
-            except Exception as e:
-                logger.error(f"Error showing alliance tracker: {e}")
-                await interaction.followup.send(
-                    "Error displaying alliance tracker. Please try again.", 
-                    ephemeral=True
-                )
-
         @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
         async def sync_slash(interaction: discord.Interaction):
             """Manually sync slash commands"""
@@ -2047,8 +1973,7 @@ class BBDiscordBot(commands.Bot):
                 return
             
             # Calculate day number (days since season start)
-            # For now, we'll use a simple calculation - you might want to adjust this
-            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
+            season_start = datetime(2025, 7, 10)  # July 10th season start
             day_number = (end_time.date() - season_start.date()).days + 1
             
             # Create daily recap
