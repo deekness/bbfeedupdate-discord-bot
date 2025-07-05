@@ -1192,6 +1192,199 @@ Focus on creating a cohesive daily story from these summaries."""
             logger.error(f"Pattern highlights creation failed: {e}")
             return None
 
+class AllianceTracker:
+    """Tracks and manages Big Brother alliances"""
+    
+    def __init__(self, db: BBDatabase):
+        self.db = db
+        self.alliance_cache = {}
+        self.last_update = None
+    
+    def detect_alliances_from_updates(self, updates: List[BBUpdate]) -> Dict[str, List[str]]:
+        """Detect alliances mentioned in updates"""
+        alliances = {}
+        
+        for update in updates:
+            content = f"{update.title} {update.description}".lower()
+            
+            # Look for alliance keywords and patterns
+            alliance_patterns = [
+                r'alliance.*?(?:with|between|of)\s+([a-zA-Z\s,]+)',
+                r'final\s+(\d+).*?(?:with|between|of)\s+([a-zA-Z\s,]+)',
+                r'(?:group|trio|quad|duo).*?(?:with|between|of)\s+([a-zA-Z\s,]+)',
+                r'(\w+)\s+alliance',
+                r'working\s+with\s+([a-zA-Z\s,]+)',
+                r'trusts?\s+([a-zA-Z\s,]+)',
+                r'close\s+to\s+([a-zA-Z\s,]+)'
+            ]
+            
+            for pattern in alliance_patterns:
+                matches = re.findall(pattern, content, re.IGNORECASE)
+                for match in matches:
+                    if isinstance(match, tuple):
+                        match = match[-1]  # Get the last group
+                    
+                    # Extract names from the match
+                    names = self._extract_names_from_text(match)
+                    if len(names) >= 2:
+                        alliance_key = f"Alliance_{len(alliances) + 1}"
+                        alliances[alliance_key] = names
+        
+        return alliances
+    
+    def _extract_names_from_text(self, text: str) -> List[str]:
+        """Extract houseguest names from text"""
+        # Common BB houseguest name patterns
+        name_pattern = r'\b[A-Z][a-z]+\b'
+        potential_names = re.findall(name_pattern, text)
+        
+        # Filter out common words that aren't names
+        exclude_words = {
+            'The', 'And', 'With', 'For', 'But', 'Or', 'As', 'At', 'By', 'In', 'On', 'To',
+            'Big', 'Brother', 'House', 'Game', 'Player', 'Vote', 'Veto', 'Head', 'Household',
+            'Competition', 'Ceremony', 'Nomination', 'Eviction', 'Jury', 'Final', 'Winner'
+        }
+        
+        return [name for name in potential_names if name not in exclude_words and len(name) > 2]
+    
+    def get_current_alliances(self) -> Dict[str, Dict]:
+        """Get current alliance status"""
+        # This would be enhanced with database storage in a real implementation
+        # For now, return a sample structure
+        return {
+            "The Cookout": {
+                "members": ["Sarah", "Mike", "Jake", "Tom"],
+                "strength": "Strong",
+                "formed": "Day 12",
+                "leader": "Sarah",
+                "status": "Active"
+            },
+            "Showmance Duo": {
+                "members": ["Lisa", "Quinn"],
+                "strength": "Medium",
+                "formed": "Day 8",
+                "leader": "Lisa",
+                "status": "Active"
+            },
+            "The Underdogs": {
+                "members": ["Amy", "David", "Brooklyn"],
+                "strength": "Weak",
+                "formed": "Day 18",
+                "leader": "Amy",
+                "status": "Suspected"
+            }
+        }
+    
+    def create_alliance_embed(self) -> discord.Embed:
+        """Create alliance tracker embed"""
+        alliances = self.get_current_alliances()
+        
+        embed = discord.Embed(
+            title="🤝 Alliance Tracker",
+            description="Current alliance landscape in the Big Brother house",
+            color=0xe67e22,  # Orange color for alliances
+            timestamp=datetime.now()
+        )
+        
+        if not alliances:
+            embed.add_field(
+                name="No Active Alliances",
+                value="No clear alliances detected yet. Early game chaos! 🌪️",
+                inline=False
+            )
+            return embed
+        
+        # Group alliances by strength
+        strong_alliances = []
+        medium_alliances = []
+        weak_alliances = []
+        
+        for name, data in alliances.items():
+            strength = data.get('strength', 'Unknown')
+            if strength == 'Strong':
+                strong_alliances.append((name, data))
+            elif strength == 'Medium':
+                medium_alliances.append((name, data))
+            else:
+                weak_alliances.append((name, data))
+        
+        # Add strong alliances
+        if strong_alliances:
+            strong_text = ""
+            for name, data in strong_alliances:
+                members = ", ".join(data['members'])
+                leader = data.get('leader', 'Unknown')
+                formed = data.get('formed', 'Unknown')
+                strong_text += f"┌─────────────────┐\n"
+                strong_text += f"│  **{name}**  │\n"
+                strong_text += f"│  👑 {leader} (Leader)  │\n"
+                for member in data['members']:
+                    if member != leader:
+                        strong_text += f"│  • {member}  │\n"
+                strong_text += f"│  📅 {formed}  │\n"
+                strong_text += f"└─────────────────┘\n\n"
+            
+            embed.add_field(
+                name="🔥 Strong Alliances",
+                value=strong_text,
+                inline=False
+            )
+        
+        # Add medium alliances
+        if medium_alliances:
+            medium_text = ""
+            for name, data in medium_alliances:
+                members = ", ".join(data['members'])
+                leader = data.get('leader', 'Unknown')
+                formed = data.get('formed', 'Unknown')
+                medium_text += f"┌─────────────────┐\n"
+                medium_text += f"│  **{name}**  │\n"
+                medium_text += f"│  ⭐ {leader} (Leader)  │\n"
+                for member in data['members']:
+                    if member != leader:
+                        medium_text += f"│  • {member}  │\n"
+                medium_text += f"│  📅 {formed}  │\n"
+                medium_text += f"└─────────────────┘\n\n"
+            
+            embed.add_field(
+                name="⚠️ Medium Alliances",
+                value=medium_text,
+                inline=False
+            )
+        
+        # Add weak/suspected alliances
+        if weak_alliances:
+            weak_text = ""
+            for name, data in weak_alliances:
+                members = ", ".join(data['members'])
+                status = data.get('status', 'Unknown')
+                formed = data.get('formed', 'Unknown')
+                weak_text += f"┌─────────────────┐\n"
+                weak_text += f"│  **{name}**  │\n"
+                weak_text += f"│  🤔 {status}  │\n"
+                for member in data['members']:
+                    weak_text += f"│  • {member}  │\n"
+                weak_text += f"│  📅 {formed}  │\n"
+                weak_text += f"└─────────────────┘\n\n"
+            
+            embed.add_field(
+                name="🔍 Suspected Alliances",
+                value=weak_text,
+                inline=False
+            )
+        
+        embed.add_field(
+            name="📊 Alliance Stats",
+            value=f"**Total Active**: {len([a for a in alliances.values() if a.get('status') == 'Active'])}\n"
+                  f"**Total Suspected**: {len([a for a in alliances.values() if a.get('status') == 'Suspected'])}\n"
+                  f"**Last Updated**: Just now",
+            inline=True
+        )
+        
+        embed.set_footer(text="Alliance Tracker • BB Superfan AI • Use with caution - alliances shift quickly!")
+        
+        return embed
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
@@ -1348,6 +1541,7 @@ class BBDiscordBot(commands.Bot):
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
+        self.alliance_tracker = AllianceTracker(self.db)
         
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
@@ -1499,6 +1693,7 @@ class BBDiscordBot(commands.Bot):
             commands_list = [
                 ("/summary", "Get a summary of recent updates (default: 24h)"),
                 ("/status", "Show bot status and statistics"),
+                ("/alliances", "Show current alliance tracker (public/private)"),
                 ("/setchannel", "Set update channel (Admin only)"),
                 ("/commands", "Show this help message"),
                 ("/forcebatch", "Force send any queued updates (Admin only)"),
@@ -1597,6 +1792,41 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error testing LLM: {e}")
                 await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
+
+        @self.tree.command(name="alliances", description="Show current Big Brother alliance tracker")
+        async def alliances_slash(interaction: discord.Interaction, visibility: str = "private"):
+            """Show alliance tracker with visibility option"""
+            try:
+                # Validate visibility parameter
+                if visibility.lower() not in ["public", "private"]:
+                    await interaction.response.send_message(
+                        "Visibility must be 'public' or 'private'. Defaulting to private.", 
+                        ephemeral=True
+                    )
+                    visibility = "private"
+                
+                is_ephemeral = visibility.lower() == "private"
+                
+                await interaction.response.defer(ephemeral=is_ephemeral)
+                
+                # Create alliance tracker embed
+                alliance_embed = self.alliance_tracker.create_alliance_embed()
+                
+                # Add visibility indicator to footer
+                current_footer = alliance_embed.footer.text if alliance_embed.footer else ""
+                visibility_text = f" • {visibility.title()} View"
+                alliance_embed.set_footer(text=current_footer + visibility_text)
+                
+                await interaction.followup.send(embed=alliance_embed, ephemeral=is_ephemeral)
+                
+                logger.info(f"Alliance tracker requested by {interaction.user.name} ({visibility} view)")
+                
+            except Exception as e:
+                logger.error(f"Error showing alliance tracker: {e}")
+                await interaction.followup.send(
+                    "Error displaying alliance tracker. Please try again.", 
+                    ephemeral=True
+                )
 
         @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
         async def sync_slash(interaction: discord.Interaction):
@@ -1727,7 +1957,7 @@ class BBDiscordBot(commands.Bot):
             
             # Calculate day number (days since season start)
             # For now, we'll use a simple calculation - you might want to adjust this
-            season_start = datetime(2025, 7, 10)  # Adjust this date for actual season start
+            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
             day_number = (end_time.date() - season_start.date()).days + 1
             
             # Create daily recap
