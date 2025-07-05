@@ -1,3 +1,2058 @@
+import discord
+from discord.ext import commands, tasks
+import feedparser
+import asyncio
+import sqlite3
+import hashlib
+import re
+import os
+import sys
+import signal
+from datetime import datetime, timedelta
+import pytz
+from typing import List, Dict, Set, Optional, Tuple
+import logging
+from dataclasses import dataclass
+import json
+import time
+import traceback
+from pathlib import Path
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from collections import defaultdict, Counter, deque, OrderedDict
+import anthropic
+from enum import Enum
+
+# Configuration constants
+DEFAULT_CONFIG = {
+    "bot_token": "",
+    "update_channel_id": None,
+    "rss_check_interval": 2,
+    "max_retries": 3,
+    "retry_delay": 5,
+    "database_path": "bb_updates.db",
+    "enable_heartbeat": True,
+    "heartbeat_interval": 300,
+    "max_update_age_hours": 168,
+    "enable_auto_restart": True,
+    "max_consecutive_errors": 10,
+    "anthropic_api_key": "",
+    "enable_llm_summaries": True,
+    "llm_model": "claude-3-haiku-20240307",
+    "batch_mode": "intelligent",
+    "min_batch_size": 3,
+    "max_batch_wait_minutes": 30,
+    "urgent_batch_threshold": 2,
+    "timeline_mode": "smart",
+    "max_timeline_embeds": 3,
+    "show_importance_timeline": True,
+    # Rate limiting settings
+    "llm_requests_per_minute": 10,
+    "llm_requests_per_hour": 100,
+    "max_processed_hashes": 10000
+}
+
+# Environment variable mappings
+ENV_MAPPINGS = {
+    'BOT_TOKEN': 'bot_token',
+    'UPDATE_CHANNEL_ID': 'update_channel_id',
+    'ANTHROPIC_API_KEY': 'anthropic_api_key',
+    'RSS_CHECK_INTERVAL': 'rss_check_interval',
+    'LLM_MODEL': 'llm_model',
+    'BATCH_MODE': 'batch_mode',
+    'OWNER_ID': 'owner_id'
+}
+
+# Game-specific constants
+COMPETITION_KEYWORDS = [
+    'hoh', 'head of household', 'power of veto', 'pov', 'nomination', 
+    'eviction', 'ceremony', 'competition', 'challenge', 'immunity'
+]
+
+STRATEGY_KEYWORDS = [
+    'alliance', 'backdoor', 'target', 'scheme', 'plan', 'strategy',
+    'vote', 'voting', 'campaigning', 'deal', 'promise', 'betrayal'
+]
+
+DRAMA_KEYWORDS = [
+    'argument', 'fight', 'confrontation', 'drama', 'tension',
+    'called out', 'blowup', 'heated', 'angry', 'upset'
+]
+
+RELATIONSHIP_KEYWORDS = [
+    'showmance', 'romance', 'flirting', 'cuddle', 'kiss',
+    'relationship', 'attracted', 'feelings', 'friendship', 'bond'
+]
+
+ENTERTAINMENT_KEYWORDS = [
+    'funny', 'joke', 'laugh', 'prank', 'hilarious', 'comedy',
+    'entertaining', 'memorable', 'quirky', 'silly'
+]
+
+URGENT_KEYWORDS = [
+    'evicted', 'eliminated', 'wins hoh', 'wins pov', 'backdoor', 
+    'self-evict', 'expelled', 'quit', 'medical', 'pandora', 'coup',
+    'diamond veto', 'secret power', 'battle back', 'return', 'winner',
+    'final', 'jury vote', 'finale night'
+]
+
+EXCLUDE_WORDS = {
+    'The', 'This', 'That', 'They', 'Some', 'Many', 'Other', 'First', 'Last',
+    'Big', 'Brother', 'Julie', 'Host', 'Diary', 'Room', 'Have', 'Not'
+}
+
+# Configure comprehensive logging
+def setup_logging():
+    """Setup comprehensive logging for 24/7 operation"""
+    log_dir = Path("logs")
+    log_dir.mkdir(exist_ok=True)
+    
+    # Create formatters
+    detailed_formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s'
+    )
+    
+    # File handler for all logs
+    file_handler = logging.FileHandler(log_dir / "bb_bot.log")
+    file_handler.setLevel(logging.INFO)
+    file_handler.setFormatter(detailed_formatter)
+    
+    # Error file handler
+    error_handler = logging.FileHandler(log_dir / "bb_bot_errors.log")
+    error_handler.setLevel(logging.ERROR)
+    error_handler.setFormatter(detailed_formatter)
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.INFO)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
+    
+    # Root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(error_handler)
+    root_logger.addHandler(console_handler)
+    
+    return logging.getLogger(__name__)
+
+logger = setup_logging()
+
+# Alliance tracking enums
+class AllianceStatus(Enum):
+    ACTIVE = "active"
+    BROKEN = "broken"
+    SUSPECTED = "suspected"
+    DISSOLVED = "dissolved"
+
+class AllianceEventType(Enum):
+    FORMED = "formed"
+    EXPANDED = "expanded"
+    BETRAYAL = "betrayal"
+    DISSOLVED = "dissolved"
+    SUSPECTED = "suspected"
+
+class LRUCache:
+    """Thread-safe LRU Cache implementation for tracking processed hashes"""
+    
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.cache = OrderedDict()
+        self._lock = asyncio.Lock()
+        self.stats = {
+            'hits': 0,
+            'misses': 0,
+            'evictions': 0
+        }
+    
+    async def contains(self, key: str) -> bool:
+        """Check if key exists in cache (async for thread safety)"""
+        async with self._lock:
+            if key in self.cache:
+                # Move to end (most recently used)
+                self.cache.move_to_end(key)
+                self.stats['hits'] += 1
+                return True
+            self.stats['misses'] += 1
+            return False
+    
+    async def add(self, key: str, value: Optional[float] = None) -> None:
+        """Add key to cache with optional timestamp value"""
+        async with self._lock:
+            if key in self.cache:
+                # Update existing and move to end
+                self.cache.move_to_end(key)
+                self.cache[key] = value or time.time()
+            else:
+                # Add new entry
+                self.cache[key] = value or time.time()
+                
+                # Check capacity and evict if necessary
+                if len(self.cache) > self.capacity:
+                    evicted_key, _ = self.cache.popitem(last=False)  # Remove oldest
+                    self.stats['evictions'] += 1
+                    logger.debug(f"Evicted hash from cache: {evicted_key[:8]}...")
+    
+    def get_stats(self) -> dict:
+        """Get cache statistics"""
+        total_requests = self.stats['hits'] + self.stats['misses']
+        hit_rate = (self.stats['hits'] / total_requests * 100) if total_requests > 0 else 0
+        
+        return {
+            'size': len(self.cache),
+            'capacity': self.capacity,
+            'hits': self.stats['hits'],
+            'misses': self.stats['misses'],
+            'evictions': self.stats['evictions'],
+            'hit_rate': f"{hit_rate:.1f}%"
+        }
+    
+    async def clear(self) -> None:
+        """Clear the cache"""
+        async with self._lock:
+            self.cache.clear()
+            logger.info("Cache cleared")
+    
+    async def get_oldest_timestamp(self) -> Optional[float]:
+        """Get timestamp of oldest entry"""
+        async with self._lock:
+            if self.cache:
+                first_key = next(iter(self.cache))
+                return self.cache[first_key]
+            return None
+
+class RateLimiter:
+    """Rate limiter for API calls to prevent excessive costs"""
+    
+    def __init__(self, max_requests_per_minute: int = 10, max_requests_per_hour: int = 100):
+        self.max_requests_per_minute = max_requests_per_minute
+        self.max_requests_per_hour = max_requests_per_hour
+        self.minute_requests = deque()
+        self.hour_requests = deque()
+        self.total_requests = 0
+        
+    async def wait_if_needed(self) -> bool:
+        """Wait if rate limit would be exceeded. Returns True if request can proceed."""
+        now = time.time()
+        
+        # Clean old requests
+        self._clean_old_requests(now)
+        
+        # Check minute limit
+        if len(self.minute_requests) >= self.max_requests_per_minute:
+            wait_time = 60 - (now - self.minute_requests[0])
+            if wait_time > 0:
+                logger.warning(f"Rate limit: waiting {wait_time:.1f}s for minute window")
+                await asyncio.sleep(wait_time)
+                self._clean_old_requests(time.time())
+        
+        # Check hour limit
+        if len(self.hour_requests) >= self.max_requests_per_hour:
+            wait_time = 3600 - (now - self.hour_requests[0])
+            if wait_time > 0:
+                logger.warning(f"Rate limit: waiting {wait_time:.1f}s for hour window")
+                await asyncio.sleep(wait_time)
+                self._clean_old_requests(time.time())
+        
+        # Record the request
+        current_time = time.time()
+        self.minute_requests.append(current_time)
+        self.hour_requests.append(current_time)
+        self.total_requests += 1
+        
+        return True
+    
+    def _clean_old_requests(self, now: float):
+        """Remove requests older than the window"""
+        # Remove requests older than 1 minute
+        while self.minute_requests and self.minute_requests[0] < now - 60:
+            self.minute_requests.popleft()
+        
+        # Remove requests older than 1 hour
+        while self.hour_requests and self.hour_requests[0] < now - 3600:
+            self.hour_requests.popleft()
+    
+    def get_stats(self) -> Dict[str, int]:
+        """Get current rate limit statistics"""
+        now = time.time()
+        self._clean_old_requests(now)
+        
+        return {
+            'requests_this_minute': len(self.minute_requests),
+            'requests_this_hour': len(self.hour_requests),
+            'total_requests': self.total_requests,
+            'minute_limit': self.max_requests_per_minute,
+            'hour_limit': self.max_requests_per_hour
+        }
+
+class Config:
+    """Enhanced configuration management with validation"""
+    
+    def __init__(self):
+        self.config_file = Path("config.json")
+        self.config = self._load_config()
+        self._validate_config()
+    
+    def _load_config(self) -> dict:
+        """Load configuration with better validation"""
+        config = DEFAULT_CONFIG.copy()
+        
+        # Environment variables (priority 1)
+        for env_var, config_key in ENV_MAPPINGS.items():
+            env_value = os.getenv(env_var)
+            if env_value:
+                config[config_key] = self._convert_env_value(config_key, env_value)
+        
+        # Config file (priority 2)
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    file_config = json.load(f)
+                    # Only use file config for missing env vars
+                    for key, value in file_config.items():
+                        if key in config and not os.getenv(key.upper()):
+                            config[key] = value
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        return config
+    
+    def _convert_env_value(self, config_key: str, env_value: str):
+        """Convert environment variable to proper type"""
+        if config_key == 'update_channel_id':
+            try:
+                return int(env_value) if env_value != '0' else None
+            except ValueError:
+                logger.warning(f"Invalid channel ID: {env_value}")
+                return None
+        elif config_key in ['rss_check_interval', 'max_retries', 'retry_delay', 'owner_id',
+                           'llm_requests_per_minute', 'llm_requests_per_hour', 'max_processed_hashes']:
+            try:
+                return int(env_value)
+            except ValueError:
+                logger.warning(f"Invalid integer for {config_key}: {env_value}")
+                return DEFAULT_CONFIG.get(config_key, 0)
+        elif config_key in ['enable_heartbeat', 'enable_llm_summaries']:
+            return env_value.lower() == 'true'
+        else:
+            return env_value
+    
+    def _validate_config(self):
+        """Validate critical configuration values"""
+        if not self.config.get('bot_token'):
+            raise ValueError("BOT_TOKEN is required")
+        
+        # Validate rate limiting settings
+        if self.config.get('llm_requests_per_minute', 0) <= 0:
+            self.config['llm_requests_per_minute'] = DEFAULT_CONFIG['llm_requests_per_minute']
+        
+        if self.config.get('llm_requests_per_hour', 0) <= 0:
+            self.config['llm_requests_per_hour'] = DEFAULT_CONFIG['llm_requests_per_hour']
+        
+        logger.info("Configuration validated successfully")
+    
+    def get(self, key: str, default=None):
+        """Get configuration value"""
+        return self.config.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set configuration value"""
+        self.config[key] = value
+
+@dataclass
+class BBUpdate:
+    """Represents a Big Brother update"""
+    title: str
+    description: str
+    link: str
+    pub_date: datetime
+    content_hash: str
+    author: str = ""
+
+class BBAnalyzer:
+    """Analyzes Big Brother updates for strategic insights and social dynamics"""
+    
+    def categorize_update(self, update: BBUpdate) -> List[str]:
+        """Categorize an update based on its content"""
+        content = f"{update.title} {update.description}".lower()
+        categories = []
+        
+        if any(keyword in content for keyword in COMPETITION_KEYWORDS):
+            categories.append("🏆 Competition")
+        
+        if any(keyword in content for keyword in STRATEGY_KEYWORDS):
+            categories.append("🎯 Strategy")
+        
+        if any(keyword in content for keyword in DRAMA_KEYWORDS):
+            categories.append("💥 Drama")
+        
+        if any(keyword in content for keyword in RELATIONSHIP_KEYWORDS):
+            categories.append("💕 Romance")
+        
+        if any(keyword in content for keyword in ENTERTAINMENT_KEYWORDS):
+            categories.append("🎬 Entertainment")
+        
+        return categories if categories else ["📝 General"]
+    
+    def extract_houseguests(self, text: str) -> List[str]:
+        """Extract houseguest names from text"""
+        houseguest_pattern = r'\b[A-Z][a-z]+\b'
+        potential_names = re.findall(houseguest_pattern, text)
+        return [name for name in potential_names if name not in EXCLUDE_WORDS]
+    
+    def analyze_strategic_importance(self, update: BBUpdate) -> int:
+        """Rate importance from 1-10 with balanced strategic/social weighting"""
+        content = f"{update.title} {update.description}".lower()
+        score = 1
+        
+        # Strategic moments (high importance)
+        if any(word in content for word in ['eviction', 'nomination', 'backdoor']):
+            score += 4
+        if any(word in content for word in ['hoh', 'head of household', 'power of veto']):
+            score += 3
+        if any(word in content for word in ['alliance', 'target', 'strategy']):
+            score += 2
+        if any(word in content for word in ['vote', 'voting', 'campaign']):
+            score += 2
+        
+        # Social moments (medium-high importance for superfans)
+        if any(word in content for word in ['showmance', 'kiss', 'cuddle', 'romance']):
+            score += 3
+        if any(word in content for word in ['fight', 'argument', 'confrontation', 'blowup']):
+            score += 3
+        if any(word in content for word in ['friendship', 'bond', 'close', 'trust']):
+            score += 2
+        
+        # Entertainment moments (medium importance)
+        if any(word in content for word in ['funny', 'joke', 'laugh', 'prank']):
+            score += 2
+        if any(word in content for word in ['crying', 'emotional', 'breakdown']):
+            score += 2
+        
+        # House culture (low-medium importance)
+        if any(word in content for word in ['tradition', 'routine', 'habit', 'inside joke']):
+            score += 1
+        
+        # Finale night special scoring
+        if any(word in content for word in ['finale', 'winner', 'crowned', 'julie']):
+            if any(word in content for word in ['america', 'favorite']):
+                score += 4
+        
+        return min(score, 10)
+
+class AllianceTracker:
+    """Tracks and analyzes Big Brother alliances"""
+    
+    # Alliance detection patterns
+    ALLIANCE_FORMATION_PATTERNS = [
+        (r"([\w\s]+) and ([\w\s]+) make a final (\d+)", "final_deal"),
+        (r"([\w\s]+) forms? an? alliance with ([\w\s]+)", "alliance"),
+        (r"([\w\s]+) and ([\w\s]+) agree to work together", "agreement"),
+        (r"([\w\s]+) and ([\w\s]+) shake on it", "handshake"),
+        (r"([\w\s]+), ([\w\s]+),? and ([\w\s]+) form an? alliance", "group_alliance"),
+        (r"([\w\s]+) joins? forces with ([\w\s]+)", "joining_forces"),
+        (r"([\w\s]+) wants? to work with ([\w\s]+)", "wants_work"),
+        (r"([\w\s]+) trusts? ([\w\s]+) completely", "trust"),
+    ]
+    
+    BETRAYAL_PATTERNS = [
+        (r"([\w\s]+) wants? to backdoor ([\w\s]+)", "backdoor"),
+        (r"([\w\s]+) throws? ([\w\s]+) under the bus", "bus"),
+        (r"([\w\s]+) is now targeting ([\w\s]+)", "targeting"),
+        (r"([\w\s]+) turns? on ([\w\s]+)", "turns"),
+        (r"([\w\s]+) betrays? ([\w\s]+)", "betrays"),
+        (r"([\w\s]+) flips? on ([\w\s]+)", "flips"),
+        (r"([\w\s]+) wants? ([\w\s]+) out", "wants_out"),
+    ]
+    
+    ALLIANCE_NAME_PATTERNS = [
+        r"(?:The|the) ([\w\s]+) alliance",
+        r"alliance (?:called|named) (?:The|the)? ?([\w\s]+)",
+        r"(?:The|the) ([\w\s]+) \([\w\s,]+\)",  # The Core (Chelsie, Cam, etc)
+    ]
+    
+    def __init__(self, db_path: str = "bb_updates.db"):
+        self.db_path = db_path
+        self.init_alliance_tables()
+        self._alliance_cache = {}
+        self._member_cache = defaultdict(set)  # houseguest -> alliance_ids
+    
+    def init_alliance_tables(self):
+        """Initialize alliance tracking tables"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Main alliances table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alliances (
+                alliance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                formed_date TIMESTAMP,
+                dissolved_date TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                confidence_level INTEGER DEFAULT 50,
+                last_activity TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Alliance members table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alliance_members (
+                alliance_id INTEGER,
+                houseguest_name TEXT,
+                joined_date TIMESTAMP,
+                left_date TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
+                UNIQUE(alliance_id, houseguest_name)
+            )
+        """)
+        
+        # Alliance events table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alliance_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alliance_id INTEGER,
+                event_type TEXT,
+                description TEXT,
+                involved_houseguests TEXT,
+                timestamp TIMESTAMP,
+                update_hash TEXT,
+                FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
+            )
+        """)
+        
+        # Create indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_status ON alliances(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members ON alliance_members(houseguest_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_events_type ON alliance_events(event_type)")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("Alliance tracking tables initialized")
+    
+    def analyze_update_for_alliances(self, update: BBUpdate) -> List[Dict]:
+        """Analyze an update for alliance information"""
+        content = f"{update.title} {update.description}".strip()
+        detected_events = []
+        
+        # Check for alliance formations
+        for pattern, pattern_type in self.ALLIANCE_FORMATION_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                groups = match.groups()
+                houseguests = [g.strip() for g in groups if g and not g.isdigit()]
+                
+                # Filter out common words that aren't houseguests
+                houseguests = [hg for hg in houseguests if hg not in EXCLUDE_WORDS]
+                
+                if len(houseguests) >= 2:
+                    detected_events.append({
+                        'type': AllianceEventType.FORMED,
+                        'houseguests': houseguests,
+                        'pattern_type': pattern_type,
+                        'confidence': self._calculate_confidence(pattern_type),
+                        'update': update
+                    })
+        
+        # Check for betrayals
+        for pattern, pattern_type in self.BETRAYAL_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                groups = match.groups()
+                if len(groups) >= 2:
+                    betrayer = groups[0].strip()
+                    betrayed = groups[1].strip()
+                    
+                    if betrayer not in EXCLUDE_WORDS and betrayed not in EXCLUDE_WORDS:
+                        detected_events.append({
+                            'type': AllianceEventType.BETRAYAL,
+                            'betrayer': betrayer,
+                            'betrayed': betrayed,
+                            'pattern_type': pattern_type,
+                            'update': update
+                        })
+        
+        # Check for named alliances
+        for pattern in self.ALLIANCE_NAME_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                alliance_name = match.group(1).strip()
+                if alliance_name and len(alliance_name) > 2:
+                    # Try to extract members mentioned nearby
+                    members = self._extract_nearby_houseguests(content, match.start(), match.end())
+                    detected_events.append({
+                        'type': AllianceEventType.FORMED,
+                        'alliance_name': alliance_name,
+                        'houseguests': members,
+                        'pattern_type': 'named_alliance',
+                        'confidence': 80,  # Named alliances have higher confidence
+                        'update': update
+                    })
+        
+        return detected_events
+    
+    def _calculate_confidence(self, pattern_type: str) -> int:
+        """Calculate confidence level based on pattern type"""
+        confidence_map = {
+            'final_deal': 90,
+            'alliance': 85,
+            'handshake': 80,
+            'group_alliance': 85,
+            'agreement': 75,
+            'joining_forces': 70,
+            'wants_work': 50,
+            'trust': 60,
+            'named_alliance': 80
+        }
+        return confidence_map.get(pattern_type, 50)
+    
+    def _extract_nearby_houseguests(self, content: str, start: int, end: int, window: int = 100) -> List[str]:
+        """Extract houseguest names near an alliance mention"""
+        # Look in a window around the alliance name
+        search_start = max(0, start - window)
+        search_end = min(len(content), end + window)
+        search_text = content[search_start:search_end]
+        
+        # Find capitalized words that could be names
+        potential_names = re.findall(r'\b[A-Z][a-z]+\b', search_text)
+        
+        # Filter out common words
+        houseguests = [name for name in potential_names if name not in EXCLUDE_WORDS]
+        
+        return list(set(houseguests))  # Remove duplicates
+    
+    def process_alliance_event(self, event: Dict) -> Optional[int]:
+        """Process a detected alliance event and update database"""
+        try:
+            if event['type'] == AllianceEventType.FORMED:
+                return self._handle_alliance_formation(event)
+            elif event['type'] == AllianceEventType.BETRAYAL:
+                return self._handle_betrayal(event)
+            
+        except Exception as e:
+            logger.error(f"Error processing alliance event: {e}")
+            return None
+    
+    def _handle_alliance_formation(self, event: Dict) -> Optional[int]:
+        """Handle alliance formation event"""
+        houseguests = event.get('houseguests', [])
+        if len(houseguests) < 2:
+            return None
+        
+        # Check if these houseguests already have an alliance together
+        existing_alliance = self._find_existing_alliance(houseguests)
+        
+        if existing_alliance:
+            # Update confidence and last activity
+            self._update_alliance_confidence(existing_alliance['alliance_id'], event['confidence'])
+            return existing_alliance['alliance_id']
+        else:
+            # Create new alliance
+            alliance_name = event.get('alliance_name')
+            if not alliance_name:
+                # Generate a name if not provided
+                alliance_name = f"{houseguests[0]}/{houseguests[1]}"
+                if len(houseguests) > 2:
+                    alliance_name += f" +{len(houseguests)-2}"
+            
+            return self._create_alliance(
+                name=alliance_name,
+                members=houseguests,
+                confidence=event['confidence'],
+                formed_date=event['update'].pub_date
+            )
+    
+    def _handle_betrayal(self, event: Dict) -> None:
+        """Handle betrayal event"""
+        betrayer = event['betrayer']
+        betrayed = event['betrayed']
+        
+        # Find alliances containing both houseguests
+        shared_alliances = self._find_shared_alliances(betrayer, betrayed)
+        
+        for alliance in shared_alliances:
+            # Record betrayal event
+            self._record_alliance_event(
+                alliance_id=alliance['alliance_id'],
+                event_type=AllianceEventType.BETRAYAL,
+                description=f"{betrayer} betrayed {betrayed}",
+                involved=[betrayer, betrayed],
+                timestamp=event['update'].pub_date,
+                update_hash=event['update'].content_hash
+            )
+            
+            # Consider marking alliance as broken if confidence drops
+            self._update_alliance_confidence(alliance['alliance_id'], -30)
+    
+    def _create_alliance(self, name: str, members: List[str], confidence: int, formed_date: datetime) -> int:
+        """Create a new alliance in the database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Insert alliance
+            cursor.execute("""
+                INSERT INTO alliances (name, formed_date, status, confidence_level, last_activity)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, formed_date, AllianceStatus.ACTIVE.value, confidence, formed_date))
+            
+            alliance_id = cursor.lastrowid
+            
+            # Insert members
+            for member in members:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO alliance_members (alliance_id, houseguest_name, joined_date)
+                    VALUES (?, ?, ?)
+                """, (alliance_id, member, formed_date))
+            
+            # Record formation event
+            cursor.execute("""
+                INSERT INTO alliance_events (alliance_id, event_type, description, involved_houseguests, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """, (alliance_id, AllianceEventType.FORMED.value, 
+                  f"Alliance '{name}' formed", ",".join(members), formed_date))
+            
+            conn.commit()
+            logger.info(f"Created new alliance: {name} with members {members}")
+            
+            return alliance_id
+            
+        except Exception as e:
+            logger.error(f"Error creating alliance: {e}")
+            conn.rollback()
+            return None
+        finally:
+            conn.close()
+    
+    def get_active_alliances(self) -> List[Dict]:
+        """Get all currently active alliances"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
+                   GROUP_CONCAT(am.houseguest_name) as members
+            FROM alliances a
+            JOIN alliance_members am ON a.alliance_id = am.alliance_id
+            WHERE a.status = ? AND am.is_active = 1
+            GROUP BY a.alliance_id
+            ORDER BY a.confidence_level DESC, a.last_activity DESC
+        """, (AllianceStatus.ACTIVE.value,))
+        
+        alliances = []
+        for row in cursor.fetchall():
+            alliances.append({
+                'alliance_id': row[0],
+                'name': row[1],
+                'confidence': row[2],
+                'last_activity': row[3],
+                'members': row[4].split(',') if row[4] else []
+            })
+        
+        conn.close()
+        return alliances
+    
+    def create_alliance_map_embed(self) -> discord.Embed:
+        """Create an embed showing current alliance relationships"""
+        alliances = self.get_active_alliances()
+        broken_alliances = self.get_recently_broken_alliances()
+        
+        if not alliances and not broken_alliances:
+            embed = discord.Embed(
+                title="🤝 Big Brother Alliance Map",
+                description="No active alliances detected yet",
+                color=0x95a5a6,
+                timestamp=datetime.now()
+            )
+            return embed
+        
+        embed = discord.Embed(
+            title="🤝 Big Brother Alliance Map",
+            description=f"**{len(alliances)} Active Alliances**",
+            color=0x3498db,
+            timestamp=datetime.now()
+        )
+        
+        # Group alliances by confidence
+        high_conf = [a for a in alliances if a['confidence'] >= 70]
+        med_conf = [a for a in alliances if 40 <= a['confidence'] < 70]
+        low_conf = [a for a in alliances if a['confidence'] < 40]
+        
+        if high_conf:
+            alliance_text = []
+            for alliance in high_conf[:5]:  # Limit to 5
+                members_str = " + ".join([f"**{m}**" for m in alliance['members']])
+                alliance_text.append(f"🔗 {alliance['name']}\n{members_str}")
+            
+            embed.add_field(
+                name="💪 Strong Alliances",
+                value="\n\n".join(alliance_text),
+                inline=False
+            )
+        
+        if med_conf:
+            alliance_text = []
+            for alliance in med_conf[:3]:  # Limit to 3
+                members_str = " + ".join(alliance['members'])
+                alliance_text.append(f"🤝 {alliance['name']}: {members_str}")
+            
+            embed.add_field(
+                name="🤔 Suspected Alliances",
+                value="\n".join(alliance_text),
+                inline=False
+            )
+        
+        # Add recently broken strong alliances
+        if broken_alliances:
+            broken_text = []
+            for alliance in broken_alliances[:3]:  # Limit to 3
+                members_str = " + ".join(alliance['members'])
+                days_ago = (datetime.now() - datetime.fromisoformat(alliance['broken_date'])).days
+                broken_text.append(f"💔 {alliance['name']}: {members_str}\n   *Broke {days_ago}d ago after {alliance['days_strong']} days*")
+            
+            embed.add_field(
+                name="⚰️ Recently Broken Alliances",
+                value="\n\n".join(broken_text),
+                inline=False
+            )
+        
+        # Add recent betrayals
+        recent_betrayals = self.get_recent_betrayals(days=3)
+        if recent_betrayals:
+            betrayal_text = []
+            for betrayal in recent_betrayals[:3]:
+                betrayal_text.append(f"⚡ {betrayal['description']}")
+            
+            embed.add_field(
+                name="💥 Recent Betrayals",
+                value="\n".join(betrayal_text),
+                inline=False
+            )
+        
+        embed.set_footer(text="Alliance confidence based on feed activity")
+        
+        return embed
+    
+    def get_recently_broken_alliances(self, days: int = 7) -> List[Dict]:
+        """Get alliances that were strong but recently broke"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # Find alliances that:
+        # 1. Are now marked as broken/dissolved
+        # 2. Were previously at 70+ confidence for at least 7 days
+        # 3. Broke within the last week
+        cursor.execute("""
+            SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
+                   MAX(ae.timestamp) as broken_date,
+                   GROUP_CONCAT(DISTINCT am.houseguest_name) as members
+            FROM alliances a
+            JOIN alliance_members am ON a.alliance_id = am.alliance_id
+            JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
+            WHERE a.status IN (?, ?)
+              AND a.alliance_id IN (
+                  SELECT alliance_id FROM alliance_events
+                  WHERE event_type = ? AND timestamp > ?
+              )
+              AND a.alliance_id IN (
+                  SELECT alliance_id FROM alliances
+                  WHERE confidence_level >= 70
+                  AND julianday(last_activity) - julianday(formed_date) >= 7
+              )
+            GROUP BY a.alliance_id
+            ORDER BY broken_date DESC
+        """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
+              AllianceEventType.BETRAYAL.value, cutoff_date))
+        
+        broken_alliances = []
+        for row in cursor.fetchall():
+            alliance_id, name, formed_date, broken_date, members = row
+            
+            # Calculate how long it was strong
+            formed = datetime.fromisoformat(formed_date)
+            broken = datetime.fromisoformat(broken_date)
+            days_strong = (broken - formed).days
+            
+            broken_alliances.append({
+                'alliance_id': alliance_id,
+                'name': name,
+                'members': members.split(',') if members else [],
+                'formed_date': formed_date,
+                'broken_date': broken_date,
+                'days_strong': days_strong
+            })
+        
+        conn.close()
+        return broken_alliances
+    
+    def get_houseguest_loyalty_embed(self, houseguest: str) -> discord.Embed:
+        """Create an embed showing a houseguest's alliance history"""
+        # Get all alliances for this houseguest
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
+                   GROUP_CONCAT(am2.houseguest_name) as all_members
+            FROM alliance_members am
+            JOIN alliances a ON am.alliance_id = a.alliance_id
+            JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
+            WHERE am.houseguest_name = ?
+            GROUP BY a.alliance_id
+            ORDER BY am.joined_date DESC
+        """, (houseguest,))
+        
+        alliances = cursor.fetchall()
+        
+        # Get betrayal count
+        cursor.execute("""
+            SELECT COUNT(*) FROM alliance_events
+            WHERE event_type = ? AND involved_houseguests LIKE ?
+        """, (AllianceEventType.BETRAYAL.value, f"%{houseguest}%"))
+        
+        betrayal_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"🎭 {houseguest}'s Alliance History",
+            color=0xe74c3c if betrayal_count > 2 else 0x2ecc71,
+            timestamp=datetime.now()
+        )
+        
+        if not alliances:
+            embed.description = f"{houseguest} has not been detected in any alliances"
+            return embed
+        
+        # Calculate loyalty score
+        active_alliances = sum(1 for a in alliances if a[1] == AllianceStatus.ACTIVE.value)
+        broken_alliances = sum(1 for a in alliances if a[1] in [AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value])
+        
+        loyalty_score = max(0, 100 - (betrayal_count * 20) - (broken_alliances * 10))
+        loyalty_emoji = "🏆" if loyalty_score >= 80 else "⚠️" if loyalty_score >= 50 else "🚨"
+        
+        embed.description = f"**Loyalty Score**: {loyalty_emoji} {loyalty_score}/100\n"
+        embed.description += f"**Betrayals**: {betrayal_count} | **Active Alliances**: {active_alliances}"
+        
+        # Add alliance history
+        alliance_text = []
+        for alliance in alliances[:6]:  # Limit display
+            name, status, joined, left, confidence, members = alliance
+            status_emoji = "✅" if status == AllianceStatus.ACTIVE.value else "❌"
+            
+            # Parse members
+            other_members = [m for m in members.split(',') if m != houseguest]
+            members_str = ", ".join(other_members[:3])
+            if len(other_members) > 3:
+                members_str += f" +{len(other_members)-3}"
+            
+            alliance_text.append(f"{status_emoji} **{name}** (w/ {members_str})")
+        
+        embed.add_field(
+            name="📋 Alliance History",
+            value="\n".join(alliance_text) if alliance_text else "No alliances found",
+            inline=False
+        )
+        
+        return embed
+    
+    def get_recent_betrayals(self, days: int = 7) -> List[Dict]:
+        """Get recent betrayal events"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        cursor.execute("""
+            SELECT description, timestamp, involved_houseguests
+            FROM alliance_events
+            WHERE event_type = ? AND timestamp > ?
+            ORDER BY timestamp DESC
+        """, (AllianceEventType.BETRAYAL.value, cutoff_date))
+        
+        betrayals = []
+        for row in cursor.fetchall():
+            betrayals.append({
+                'description': row[0],
+                'timestamp': row[1],
+                'involved': row[2].split(',') if row[2] else []
+            })
+        
+        conn.close()
+        return betrayals
+    
+    def _find_existing_alliance(self, houseguests: List[str]) -> Optional[Dict]:
+        """Find if these houseguests already have an alliance"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Get all active alliances for first houseguest
+        cursor.execute("""
+            SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
+            FROM alliance_members am
+            JOIN alliances a ON am.alliance_id = a.alliance_id
+            WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
+        """, (houseguests[0], AllianceStatus.ACTIVE.value))
+        
+        for row in cursor.fetchall():
+            alliance_id = row[0]
+            
+            # Check if all houseguests are in this alliance
+            all_in = True
+            for hg in houseguests[1:]:
+                cursor.execute("""
+                    SELECT 1 FROM alliance_members
+                    WHERE alliance_id = ? AND houseguest_name = ? AND is_active = 1
+                """, (alliance_id, hg))
+                
+                if not cursor.fetchone():
+                    all_in = False
+                    break
+            
+            if all_in:
+                conn.close()
+                return {
+                    'alliance_id': alliance_id,
+                    'name': row[1],
+                    'confidence': row[2]
+                }
+        
+        conn.close()
+        return None
+    
+    def _find_shared_alliances(self, hg1: str, hg2: str) -> List[Dict]:
+        """Find alliances containing both houseguests"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DISTINCT a.alliance_id, a.name
+            FROM alliance_members am1
+            JOIN alliance_members am2 ON am1.alliance_id = am2.alliance_id
+            JOIN alliances a ON am1.alliance_id = a.alliance_id
+            WHERE am1.houseguest_name = ? AND am2.houseguest_name = ?
+                  AND am1.is_active = 1 AND am2.is_active = 1
+                  AND a.status = ?
+        """, (hg1, hg2, AllianceStatus.ACTIVE.value))
+        
+        alliances = []
+        for row in cursor.fetchall():
+            alliances.append({
+                'alliance_id': row[0],
+                'name': row[1]
+            })
+        
+        conn.close()
+        return alliances
+    
+    def _update_alliance_confidence(self, alliance_id: int, change: int):
+        """Update alliance confidence level"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Get current confidence and status
+        cursor.execute("""
+            SELECT confidence_level, status, formed_date 
+            FROM alliances WHERE alliance_id = ?
+        """, (alliance_id,))
+        
+        current_conf, status, formed_date = cursor.fetchone()
+        
+        # Track if this was a strong alliance before the change
+        was_strong = current_conf >= 70 and status == AllianceStatus.ACTIVE.value
+        
+        # Calculate how long it's been active if it was strong
+        if was_strong:
+            formed = datetime.fromisoformat(formed_date)
+            days_active = (datetime.now() - formed).days
+        else:
+            days_active = 0
+        
+        # Update confidence
+        new_confidence = max(0, min(100, current_conf + change))
+        
+        cursor.execute("""
+            UPDATE alliances 
+            SET confidence_level = ?,
+                last_activity = ?
+            WHERE alliance_id = ?
+        """, (new_confidence, datetime.now(), alliance_id))
+        
+        # Check if confidence dropped too low
+        if new_confidence < 20:
+            # Mark alliance as broken
+            new_status = AllianceStatus.BROKEN.value
+            cursor.execute("""
+                UPDATE alliances SET status = ? WHERE alliance_id = ?
+            """, (new_status, alliance_id))
+            
+            # If this was a strong alliance for over a week, record it as a major break
+            if was_strong and days_active >= 7:
+                cursor.execute("""
+                    INSERT INTO alliance_events 
+                    (alliance_id, event_type, description, timestamp)
+                    VALUES (?, ?, ?, ?)
+                """, (alliance_id, AllianceEventType.DISSOLVED.value,
+                      f"Alliance dissolved after {days_active} days", datetime.now()))
+                
+                logger.info(f"Major alliance break: Alliance {alliance_id} was strong for {days_active} days")
+        
+        conn.commit()
+        conn.close()
+    
+    def _record_alliance_event(self, alliance_id: int, event_type: AllianceEventType, 
+                             description: str, involved: List[str], 
+                             timestamp: datetime, update_hash: str = None):
+        """Record an alliance event"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO alliance_events 
+            (alliance_id, event_type, description, involved_houseguests, timestamp, update_hash)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (alliance_id, event_type.value, description, 
+              ",".join(involved), timestamp, update_hash))
+        
+        conn.commit()
+        conn.close()
+
+class UpdateBatcher:
+    """Groups and analyzes updates like a BB superfan using LLM intelligence"""
+    
+    def __init__(self, analyzer: BBAnalyzer, config: Config):
+        self.analyzer = analyzer
+        self.config = config
+        self.update_queue = []
+        self.last_batch_time = datetime.now()
+        
+        # Replace the set with LRU cache
+        max_hashes = config.get('max_processed_hashes', 10000)
+        self.processed_hashes_cache = LRUCache(capacity=max_hashes)
+        
+        # Initialize rate limiter
+        self.rate_limiter = RateLimiter(
+            max_requests_per_minute=config.get('llm_requests_per_minute', 10),
+            max_requests_per_hour=config.get('llm_requests_per_hour', 100)
+        )
+        
+        # Initialize Anthropic client
+        self.llm_client = None
+        self.llm_model = config.get('llm_model', 'claude-3-haiku-20240307')
+        self._init_llm_client()
+    
+    def _init_llm_client(self):
+        """Initialize LLM client with proper error handling"""
+        api_key = self.config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY', '')
+        
+        if not api_key.strip():
+            logger.warning("No valid Anthropic API key provided")
+            return
+        
+        try:
+            self.llm_client = anthropic.Anthropic(api_key=api_key.strip())
+            logger.info("LLM integration initialized successfully")
+        except Exception as e:
+            logger.error(f"Failed to initialize LLM: {e}")
+            self.llm_client = None
+    
+    def should_send_batch(self) -> bool:
+        """Determine if we should send a batch now"""
+        if not self.update_queue:
+            return False
+            
+        time_elapsed = (datetime.now() - self.last_batch_time).total_seconds() / 60
+        
+        # Check for urgent updates
+        has_urgent = any(self._is_urgent(update) for update in self.update_queue)
+        if has_urgent and len(self.update_queue) >= 2:
+            return True
+        
+        # High activity mode: 10+ updates or 15 minutes
+        if len(self.update_queue) >= 10 or time_elapsed >= 15:
+            return True
+            
+        # Normal mode: 5+ updates or 30 minutes
+        if len(self.update_queue) >= 5 or time_elapsed >= 30:
+            return True
+            
+        return False
+    
+    def _is_urgent(self, update: BBUpdate) -> bool:
+        """Check if update contains game-critical information"""
+        content = f"{update.title} {update.description}".lower()
+        return any(keyword in content for keyword in URGENT_KEYWORDS)
+    
+    async def add_update(self, update: BBUpdate):
+        """Add update to queue if not already processed"""
+        # Use async method for thread safety
+        if not await self.processed_hashes_cache.contains(update.content_hash):
+            self.update_queue.append(update)
+            await self.processed_hashes_cache.add(update.content_hash)
+            
+            # Log cache stats periodically
+            cache_stats = self.processed_hashes_cache.get_stats()
+            if cache_stats['size'] % 1000 == 0:  # Log every 1000 entries
+                logger.info(f"Hash cache stats: {cache_stats}")
+    
+    async def create_batch_summary(self) -> List[discord.Embed]:
+        """Create intelligent summary embeds using LLM if available"""
+        if not self.update_queue:
+            return []
+        
+        embeds = []
+        
+        # Use LLM if available and rate limits allow
+        if self.llm_client and await self._can_make_llm_request():
+            try:
+                embeds = await self._create_llm_summary()
+            except Exception as e:
+                logger.error(f"LLM summary failed: {e}")
+                embeds = self._create_pattern_summary_with_explanation("LLM analysis failed")
+        else:
+            reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
+            embeds = self._create_pattern_summary_with_explanation(reason)
+        
+        # Clear queue after processing
+        self.update_queue.clear()
+        self.last_batch_time = datetime.now()
+        
+        return embeds
+    
+    async def _can_make_llm_request(self) -> bool:
+        """Check if we can make an LLM request without hitting rate limits"""
+        stats = self.rate_limiter.get_stats()
+        return (stats['requests_this_minute'] < stats['minute_limit'] and 
+                stats['requests_this_hour'] < stats['hour_limit'])
+    
+    async def _create_llm_summary(self) -> List[discord.Embed]:
+        """Use Claude to create intelligent summaries with rate limiting"""
+        # Wait for rate limit if needed
+        await self.rate_limiter.wait_if_needed()
+        
+        # Prepare update data for LLM
+        updates_data = []
+        for update in self.update_queue:
+            time_str = update.pub_date.strftime('%I:%M %p')
+            updates_data.append({
+                'time': time_str,
+                'title': update.title,
+                'description': update.description[:200] if update.description != update.title else ""
+            })
+        
+        # Create LLM prompt (single prompt for all scenarios)
+        prompt = self._create_llm_prompt(updates_data)
+        
+        try:
+            # Make LLM request
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            analysis = self._parse_llm_response(response.content[0].text)
+            
+            # Create main embed
+            embeds = self._create_embeds_from_analysis(analysis)
+            
+            # Add highlights embed for batches with 7+ updates if rate limits allow
+            if len(self.update_queue) >= 7:
+                logger.info(f"Creating highlights embed for {len(self.update_queue)} updates")
+                try:
+                    # Check if we can make another LLM call
+                    if await self._can_make_llm_request():
+                        highlights_embed = await self._create_llm_highlights_embed(analysis.get('game_phase', 'current'))
+                        if highlights_embed:
+                            embeds.append(highlights_embed)
+                            logger.info("Added LLM-curated highlights embed")
+                        else:
+                            logger.warning("LLM highlights embed creation returned None")
+                    else:
+                        logger.warning("Rate limit reached - creating pattern-based highlights embed")
+                        highlights_embed = self._create_pattern_highlights_embed()
+                        if highlights_embed:
+                            embeds.append(highlights_embed)
+                            logger.info("Added pattern-based highlights embed")
+                except Exception as e:
+                    logger.error(f"Error creating highlights embed: {e}")
+                    # Fallback to pattern-based highlights
+                    highlights_embed = self._create_pattern_highlights_embed()
+                    if highlights_embed:
+                        embeds.append(highlights_embed)
+                        logger.info("Added fallback highlights embed")
+            
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"LLM request failed: {e}")
+            raise
+    
+    async def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
+        """Create a highlights embed using LLM to curate the most important moments"""
+        try:
+            # Wait for rate limit if needed
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare update data
+            updates_text = "\n".join([
+                f"{self._extract_correct_time(u)} - {u.title}"
+                for u in self.update_queue
+            ])
+            
+            prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.update_queue)} updates.
+
+{updates_text}
+
+Select 5-8 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing. 
+
+HIGHLIGHT-WORTHY updates include:
+- Competition wins (HOH, POV, etc.)
+- Major strategic moves or betrayals
+- Dramatic fights or confrontations  
+- Romantic moments (first kiss, breakup, etc.)
+- Hilarious or memorable incidents
+- Game-changing twists revealed
+- Eviction results or surprise votes
+- Alliance formations or breaks
+
+NOT highlights (unless part of something bigger):
+- Single jury votes (unless it's a crucial swing vote)
+- Routine conversations
+- Minor game talk
+- Regular daily activities
+
+For each selected update, provide:
+{{
+    "highlights": [
+        {{
+            "time": "exact time from update",
+            "title": "exact title from update",
+            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+        }}
+    ]
+}}
+
+Be selective - these should be the updates that a superfan would want to know about if they could only see 5-8 things from this time period."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=800,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            try:
+                highlights_data = self._parse_llm_response(response.content[0].text)
+                
+                if not highlights_data.get('highlights'):
+                    logger.warning("No highlights in LLM response")
+                    return self._create_pattern_highlights_embed()
+                
+                embed = discord.Embed(
+                    title="🎯 Feed Highlights - What Mattered",
+                    description=f"AI-curated key moments from this period ({len(highlights_data['highlights'])} of {len(self.update_queue)} updates)",
+                    color=0xe74c3c if game_phase == "final_weeks" else 0xf39c12 if game_phase == "jury_phase" else 0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for highlight in highlights_data['highlights'][:8]:  # Max 8
+                    # Only add reason if it exists and isn't empty
+                    if highlight.get('reason') and highlight['reason'].strip():
+                        embed.add_field(
+                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                            value=f"{highlight.get('title', 'Update')}\n*{highlight['reason']}*",
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                            value=highlight.get('title', 'Update'),
+                            inline=False
+                        )
+                
+                embed.set_footer(text=f"Chen Bot Highlights • {game_phase.replace('_', ' ').title()}")
+                
+                return embed
+                
+            except Exception as e:
+                logger.error(f"Failed to parse highlights response: {e}")
+                return self._create_pattern_highlights_embed()
+                
+        except Exception as e:
+            logger.error(f"LLM highlights creation failed: {e}")
+            return self._create_pattern_highlights_embed()
+    
+    def _create_llm_prompt(self, updates_data: List[Dict]) -> str:
+        """Create LLM prompt for all scenarios"""
+        updates_text = "\n".join([
+            f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
+            for u in updates_data
+        ])
+        
+        return f"""You are the ultimate Big Brother superfan - part Taran Armstrong's strategic genius, part live feed obsessive who loves ALL aspects of the BB experience.
+
+Analyze these {len(updates_data)} Big Brother live feed updates:
+
+{updates_text}
+
+As a complete Big Brother superfan, provide analysis covering BOTH strategic gameplay AND social dynamics:
+
+{{
+    "headline": "Compelling headline that captures the most significant development (strategic OR social)",
+    "summary": "3-4 sentence summary balancing strategic implications with social dynamics and entertainment value",
+    "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning, voting plans",
+    "social_dynamics": "Alliance formations, alliance shifts, trust levels, betrayals, strategic partnerships",
+    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes, or unique interactions",
+    "key_players": ["houseguests", "involved", "in", "strategic", "and", "social", "moments"],
+    "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
+    "strategic_importance": 7,
+    "house_culture": "Inside jokes, daily routines, house traditions, or quirky moments that define this group",
+    "relationship_updates": "Showmance developments, romantic connections, dating situations, or relationship changes"
+}}
+
+Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects. Include:
+- Strategic gameplay and voting plans
+- Alliance dynamics and strategic partnerships
+- Entertainment value and memorable moments
+- House culture and personality interactions
+- Showmance and romantic developments
+
+Focus Social Dynamics on ALLIANCES and strategic relationships, while Relationship Updates covers SHOWMANCES and romantic connections."""
+    
+    def _parse_llm_response(self, response_text: str) -> dict:
+        """Parse LLM response with fallback handling"""
+        try:
+            # Try to extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start != -1 and json_end != -1:
+                json_text = response_text[json_start:json_end]
+                return json.loads(json_text)
+            else:
+                raise ValueError("No JSON found in response")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"JSON parsing failed: {e}, using text response")
+            return self._parse_text_response(response_text)
+    
+    def _parse_text_response(self, response_text: str) -> dict:
+        """Parse LLM response when JSON parsing fails"""
+        # Create a basic analysis from the text response
+        analysis = {
+            "headline": "Big Brother Update",
+            "summary": response_text[:300] + "..." if len(response_text) > 300 else response_text,
+            "strategic_analysis": "Analysis available in summary above.",
+            "key_players": [],
+            "game_phase": "current",
+            "strategic_importance": 5,
+            "social_dynamics": "See summary for details.",
+            "entertainment_highlights": "Various moments occurred."
+        }
+        
+        # Try to extract key information
+        try:
+            names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
+            analysis['key_players'] = [name for name in names if name not in EXCLUDE_WORDS][:5]
+        except Exception as e:
+            logger.debug(f"Text parsing error: {e}")
+        
+        return analysis
+    
+    def _create_embeds_from_analysis(self, analysis: dict) -> List[discord.Embed]:
+        """Create Discord embeds from LLM analysis"""
+        game_phase_colors = {
+            "early_game": 0x3498db,
+            "jury_phase": 0xf39c12,
+            "final_weeks": 0xe74c3c,
+            "finale_night": 0xffd700
+        }
+        
+        color = game_phase_colors.get(analysis.get('game_phase', 'early_game'), 0x3498db)
+        
+        main_embed = discord.Embed(
+            title=f"🎭 {analysis['headline']}",
+            description=f"**{len(self.update_queue)} feed updates** • {analysis.get('game_phase', 'Current Phase').replace('_', ' ').title()}\n\n{analysis['summary']}",
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Add strategic analysis
+        if analysis.get('strategic_analysis'):
+            main_embed.add_field(
+                name="🎯 Strategic Analysis",
+                value=analysis['strategic_analysis'],
+                inline=False
+            )
+        
+        # Add regular season fields
+        if analysis.get('social_dynamics'):
+            main_embed.add_field(
+                name="🤝 Alliance Dynamics",
+                value=analysis['social_dynamics'],
+                inline=False
+            )
+        
+        if analysis.get('entertainment_highlights'):
+            main_embed.add_field(
+                name="🎬 Entertainment Highlights",
+                value=analysis['entertainment_highlights'],
+                inline=False
+            )
+        
+        if analysis.get('relationship_updates'):
+            main_embed.add_field(
+                name="💕 Showmance Updates",
+                value=analysis['relationship_updates'],
+                inline=False
+            )
+        
+        if analysis.get('house_culture'):
+            main_embed.add_field(
+                name="🏠 House Culture",
+                value=analysis['house_culture'],
+                inline=False
+            )
+        
+        # Add common fields
+        self._add_common_fields(main_embed, analysis)
+        
+        return [main_embed]
+    
+    def _add_common_fields(self, embed: discord.Embed, analysis: dict):
+        """Add common fields to embed"""
+        # Key players
+        if analysis.get('key_players'):
+            players = analysis['key_players'][:8]
+            embed.add_field(
+                name="⭐ Key Players",
+                value=" • ".join(players),
+                inline=False
+            )
+        
+        # Strategic importance
+        importance = analysis.get('strategic_importance', 5)
+        importance_bar = "🔥" * min(importance, 10)
+        embed.add_field(
+            name="🎲 Overall Importance",
+            value=f"{importance_bar} {importance}/10",
+            inline=True
+        )
+        
+        # Footer
+        embed.set_footer(text="Strategic Analysis + Social Dynamics • BB Superfan AI")
+    
+    def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
+        """Enhanced pattern-based summary with explanation"""
+        grouped = self._group_updates_pattern()
+        
+        total_updates = sum(len(updates) for updates in grouped.values())
+        headline = self._get_headline_pattern(grouped)
+        
+        embed = discord.Embed(
+            title=f"🎭 {headline}",
+            description=f"**{total_updates} updates** from the last batch period\n\n*{reason} - Using pattern analysis*",
+            color=self._get_batch_color_pattern(grouped),
+            timestamp=datetime.now()
+        )
+        
+        # Add grouped summaries
+        for category, updates in grouped.items():
+            if updates:
+                summary = self._create_category_summary(category, updates)
+                embed.add_field(
+                    name=f"{self._get_category_emoji(category)} {category.title()} ({len(updates)})",
+                    value=summary,
+                    inline=False
+                )
+        
+        return [embed]
+
+    def get_rate_limit_stats(self) -> Dict[str, int]:
+        """Get current rate limiting statistics"""
+        return self.rate_limiter.get_stats()
+    
+    def _group_updates_pattern(self) -> Dict[str, List[BBUpdate]]:
+        """Pattern-based grouping when LLM unavailable"""
+        groups = defaultdict(list)
+        
+        for update in self.update_queue:
+            content = f"{update.title} {update.description}".lower()
+            
+            if 'vote' in content or 'voting' in content:
+                groups['votes'].append(update)
+            elif any(word in content for word in ['wins', 'won', 'hoh', 'pov', 'veto']):
+                groups['competitions'].append(update)
+            elif any(word in content for word in ['nominat', 'ceremony']):
+                groups['nominations'].append(update)
+            else:
+                groups['general'].append(update)
+        
+        return groups
+    
+    def _get_headline_pattern(self, grouped: Dict[str, List[BBUpdate]]) -> str:
+        """Generate headline without LLM"""
+        if grouped.get('votes'):
+            return "Jury Votes Revealed!"
+        elif grouped.get('competitions'):
+            return "Competition Results!"
+        elif grouped.get('nominations'):
+            return "Nomination Ceremony!"
+        else:
+            return "Big Brother Update"
+    
+    def _get_batch_color_pattern(self, grouped: Dict[str, List[BBUpdate]]) -> int:
+        """Determine color without LLM"""
+        if grouped.get('votes'):
+            return 0xe74c3c  # Red
+        elif grouped.get('competitions'):
+            return 0xf39c12  # Orange
+        else:
+            return 0x3498db  # Blue
+    
+    def _create_category_summary(self, category: str, updates: List[BBUpdate]) -> str:
+        """Create better category summaries"""
+        if len(updates) <= 3:
+            return "\n".join([
+                f"• {u.title[:80]}..." if len(u.title) > 80 else f"• {u.title}"
+                for u in updates
+            ])
+        else:
+            return (f"• {updates[0].title[:80]}...\n"
+                   f"• {updates[1].title[:80]}...\n"
+                   f"• And {len(updates)-2} more updates")
+    
+    def _get_category_emoji(self, category: str) -> str:
+        """Get emoji for category"""
+        emoji_map = {
+            'votes': '🗳️',
+            'competitions': '🏆',
+            'nominations': '🎯',
+            'general': '📝',
+            'strategy': '🧠',
+            'drama': '💥'
+        }
+        return emoji_map.get(category, '📝')
+    
+    async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create a comprehensive daily recap from all updates"""
+        if not updates:
+            return []
+        
+        logger.info(f"Creating daily recap for {len(updates)} updates")
+        
+        # Check if we need to chunk the updates (too many for single LLM call)
+        if len(updates) > 50:
+            return await self._create_chunked_daily_recap(updates, day_number)
+        else:
+            return await self._create_single_daily_recap(updates, day_number)
+    
+    async def _create_single_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap from manageable number of updates"""
+        if not self.llm_client or not await self._can_make_llm_request():
+            return self._create_pattern_daily_recap(updates, day_number)
+        
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare chronological update data
+            updates_data = []
+            for update in updates:
+                time_str = self._extract_correct_time(update)
+                updates_data.append({
+                    'time': time_str,
+                    'title': update.title,
+                    'description': update.description[:150] if update.description != update.title else ""
+                })
+            
+            # Create daily recap prompt
+            prompt = f"""You are the ultimate Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
+
+Analyze these {len(updates)} updates from the entire day (chronological order):
+
+{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
+
+Create a comprehensive daily recap that tells the story of Day {day_number}:
+
+{{
+    "headline": "Day {day_number} headline capturing the most significant storyline",
+    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+    "strategic_analysis": "Strategic developments - key conversations, alliance shifts, target changes, power dynamics",
+    "social_dynamics": "Alliance formations, trust shifts, betrayals, strategic partnerships throughout the day",
+    "entertainment_highlights": "Memorable moments, drama, funny interactions, personality conflicts from the day",
+    "key_players": ["houseguests", "who", "were", "central", "to", "the", "day"],
+    "strategic_importance": 8,
+    "house_culture": "Daily routines, inside jokes, traditions, or cultural moments that defined the day",
+    "relationship_updates": "Showmance developments, romantic moments, or relationship changes",
+    "day_timeline": "Brief chronological overview of how the day unfolded from morning to night"
+}}
+
+Focus on creating a comprehensive daily story that captures the full arc of Day {day_number}. This should read like a daily diary entry for superfans."""
+
+            # Make LLM request
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1500,  # Longer for daily recap
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            analysis = self._parse_llm_response(response.content[0].text)
+            
+            # Create daily recap embed
+            return self._create_daily_recap_embed(analysis, day_number, len(updates))
+            
+        except Exception as e:
+            logger.error(f"Daily recap LLM failed: {e}")
+            return self._create_pattern_daily_recap(updates, day_number)
+    
+    async def _create_chunked_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap by summarizing in chunks first"""
+        chunk_size = 25
+        chunks = [updates[i:i + chunk_size] for i in range(0, len(updates), chunk_size)]
+        
+        logger.info(f"Creating chunked daily recap: {len(chunks)} chunks of ~{chunk_size} updates each")
+        
+        # First pass: summarize each chunk
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            if not await self._can_make_llm_request():
+                # Fall back to pattern analysis if rate limited
+                summary = self._summarize_chunk_pattern(chunk, i + 1)
+            else:
+                summary = await self._summarize_chunk_llm(chunk, i + 1)
+            
+            chunk_summaries.append(summary)
+        
+        # Second pass: create final daily recap from summaries
+        return await self._create_final_daily_recap(chunk_summaries, day_number, len(updates))
+    
+    async def _summarize_chunk_llm(self, chunk: List[BBUpdate], chunk_number: int) -> str:
+        """Summarize a chunk of updates using LLM"""
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            updates_text = "\n".join([
+                f"{self._extract_correct_time(u)} - {u.title}"
+                for u in chunk
+            ])
+            
+            prompt = f"""Summarize this chunk of Big Brother updates (Chunk {chunk_number}):
+
+{updates_text}
+
+Provide a 2-3 sentence summary capturing the key strategic and social developments in this time period. Focus on the most important events and conversations."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return f"**Chunk {chunk_number}**: {response.content[0].text}"
+            
+        except Exception as e:
+            logger.error(f"Chunk summarization failed: {e}")
+            return self._summarize_chunk_pattern(chunk, chunk_number)
+    
+    def _summarize_chunk_pattern(self, chunk: List[BBUpdate], chunk_number: int) -> str:
+        """Summarize a chunk using pattern matching"""
+        # Group by importance and pick top updates
+        important_updates = sorted(
+            chunk, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:3]
+        
+        titles = [u.title[:60] + "..." if len(u.title) > 60 else u.title for u in important_updates]
+        return f"**Chunk {chunk_number}**: {' • '.join(titles)}"
+    
+    async def _create_final_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create final daily recap from chunk summaries"""
+        if not self.llm_client or not await self._can_make_llm_request():
+            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+        
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            summaries_text = "\n\n".join(chunk_summaries)
+            
+            prompt = f"""Create a comprehensive Day {day_number} recap from these chunk summaries:
+
+{summaries_text}
+
+Create a daily recap that tells the story of Day {day_number} from these summaries:
+
+{{
+    "headline": "Day {day_number} headline capturing the most significant storyline",
+    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+    "strategic_analysis": "Strategic developments throughout the day",
+    "social_dynamics": "Alliance and relationship dynamics",
+    "entertainment_highlights": "Memorable moments and drama",
+    "key_players": ["main", "houseguests", "from", "the", "day"],
+    "strategic_importance": 8,
+    "house_culture": "Daily culture and routine moments",
+    "relationship_updates": "Showmance and relationship developments",
+    "day_timeline": "How the day unfolded chronologically"
+}}
+
+Focus on creating a cohesive daily story from these summaries."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            analysis = self._parse_llm_response(response.content[0].text)
+            return self._create_daily_recap_embed(analysis, day_number, total_updates)
+            
+        except Exception as e:
+            logger.error(f"Final daily recap failed: {e}")
+            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+    
+    def _create_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int) -> List[discord.Embed]:
+        """Create the daily recap embed"""
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('summary', 'Daily summary not available')}",
+            color=0x9b59b6,  # Purple for daily recaps
+            timestamp=datetime.now()
+        )
+        
+        # Add timeline if available
+        if analysis.get('day_timeline'):
+            embed.add_field(
+                name="📖 Day Timeline",
+                value=analysis['day_timeline'],
+                inline=False
+            )
+        
+        # Add strategic analysis
+        if analysis.get('strategic_analysis'):
+            embed.add_field(
+                name="🎯 Strategic Developments",
+                value=analysis['strategic_analysis'],
+                inline=False
+            )
+        
+        # Add other sections
+        if analysis.get('social_dynamics'):
+            embed.add_field(
+                name="🤝 Alliance Dynamics",
+                value=analysis['social_dynamics'],
+                inline=False
+            )
+        
+        if analysis.get('entertainment_highlights'):
+            embed.add_field(
+                name="🎬 Day Highlights",
+                value=analysis['entertainment_highlights'],
+                inline=False
+            )
+        
+        if analysis.get('relationship_updates'):
+            embed.add_field(
+                name="💕 Showmance Updates",
+                value=analysis['relationship_updates'],
+                inline=False
+            )
+        
+        if analysis.get('house_culture'):
+            embed.add_field(
+                name="🏠 House Culture",
+                value=analysis['house_culture'],
+                inline=False
+            )
+        
+        # Add key players
+        if analysis.get('key_players'):
+            players = analysis['key_players'][:8]
+            embed.add_field(
+                name="⭐ Key Players of the Day",
+                value=" • ".join(players),
+                inline=False
+            )
+        
+        # Add importance
+        importance = analysis.get('strategic_importance', 5)
+        importance_bar = "🔥" * min(importance, 10)
+        embed.add_field(
+            name="📊 Day Importance",
+            value=f"{importance_bar} {importance}/10",
+            inline=True
+        )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • BB Superfan AI")
+        
+        return [embed]
+    
+    def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap using pattern matching"""
+        # Analyze updates by importance
+        important_updates = sorted(
+            updates, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:10]  # Top 10 most important
+        
+        # Group by categories
+        categories = defaultdict(list)
+        for update in important_updates:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{len(updates)} updates** • Pattern-based daily summary",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Add top moments
+        top_moments = []
+        for update in important_updates[:5]:
+            time_str = self._extract_correct_time(update)
+            title = update.title[:80] + "..." if len(update.title) > 80 else update.title
+            top_moments.append(f"**{time_str}**: {title}")
+        
+        if top_moments:
+            embed.add_field(
+                name="🎯 Top Moments of the Day",
+                value="\n".join(top_moments),
+                inline=False
+            )
+        
+        # Add categories
+        for category, cat_updates in categories.items():
+            if cat_updates:
+                summary = f"{len(cat_updates)} updates in this category"
+                embed.add_field(
+                    name=f"{category}",
+                    value=summary,
+                    inline=True
+                )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
+        
+        return [embed]
+    
+    def _create_pattern_daily_recap_from_summaries(self, summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create pattern-based daily recap from summaries"""
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{total_updates} updates** • Chunked summary analysis",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Add chunk summaries
+        summary_text = "\n\n".join(summaries)
+        if len(summary_text) > 1000:
+            summary_text = summary_text[:997] + "..."
+        
+        embed.add_field(
+            name="📝 Daily Summary",
+            value=summary_text,
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
+        
+        return [embed]
+
+    def _extract_correct_time(self, update: BBUpdate) -> str:
+        """Extract the correct time from the update content rather than pub_date"""
+        # Look for time patterns in the title like "07:56 PM PST"
+        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
+        
+        # First try the title
+        match = re.search(time_pattern, update.title)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Then try the description
+        match = re.search(time_pattern, update.description)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Fallback to pub_date if no time found in content
+        return update.pub_date.strftime("%I:%M %p")
+
+    def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
+        """Create highlights embed using pattern matching when LLM unavailable"""
+        try:
+            # Sort updates by importance score
+            updates_with_importance = [
+                (update, self.analyzer.analyze_strategic_importance(update))
+                for update in self.update_queue
+            ]
+            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top 5-8 most important updates
+            selected_updates = updates_with_importance[:min(8, len(updates_with_importance))]
+            
+            if not selected_updates:
+                return None
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Mattered",
+                description=f"Key moments from this period ({len(selected_updates)} of {len(self.update_queue)} updates)",
+                color=0x95a5a6,
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, (update, importance) in enumerate(selected_updates, 1):
+                # Extract correct time from content rather than pub_date
+                time_str = self._extract_correct_time(update)
+                
+                # Show full update title for highlights (these are the key moments)
+                title = update.title
+                # Only truncate if extremely long (Discord field limit is 1024 chars)
+                if len(title) > 1000:
+                    title = title[:997] + "..."
+                
+                # Add importance indicators
+                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                
+                embed.add_field(
+                    name=f"{importance_emoji} {time_str}",
+                    value=title,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Pattern-based Analysis • {len(selected_updates)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Pattern highlights creation failed: {e}")
+            return None
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
@@ -333,11 +2388,7 @@ class BBDiscordBot(commands.Bot):
                 ("/sync", "Sync slash commands (Owner only)"),
                 ("/alliances", "Show current Big Brother alliances"),
                 ("/loyalty", "Show a houseguest's alliance history"),
-                ("/betrayals", "Show recent alliance betrayals"),
-                ("/momentum", "Show alliance momentum trends"),
-                ("/connections", "Show a houseguest's game connections"),
-                ("/suspected", "Show suspected alliances based on behavior"),
-                ("/alliancehistory", "Show detailed alliance history timeline")
+                ("/betrayals", "Show recent alliance betrayals")
             ]
             
             for name, description in commands_list:
@@ -527,234 +2578,6 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error showing betrayals: {e}")
                 await interaction.followup.send("Error generating betrayal list.", ephemeral=True)
-        
-        @self.tree.command(name="momentum", description="Show alliance momentum trends")
-        async def momentum_slash(interaction: discord.Interaction):
-            """Show which alliances are rising or falling"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                embed = self.alliance_tracker.create_alliance_momentum_embed()
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error showing momentum: {e}")
-                await interaction.followup.send("Error generating momentum report.", ephemeral=True)
-
-        @self.tree.command(name="connections", description="Show a houseguest's game connections")
-        async def connections_slash(interaction: discord.Interaction, houseguest: str):
-            """Show connection network for a houseguest"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                # Capitalize the name properly
-                houseguest = houseguest.strip().title()
-                
-                embed = self.alliance_tracker.create_houseguest_connections_embed(houseguest)
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error showing connections: {e}")
-                await interaction.followup.send("Error generating connections.", ephemeral=True)
-
-        @self.tree.command(name="suspected", description="Show suspected alliances based on behavior")
-        async def suspected_slash(interaction: discord.Interaction):
-            """Show alliances that might be forming based on subtle indicators"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                conn = sqlite3.connect(self.alliance_tracker.db_path)
-                cursor = conn.cursor()
-                
-                # Get suspected alliances
-                cursor.execute("""
-                    SELECT a.alliance_id, a.name, a.confidence_level, a.momentum,
-                           GROUP_CONCAT(am.houseguest_name) as members,
-                           COUNT(ae.event_id) as event_count
-                    FROM alliances a
-                    JOIN alliance_members am ON a.alliance_id = am.alliance_id
-                    LEFT JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
-                    WHERE a.status = ? AND am.is_active = 1
-                    GROUP BY a.alliance_id
-                    ORDER BY a.confidence_level DESC
-                """, (AllianceStatus.SUSPECTED.value,))
-                
-                suspected = cursor.fetchall()
-                conn.close()
-                
-                embed = discord.Embed(
-                    title="🔍 Suspected Alliances",
-                    description="Potential alliances based on subtle game behavior",
-                    color=0x95a5a6,
-                    timestamp=datetime.now()
-                )
-                
-                if not suspected:
-                    embed.add_field(
-                        name="No Suspected Alliances",
-                        value="No potential alliances detected from recent behavior",
-                        inline=False
-                    )
-                else:
-                    for alliance in suspected[:8]:
-                        alliance_id, name, confidence, momentum, members, events = alliance
-                        members_list = members.split(',') if members else []
-                        momentum_str = f"↗️ +{momentum:.1f}" if momentum > 0 else f"↘️ {momentum:.1f}" if momentum < 0 else "→ Stable"
-                        
-                        embed.add_field(
-                            name=f"🤔 {name}",
-                            value=f"**Members**: {' + '.join(members_list)}\n"
-                                  f"**Confidence**: {confidence}% • **Momentum**: {momentum_str}\n"
-                                  f"**Indicators**: {events} subtle interactions",
-                            inline=False
-                        )
-                
-                embed.set_footer(text="Based on game talks, time together, and trust indicators")
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error showing suspected alliances: {e}")
-                await interaction.followup.send("Error generating suspected alliances.", ephemeral=True)
-
-        @self.tree.command(name="alliancehistory", description="Show detailed alliance history timeline")
-        async def alliance_history_slash(interaction: discord.Interaction, alliance_name: str = None, days: int = 7):
-            """Show detailed history of an alliance or all recent alliance events"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                if days < 1 or days > 30:
-                    await interaction.followup.send("Days must be between 1 and 30", ephemeral=True)
-                    return
-                
-                conn = sqlite3.connect(self.alliance_tracker.db_path)
-                cursor = conn.cursor()
-                
-                cutoff_date = datetime.now() - timedelta(days=days)
-                
-                if alliance_name:
-                    # Find alliance by name
-                    cursor.execute("""
-                        SELECT alliance_id, name FROM alliances 
-                        WHERE LOWER(name) LIKE LOWER(?)
-                        LIMIT 1
-                    """, (f"%{alliance_name}%",))
-                    
-                    result = cursor.fetchone()
-                    if not result:
-                        await interaction.followup.send(f"No alliance found matching '{alliance_name}'", ephemeral=True)
-                        return
-                    
-                    alliance_id, actual_name = result
-                    
-                    # Get events for specific alliance
-                    cursor.execute("""
-                        SELECT event_type, description, timestamp, confidence_impact, pattern_type
-                        FROM alliance_events
-                        WHERE alliance_id = ? AND timestamp > ?
-                        ORDER BY timestamp DESC
-                    """, (alliance_id, cutoff_date))
-                    
-                    events = cursor.fetchall()
-                    
-                    embed = discord.Embed(
-                        title=f"📜 {actual_name} - Alliance History",
-                        description=f"Events from the last {days} days",
-                        color=0x9b59b6,
-                        timestamp=datetime.now()
-                    )
-                    
-                else:
-                    # Get all recent alliance events
-                    cursor.execute("""
-                        SELECT ae.event_type, ae.description, ae.timestamp, 
-                               ae.confidence_impact, a.name
-                        FROM alliance_events ae
-                        JOIN alliances a ON ae.alliance_id = a.alliance_id
-                        WHERE ae.timestamp > ?
-                        ORDER BY ae.timestamp DESC
-                        LIMIT 20
-                    """, (cutoff_date,))
-                    
-                    events = cursor.fetchall()
-                    
-                    embed = discord.Embed(
-                        title="📜 Recent Alliance Activity",
-                        description=f"All alliance events from the last {days} days",
-                        color=0x9b59b6,
-                        timestamp=datetime.now()
-                    )
-                
-                conn.close()
-                
-                if not events:
-                    embed.add_field(
-                        name="No Events",
-                        value="No alliance events found in this time period",
-                        inline=False
-                    )
-                else:
-                    # Group events by day
-                    events_by_day = defaultdict(list)
-                    
-                    for event in events:
-                        if alliance_name:
-                            event_type, desc, timestamp, impact, pattern = event
-                            alliance = actual_name
-                        else:
-                            event_type, desc, timestamp, impact, alliance = event
-                            pattern = None
-                        
-                        event_date = datetime.fromisoformat(timestamp).date()
-                        events_by_day[event_date].append({
-                            'type': event_type,
-                            'desc': desc,
-                            'time': datetime.fromisoformat(timestamp),
-                            'impact': impact,
-                            'alliance': alliance,
-                            'pattern': pattern
-                        })
-                    
-                    # Add fields for each day
-                    for date, day_events in sorted(events_by_day.items(), reverse=True)[:5]:
-                        day_text = []
-                        
-                        for event in day_events[:4]:  # Limit events per day
-                            time_str = event['time'].strftime("%I:%M %p")
-                            impact_str = ""
-                            
-                            if event['impact']:
-                                if event['impact'] > 0:
-                                    impact_str = f" (+{event['impact']})"
-                                else:
-                                    impact_str = f" ({event['impact']})"
-                            
-                            # Use appropriate emoji based on event type
-                            emoji = {
-                                'formed': '🤝',
-                                'strengthening': '💪',
-                                'weakening': '⚠️',
-                                'betrayal': '💔',
-                                'dissolved': '☠️',
-                                'suspected': '🔍'
-                            }.get(event['type'], '📝')
-                            
-                            if alliance_name:
-                                day_text.append(f"{emoji} **{time_str}**: {event['desc']}{impact_str}")
-                            else:
-                                day_text.append(f"{emoji} **{time_str}** [{event['alliance']}]: {event['desc'][:50]}...{impact_str}")
-                        
-                        embed.add_field(
-                            name=f"📅 {date.strftime('%B %d')}",
-                            value="\n".join(day_text),
-                            inline=False
-                        )
-                
-                embed.set_footer(text=f"Impact values show confidence changes • {len(events)} total events")
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error showing alliance history: {e}")
-                await interaction.followup.send("Error generating alliance history.", ephemeral=True)
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -947,7 +2770,7 @@ class BBDiscordBot(commands.Bot):
                     for event in alliance_events:
                         alliance_id = self.alliance_tracker.process_alliance_event(event)
                         if alliance_id:
-                            logger.info(f"Alliance event processed: {event['type'].value if hasattr(event['type'], 'value') else event['type']}")
+                            logger.info(f"Alliance event processed: {event['type'].value}")
                     
                     self.total_updates_processed += 1
                     
