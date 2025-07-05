@@ -617,8 +617,8 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error setting channel: {e}")
             await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
 
-    @app_commands.command(name="help", description="Show all available commands")
-    async def help_slash(self, interaction: discord.Interaction):
+    @app_commands.command(name="commands", description="Show all available commands")
+    async def commands_slash(self, interaction: discord.Interaction):
         """Show available commands"""
         embed = discord.Embed(
             title="Big Brother Bot Commands",
@@ -630,7 +630,7 @@ class BBDiscordBot(commands.Bot):
             ("/summary [hours]", "Get a summary of recent updates (default: 24h)"),
             ("/status", "Show bot status and statistics"),
             ("/setchannel #channel", "Set update channel (Admin only)"),
-            ("/help", "Show this help message")
+            ("/commands", "Show this help message")
         ]
         
         for name, description in commands_list:
