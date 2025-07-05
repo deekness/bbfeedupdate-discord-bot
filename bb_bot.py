@@ -2,7 +2,7 @@ import discord
 from discord.ext import commands, tasks
 import feedparser
 import asyncio
-import aiosqlite
+import sqlite3
 import hashlib
 import re
 import os
@@ -16,7 +16,7 @@ import json
 import time
 import traceback
 from pathlib import Path
-import aiohttp
+import requests
 from collections import defaultdict, Counter
 import difflib
 
@@ -470,27 +470,35 @@ class BBAnalyzer:
         return min(score, 10)
 
 class BBDatabase:
-    """Async database operations with connection pooling"""
+    """Database operations with connection pooling and error recovery"""
     
     def __init__(self, db_path: str = "bb_updates.db"):
         self.db_path = db_path
-        self._connection = None
-        self._lock = asyncio.Lock()
+        self.connection_timeout = 30
+        self.init_database()
     
-    async def get_connection(self):
-        """Get or create database connection"""
-        async with self._lock:
-            if self._connection is None:
-                self._connection = await aiosqlite.connect(self.db_path)
-                await self._connection.execute("PRAGMA journal_mode=WAL")
-                await self._connection.execute("PRAGMA synchronous=NORMAL")
-            return self._connection
-    
-    async def init_database(self):
-        """Initialize the database schema"""
-        conn = await self.get_connection()
+    def get_connection(self):
+        """Get database connection with proper error handling"""
         try:
-            await conn.execute("""
+            conn = sqlite3.connect(
+                self.db_path, 
+                timeout=self.connection_timeout,
+                check_same_thread=False
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            return conn
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+    
+    def init_database(self):
+        """Initialize the database schema"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS updates (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     content_hash TEXT UNIQUE,
@@ -506,7 +514,7 @@ class BBDatabase:
                 )
             """)
             
-            await conn.execute("""
+            cursor.execute("""
                 CREATE TABLE IF NOT EXISTS houseguests (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     canonical_name TEXT UNIQUE,
@@ -520,49 +528,46 @@ class BBDatabase:
             """)
             
             # Create indices
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_importance ON updates(importance_score)")
-            await conn.execute("CREATE INDEX IF NOT EXISTS idx_houseguest_mentions ON houseguests(mention_count)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_importance ON updates(importance_score)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_houseguest_mentions ON houseguests(mention_count)")
             
-            await conn.commit()
+            conn.commit()
             logger.info("Database initialized successfully")
             
         except Exception as e:
             logger.error(f"Database initialization error: {e}")
             raise
+        finally:
+            conn.close()
     
-    async def close(self):
-        """Close database connection"""
-        async with self._lock:
-            if self._connection:
-                await self._connection.close()
-                self._connection = None
-    
-    async def is_duplicate(self, content_hash: str) -> bool:
+    def is_duplicate(self, content_hash: str) -> bool:
         """Check if update already exists"""
         try:
-            conn = await self.get_connection()
-            async with conn.execute(
-                "SELECT 1 FROM updates WHERE content_hash = ?", 
-                (content_hash,)
-            ) as cursor:
-                result = await cursor.fetchone()
-                return result is not None
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
             
         except Exception as e:
             logger.error(f"Database duplicate check error: {e}")
             return False
     
-    async def store_update(self, update: BBUpdate):
+    def store_update(self, update: BBUpdate):
         """Store a new update"""
         try:
-            conn = await self.get_connection()
+            conn = self.get_connection()
+            cursor = conn.cursor()
             
             categories_str = "|".join(update.categories)
             houseguests_str = "|".join(update.mentioned_houseguests)
             
-            await conn.execute("""
+            cursor.execute("""
                 INSERT INTO updates (
                     content_hash, title, description, link, pub_date, 
                     author, importance_score, categories, mentioned_houseguests
@@ -574,23 +579,25 @@ class BBDatabase:
                 update.importance_score, categories_str, houseguests_str
             ))
             
-            await conn.commit()
+            conn.commit()
+            conn.close()
             
         except Exception as e:
             logger.error(f"Database store error: {e}")
             raise
     
-    async def save_houseguest_data(self, houseguest_tracker: HouseguestTracker):
+    def save_houseguest_data(self, houseguest_tracker: HouseguestTracker):
         """Save houseguest tracking data"""
         try:
-            conn = await self.get_connection()
+            conn = self.get_connection()
+            cursor = conn.cursor()
             
             for canonical, data in houseguest_tracker.known_houseguests.items():
                 aliases_str = "|".join(data['aliases'])
                 associations = houseguest_tracker.name_associations.get(canonical, set())
                 associations_str = "|".join(associations)
                 
-                await conn.execute("""
+                cursor.execute("""
                     INSERT OR REPLACE INTO houseguests (
                         canonical_name, display_name, aliases, mention_count,
                         first_seen, last_seen, associations
@@ -602,69 +609,75 @@ class BBDatabase:
                     datetime.now(), associations_str
                 ))
             
-            await conn.commit()
+            conn.commit()
+            conn.close()
             
         except Exception as e:
             logger.error(f"Error saving houseguest data: {e}")
     
-    async def load_houseguest_data(self) -> Dict[str, any]:
+    def load_houseguest_data(self) -> Dict[str, any]:
         """Load houseguest data from database"""
         try:
-            conn = await self.get_connection()
+            conn = self.get_connection()
+            cursor = conn.cursor()
             houseguests = {}
             
-            async with conn.execute("""
+            cursor.execute("""
                 SELECT canonical_name, display_name, aliases, mention_count,
                        first_seen, associations
                 FROM houseguests
-            """) as cursor:
-                async for row in cursor:
-                    canonical = row[0]
-                    houseguests[canonical] = {
-                        'display_name': row[1],
-                        'aliases': set(row[2].split('|')) if row[2] else set(),
-                        'mention_count': row[3],
-                        'first_seen': datetime.fromisoformat(row[4]) if row[4] else datetime.now(),
-                        'contexts': [],
-                        'associations': set(row[5].split('|')) if row[5] else set()
-                    }
+            """)
             
+            for row in cursor.fetchall():
+                canonical = row[0]
+                houseguests[canonical] = {
+                    'display_name': row[1],
+                    'aliases': set(row[2].split('|')) if row[2] else set(),
+                    'mention_count': row[3],
+                    'first_seen': datetime.fromisoformat(row[4]) if row[4] else datetime.now(),
+                    'contexts': [],
+                    'associations': set(row[5].split('|')) if row[5] else set()
+                }
+            
+            conn.close()
             return houseguests
             
         except Exception as e:
             logger.error(f"Error loading houseguest data: {e}")
             return {}
     
-    async def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
+    def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
         """Get updates from the last N hours"""
         try:
-            conn = await self.get_connection()
+            conn = self.get_connection()
+            cursor = conn.cursor()
             
             cutoff_time = datetime.now() - timedelta(hours=hours)
-            async with conn.execute("""
+            cursor.execute("""
                 SELECT title, description, link, pub_date, content_hash, author,
                        categories, mentioned_houseguests, importance_score
                 FROM updates 
                 WHERE pub_date > ?
                 ORDER BY pub_date DESC
-            """, (cutoff_time,)) as cursor:
-                
-                updates = []
-                async for row in cursor:
-                    update = BBUpdate(
-                        title=row[0],
-                        description=row[1],
-                        link=row[2],
-                        pub_date=datetime.fromisoformat(row[3]) if isinstance(row[3], str) else row[3],
-                        content_hash=row[4],
-                        author=row[5] or "",
-                        categories=row[6].split('|') if row[6] else [],
-                        mentioned_houseguests=row[7].split('|') if row[7] else [],
-                        importance_score=row[8]
-                    )
-                    updates.append(update)
-                
-                return updates
+            """, (cutoff_time,))
+            
+            updates = []
+            for row in cursor.fetchall():
+                update = BBUpdate(
+                    title=row[0],
+                    description=row[1],
+                    link=row[2],
+                    pub_date=datetime.fromisoformat(row[3]) if isinstance(row[3], str) else row[3],
+                    content_hash=row[4],
+                    author=row[5] or "",
+                    categories=row[6].split('|') if row[6] else [],
+                    mentioned_houseguests=row[7].split('|') if row[7] else [],
+                    importance_score=row[8]
+                )
+                updates.append(update)
+            
+            conn.close()
+            return updates
             
         except Exception as e:
             logger.error(f"Database query error: {e}")
@@ -690,7 +703,6 @@ class BBDiscordBot(commands.Bot):
         self.analyzer = BBAnalyzer(self.houseguest_tracker)
         
         # Performance optimizations
-        self.session: Optional[aiohttp.ClientSession] = None
         self.rss_cache = {'data': None, 'timestamp': 0}
         self.cache_ttl = self.config.get('cache_ttl', 3600)
         
@@ -713,15 +725,9 @@ class BBDiscordBot(commands.Bot):
     
     async def setup_hook(self):
         """Setup bot resources"""
-        await self.db.init_database()
-        
         # Load houseguest data
-        saved_houseguests = await self.db.load_houseguest_data()
+        saved_houseguests = self.db.load_houseguest_data()
         self.houseguest_tracker.known_houseguests = saved_houseguests
-        
-        # Create HTTP session
-        timeout = aiohttp.ClientTimeout(total=30)
-        self.session = aiohttp.ClientSession(timeout=timeout)
         
         # Start background tasks
         self.process_update_queue.start()
@@ -730,12 +736,7 @@ class BBDiscordBot(commands.Bot):
         """Cleanup resources"""
         try:
             # Save houseguest data
-            await self.db.save_houseguest_data(self.houseguest_tracker)
-            
-            # Close connections
-            if self.session:
-                await self.session.close()
-            await self.db.close()
+            self.db.save_houseguest_data(self.houseguest_tracker)
             
             await self.close()
         except Exception as e:
@@ -766,7 +767,7 @@ class BBDiscordBot(commands.Bot):
         content = re.sub(r'\s+', ' ', content).strip()
         return hashlib.md5(content.encode()).hexdigest()
     
-    async def fetch_rss_feed(self) -> Optional[feedparser.FeedParserDict]:
+    def fetch_rss_feed(self) -> Optional[feedparser.FeedParserDict]:
         """Fetch RSS feed with caching and error handling"""
         try:
             # Check cache
@@ -776,23 +777,17 @@ class BBDiscordBot(commands.Bot):
                 return self.rss_cache['data']
             
             # Fetch fresh data
-            async with self.session.get(self.rss_url) as response:
-                if response.status == 200:
-                    content = await response.text()
-                    feed = feedparser.parse(content)
+            feed = feedparser.parse(self.rss_url)
+            
+            if feed.entries:
+                # Update cache
+                self.rss_cache['data'] = feed
+                self.rss_cache['timestamp'] = current_time
+                return feed
+            else:
+                logger.warning("No entries returned from RSS feed")
+                return None
                     
-                    # Update cache
-                    self.rss_cache['data'] = feed
-                    self.rss_cache['timestamp'] = current_time
-                    
-                    return feed
-                else:
-                    logger.error(f"RSS feed returned status {response.status}")
-                    return None
-                    
-        except asyncio.TimeoutError:
-            logger.error("RSS feed fetch timed out")
-            return None
         except Exception as e:
             logger.error(f"Error fetching RSS feed: {e}")
             return None
@@ -851,7 +846,7 @@ class BBDiscordBot(commands.Bot):
             update.importance_score = self.analyzer.analyze_strategic_importance(update)
             
             # Store in database
-            await self.db.store_update(update)
+            self.db.store_update(update)
             
             # Send to Discord
             await self.send_update_to_channel(update)
