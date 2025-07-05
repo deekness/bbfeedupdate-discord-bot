@@ -82,7 +82,10 @@ class Config:
             "batch_mode": "intelligent",
             "min_batch_size": 3,
             "max_batch_wait_minutes": 30,
-            "urgent_batch_threshold": 2
+            "urgent_batch_threshold": 2,
+            "timeline_mode": "smart",
+            "max_timeline_embeds": 3,
+            "show_importance_timeline": True
         }
         self.config = self.load_config()
     
@@ -152,7 +155,7 @@ class BBUpdate:
     author: str = ""
 
 class BBAnalyzer:
-    """Analyzes Big Brother updates for strategic insights"""
+    """Analyzes Big Brother updates for strategic insights and social dynamics"""
     
     def __init__(self):
         self.competition_keywords = [
@@ -172,7 +175,12 @@ class BBAnalyzer:
         
         self.relationship_keywords = [
             'showmance', 'romance', 'flirting', 'cuddle', 'kiss',
-            'relationship', 'attracted', 'feelings'
+            'relationship', 'attracted', 'feelings', 'friendship', 'bond'
+        ]
+        
+        self.entertainment_keywords = [
+            'funny', 'joke', 'laugh', 'prank', 'hilarious', 'comedy',
+            'entertaining', 'memorable', 'quirky', 'silly'
         ]
     
     def categorize_update(self, update: BBUpdate) -> List[str]:
@@ -192,6 +200,9 @@ class BBAnalyzer:
         if any(keyword in content for keyword in self.relationship_keywords):
             categories.append("💕 Romance")
         
+        if any(keyword in content for keyword in self.entertainment_keywords):
+            categories.append("🎬 Entertainment")
+        
         return categories if categories else ["📝 General"]
     
     def extract_houseguests(self, text: str) -> List[str]:
@@ -204,10 +215,11 @@ class BBAnalyzer:
         return [name for name in potential_names if name not in exclude_words]
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
-        """Rate strategic importance from 1-10"""
+        """Rate importance from 1-10 with balanced strategic/social weighting"""
         content = f"{update.title} {update.description}".lower()
         score = 1
         
+        # Strategic moments (high importance)
         if any(word in content for word in ['eviction', 'nomination', 'backdoor']):
             score += 4
         if any(word in content for word in ['hoh', 'head of household', 'power of veto']):
@@ -216,6 +228,29 @@ class BBAnalyzer:
             score += 2
         if any(word in content for word in ['vote', 'voting', 'campaign']):
             score += 2
+        
+        # Social moments (medium-high importance for superfans)
+        if any(word in content for word in ['showmance', 'kiss', 'cuddle', 'romance']):
+            score += 3  # Showmances are big for superfans
+        if any(word in content for word in ['fight', 'argument', 'confrontation', 'blowup']):
+            score += 3  # Drama is entertainment value
+        if any(word in content for word in ['friendship', 'bond', 'close', 'trust']):
+            score += 2  # Relationships matter strategically
+        
+        # Entertainment moments (medium importance)
+        if any(word in content for word in ['funny', 'joke', 'laugh', 'prank']):
+            score += 2  # Superfans love personality moments
+        if any(word in content for word in ['crying', 'emotional', 'breakdown']):
+            score += 2  # Emotional moments are significant
+        
+        # House culture (low-medium importance)
+        if any(word in content for word in ['tradition', 'routine', 'habit', 'inside joke']):
+            score += 1  # House culture builds over time
+        
+        # Finale night special scoring
+        if any(word in content for word in ['finale', 'winner', 'crowned', 'julie']):
+            if any(word in content for word in ['america', 'favorite']):
+                score += 4  # AFH is always important
         
         return min(score, 10)
 
@@ -309,7 +344,7 @@ class UpdateBatcher:
         return embeds
     
     def _create_llm_summary(self) -> List[discord.Embed]:
-        """Use Claude to create intelligent summaries with enhanced prompting"""
+        """Use Claude to create intelligent summaries with balanced superfan coverage"""
         try:
             # Prepare comprehensive update data for LLM
             updates_data = []
@@ -321,39 +356,80 @@ class UpdateBatcher:
                     'description': update.description[:200] if update.description != update.title else ""
                 })
             
-            # Create enhanced prompt with Big Brother context
-            prompt = f"""You are Taran Armstrong, the ultimate Big Brother superfan and strategy expert. You're known for your detailed game analysis and ability to spot strategic patterns that casual viewers miss.
+            # Detect finale night vs regular season
+            is_finale_night = any(
+                keyword in update.title.lower() 
+                for update in self.update_queue 
+                for keyword in ['winner', 'crowned', 'finale', 'americas favorite']
+            )
+            
+            if is_finale_night:
+                # Use finale-specific prompt (strategic focus)
+                prompt = f"""You are Taran Armstrong, the ultimate Big Brother superfan analyzing the FINALE NIGHT of Big Brother.
 
-Analyze these {len(updates_data)} Big Brother updates from the live feeds and create a strategic summary:
+Analyze these {len(updates_data)} finale night updates:
 
-UPDATES:
 {chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
 
-As a Big Brother superfan, provide your analysis in this exact JSON format:
+For FINALE NIGHT coverage, provide comprehensive analysis including:
+- Strategic game outcome and jury decision
+- Social moments and houseguest interactions
+- Host segments and special announcements
+- America's Favorite Houseguest results
+- Post-game relationships and connections
+- Jury questioning and final speeches
+
+Provide your analysis in this JSON format:
 {{
-    "headline": "A compelling headline that captures the most important strategic development",
-    "summary": "2-3 sentence summary focusing on strategic implications, not just what happened",
-    "strategic_analysis": "Your expert take on what this means for the game moving forward",
-    "key_players": ["list", "of", "houseguests", "involved"],
-    "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
-    "strategic_importance": 8,
-    "power_dynamics": "How this affects the house power structure",
-    "predictions": "What you think will happen next based on these developments"
+    "headline": "Finale night headline capturing the winner and key moments",
+    "summary": "3-4 sentence summary covering winner, jury decision, and notable social moments",
+    "strategic_analysis": "Why the winner won and what their victory means strategically",
+    "social_highlights": "Notable social moments, relationships, and interactions from finale night",
+    "key_players": ["winner", "runner-up", "afh", "other", "notable", "houseguests"],
+    "game_phase": "finale_night",
+    "strategic_importance": 10,
+    "jury_analysis": "How the jury voted and what influenced their decision",
+    "finale_moments": "Special finale segments, host interactions, and memorable moments"
 }}
 
-Focus on:
-- Strategic implications over surface-level drama
-- Power shifts and alliance dynamics
-- Competition strategy and positioning
-- Vote predictions and campaign developments
-- Game-changing moments that affect the winner's path
+Focus on providing complete finale night coverage for superfans who want both strategic analysis AND social moments."""
+            
+            else:
+                # Use balanced superfan prompt for regular season
+                prompt = f"""You are the ultimate Big Brother superfan - part Taran Armstrong's strategic genius, part live feed obsessive who loves ALL aspects of the BB experience.
 
-Remember: You're analyzing for other superfans who want strategic depth, not casual recaps."""
+Analyze these {len(updates_data)} Big Brother live feed updates:
+
+{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
+
+As a complete Big Brother superfan, provide analysis covering BOTH strategic gameplay AND social dynamics:
+
+{{
+    "headline": "Compelling headline that captures the most significant development (strategic OR social)",
+    "summary": "3-4 sentence summary balancing strategic implications with social dynamics and entertainment value",
+    "strategic_analysis": "Strategic implications - alliances, targets, power shifts, competition positioning",
+    "social_dynamics": "Social relationships, showmances, conflicts, friendships, house dynamics",
+    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes, or unique interactions",
+    "key_players": ["houseguests", "involved", "in", "strategic", "and", "social", "moments"],
+    "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
+    "strategic_importance": 7,
+    "house_culture": "Inside jokes, daily routines, house traditions, or quirky moments that define this group",
+    "relationship_updates": "Showmance developments, friendship changes, or alliance shifts"
+}}
+
+Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects. Include:
+- Strategic gameplay (your specialty)
+- Social relationships and dynamics
+- Entertainment value and memorable moments
+- House culture and personality interactions
+- Relationship developments (romantic and platonic)
+
+Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big Brother, and entertainment value matters to superfans."""
 
             # Get LLM response with proper error handling
             response = self.llm_client.messages.create(
                 model=self.llm_model,
-                max_tokens=1000,
+                max_tokens=1200,  # Increased for comprehensive coverage
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -394,7 +470,7 @@ Remember: You're analyzing for other superfans who want strategic depth, not cas
                 timestamp=datetime.now()
             )
             
-            # Add strategic analysis (the key differentiator)
+            # Strategic analysis (always included)
             if analysis.get('strategic_analysis'):
                 main_embed.add_field(
                     name="🎯 Strategic Analysis",
@@ -402,52 +478,92 @@ Remember: You're analyzing for other superfans who want strategic depth, not cas
                     inline=False
                 )
             
-            # Add power dynamics if available
-            if analysis.get('power_dynamics'):
-                main_embed.add_field(
-                    name="⚖️ Power Dynamics",
-                    value=analysis['power_dynamics'],
-                    inline=False
-                )
+            # Content based on finale vs regular season
+            if is_finale_night:
+                # Finale-specific fields
+                if analysis.get('social_highlights'):
+                    main_embed.add_field(
+                        name="🎭 Finale Night Highlights",
+                        value=analysis['social_highlights'],
+                        inline=False
+                    )
+                
+                if analysis.get('jury_analysis'):
+                    main_embed.add_field(
+                        name="⚖️ Jury Decision Analysis",
+                        value=analysis['jury_analysis'],
+                        inline=False
+                    )
+                
+                if analysis.get('finale_moments'):
+                    main_embed.add_field(
+                        name="✨ Special Finale Moments",
+                        value=analysis['finale_moments'],
+                        inline=False
+                    )
+            else:
+                # Regular season fields
+                if analysis.get('social_dynamics'):
+                    main_embed.add_field(
+                        name="👥 Social Dynamics",
+                        value=analysis['social_dynamics'],
+                        inline=False
+                    )
+                
+                if analysis.get('entertainment_highlights'):
+                    main_embed.add_field(
+                        name="🎬 Entertainment Highlights",
+                        value=analysis['entertainment_highlights'],
+                        inline=False
+                    )
+                
+                if analysis.get('relationship_updates'):
+                    main_embed.add_field(
+                        name="💕 Relationship Updates",
+                        value=analysis['relationship_updates'],
+                        inline=False
+                    )
+                
+                if analysis.get('house_culture'):
+                    main_embed.add_field(
+                        name="🏠 House Culture",
+                        value=analysis['house_culture'],
+                        inline=False
+                    )
             
-            # Add predictions
-            if analysis.get('predictions'):
-                main_embed.add_field(
-                    name="🔮 Predictions",
-                    value=analysis['predictions'],
-                    inline=False
-                )
-            
-            # Add key players with better formatting
+            # Key players with better formatting
             if analysis.get('key_players'):
                 players = analysis['key_players'][:8]  # Limit to prevent embed overflow
                 main_embed.add_field(
-                    name="👥 Key Players",
+                    name="⭐ Key Players",
                     value=" • ".join(players),
                     inline=False
                 )
             
-            # Add strategic importance indicator
+            # Strategic importance indicator
             importance = analysis.get('strategic_importance', 5)
             importance_bar = "🔥" * min(importance, 10)
             main_embed.add_field(
-                name="🎲 Strategic Importance",
+                name="🎲 Overall Importance",
                 value=f"{importance_bar} {importance}/10",
                 inline=True
             )
             
             # Add footer with superfan branding
-            main_embed.set_footer(
-                text="Analyzed by BB Superfan AI • Live Feed Intelligence"
-            )
+            footer_text = "Strategic Analysis + Social Dynamics • BB Superfan AI" if not is_finale_night else "Finale Night Analysis • BB Superfan AI"
+            main_embed.set_footer(text=footer_text)
             
             embeds = [main_embed]
             
-            # Add detailed timeline if many updates
-            if len(self.update_queue) > 7:
-                timeline_embed = self._create_timeline_embed(analysis.get('game_phase', 'current'))
-                if timeline_embed:
-                    embeds.append(timeline_embed)
+            # Add enhanced timeline based on number of updates
+            if len(self.update_queue) > 15:
+                # For large batches, use smart pagination
+                timeline_embeds = self._create_smart_timeline_embeds(analysis.get('game_phase', 'current'))
+                embeds.extend(timeline_embeds)
+            elif len(self.update_queue) > 7:
+                # For medium batches, use multiple embeds
+                timeline_embeds = self._create_timeline_embeds(analysis.get('game_phase', 'current'))
+                embeds.extend(timeline_embeds)
             
             return embeds
             
@@ -461,14 +577,14 @@ Remember: You're analyzing for other superfans who want strategic depth, not cas
         """Parse LLM response when JSON parsing fails"""
         # Create a basic analysis from the text response
         analysis = {
-            "headline": "Big Brother Strategy Update",
+            "headline": "Big Brother Update",
             "summary": response_text[:300] + "..." if len(response_text) > 300 else response_text,
             "strategic_analysis": "Analysis available in summary above.",
             "key_players": [],
             "game_phase": "current",
             "strategic_importance": 5,
-            "power_dynamics": "See summary for details.",
-            "predictions": "Developments ongoing."
+            "social_dynamics": "See summary for details.",
+            "entertainment_highlights": "Various moments occurred."
         }
         
         # Try to extract key information with regex
@@ -483,6 +599,166 @@ Remember: You're analyzing for other superfans who want strategic depth, not cas
             logger.debug(f"Text parsing error: {e}")
         
         return analysis
+    
+    def _create_smart_timeline_embeds(self, game_phase: str) -> List[discord.Embed]:
+        """Create timeline embeds with smart pagination based on importance"""
+        phase_colors = {
+            'early_game': 0x3498db,
+            'jury_phase': 0xf39c12,
+            'final_weeks': 0xe74c3c,
+            'finale_night': 0xffd700
+        }
+        
+        color = phase_colors.get(game_phase, 0x95a5a6)
+        
+        # Analyze and sort updates by importance and time
+        updates_with_importance = []
+        for update in self.update_queue:
+            importance = self.analyzer.analyze_strategic_importance(update)
+            updates_with_importance.append((update, importance))
+        
+        # Sort by importance first, then by time
+        updates_with_importance.sort(key=lambda x: (x[1], x[0].pub_date), reverse=True)
+        
+        embeds = []
+        
+        # First embed: Top strategic moments
+        high_importance = [u for u, i in updates_with_importance if i >= 7]
+        if high_importance:
+            embed = discord.Embed(
+                title="🔥 Key Strategic Moments",
+                description=f"Most important updates from this batch ({len(high_importance)} of {len(self.update_queue)})",
+                color=0xe74c3c,  # Red for high importance
+                timestamp=datetime.now()
+            )
+            
+            for i, update in enumerate(high_importance[:12], 1):  # Limit to 12 for readability
+                time_str = update.pub_date.strftime("%I:%M %p")
+                importance = self.analyzer.analyze_strategic_importance(update)
+                
+                content = update.title
+                if len(content) > 150:
+                    content = content[:147] + "..."
+                
+                embed.add_field(
+                    name=f"{'🔥' * min(importance, 3)} {time_str}",
+                    value=content,
+                    inline=False
+                )
+            
+            embeds.append(embed)
+        
+        # Second embed: Complete chronological timeline
+        embed = discord.Embed(
+            title="📋 Complete Live Feed Timeline",
+            description=f"All {len(self.update_queue)} updates in chronological order",
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Sort chronologically for this embed
+        sorted_updates = sorted(self.update_queue, key=lambda x: x.pub_date, reverse=True)
+        
+        # Use a more compact format to fit more updates
+        timeline_sections = []
+        current_section = ""
+        
+        for i, update in enumerate(sorted_updates, 1):
+            time_str = update.pub_date.strftime("%I:%M %p")
+            
+            # Don't truncate - show full content up to Discord limits
+            title = update.title
+            if len(title) > 150:
+                title = title[:147] + "..."
+            
+            line = f"**{i}.** {time_str} - {title}\n"
+            
+            # Check if adding this line would exceed field limit
+            if len(current_section + line) > 1000:
+                timeline_sections.append(current_section)
+                current_section = line
+            else:
+                current_section += line
+        
+        # Add the last section
+        if current_section:
+            timeline_sections.append(current_section)
+        
+        # Add sections as fields
+        for i, section in enumerate(timeline_sections):
+            field_name = f"Timeline Part {i + 1}" if len(timeline_sections) > 1 else "Complete Timeline"
+            embed.add_field(
+                name=field_name,
+                value=section,
+                inline=False
+            )
+        
+        embeds.append(embed)
+        
+        return embeds
+    
+    def _create_timeline_embeds(self, game_phase: str) -> List[discord.Embed]:
+        """Create multiple timeline embeds to show all updates without truncation"""
+        phase_colors = {
+            'early_game': 0x3498db,
+            'jury_phase': 0xf39c12,
+            'final_weeks': 0xe74c3c,
+            'finale_night': 0xffd700
+        }
+        
+        color = phase_colors.get(game_phase, 0x95a5a6)
+        embeds = []
+        
+        # Sort updates chronologically (newest first for finale/important events)
+        sorted_updates = sorted(self.update_queue, key=lambda x: x.pub_date, reverse=True)
+        
+        # Split updates into chunks that fit Discord's limits
+        chunk_size = 10
+        chunks = [sorted_updates[i:i + chunk_size] for i in range(0, len(sorted_updates), chunk_size)]
+        
+        for chunk_idx, chunk in enumerate(chunks):
+            # Create embed for this chunk
+            if chunk_idx == 0:
+                title = f"📋 Live Feed Timeline - Part {chunk_idx + 1}"
+                description = f"Complete breakdown of all {len(self.update_queue)} updates"
+            else:
+                title = f"📋 Live Feed Timeline - Part {chunk_idx + 1}"
+                description = f"Continued timeline (Updates {chunk_idx * chunk_size + 1}-{min((chunk_idx + 1) * chunk_size, len(sorted_updates))})"
+            
+            embed = discord.Embed(
+                title=title,
+                description=description,
+                color=color,
+                timestamp=datetime.now()
+            )
+            
+            # Add updates from this chunk
+            for i, update in enumerate(chunk, 1):
+                time_str = update.pub_date.strftime("%I:%M %p")
+                
+                # Don't truncate - show full content
+                content = update.title
+                if len(content) > 1000:  # Discord field value limit is 1024
+                    content = content[:997] + "..."
+                
+                # Use enumeration for the full timeline
+                update_number = chunk_idx * chunk_size + i
+                
+                embed.add_field(
+                    name=f"{update_number}. {time_str}",
+                    value=content,
+                    inline=False
+                )
+            
+            # Add footer with navigation info
+            if len(chunks) > 1:
+                embed.set_footer(text=f"Part {chunk_idx + 1} of {len(chunks)} • {len(self.update_queue)} total updates")
+            else:
+                embed.set_footer(text=f"All {len(self.update_queue)} updates shown")
+            
+            embeds.append(embed)
+        
+        return embeds
     
     def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
         """Enhanced pattern-based summary with explanation"""
@@ -536,42 +812,6 @@ Remember: You're analyzing for other superfans who want strategic depth, not cas
             'drama': '💥'
         }
         return emoji_map.get(category, '📝')
-    
-    def _create_timeline_embed(self, game_phase: str) -> Optional[discord.Embed]:
-        """Create detailed timeline embed"""
-        phase_colors = {
-            'early_game': 0x3498db,
-            'jury_phase': 0xf39c12,
-            'final_weeks': 0xe74c3c,
-            'finale_night': 0xffd700
-        }
-        
-        embed = discord.Embed(
-            title=f"📋 Live Feed Timeline",
-            description=f"Detailed breakdown of the last {len(self.update_queue)} updates",
-            color=phase_colors.get(game_phase, 0x95a5a6),
-            timestamp=datetime.now()
-        )
-        
-        # Add updates chronologically
-        for i, update in enumerate(self.update_queue[-8:], 1):  # Last 8 to avoid limits
-            time_str = update.pub_date.strftime("%I:%M %p")
-            content = update.title
-            
-            # Truncate long titles
-            if len(content) > 100:
-                content = content[:97] + "..."
-            
-            embed.add_field(
-                name=f"{i}. {time_str}",
-                value=content,
-                inline=False
-            )
-        
-        if len(self.update_queue) > 8:
-            embed.set_footer(text=f"Showing last 8 of {len(self.update_queue)} updates")
-        
-        return embed
     
     def _group_updates_pattern(self) -> Dict[str, List[BBUpdate]]:
         """Pattern-based grouping when LLM unavailable"""
@@ -1223,7 +1463,7 @@ async def test_llm_slash(interaction: discord.Interaction):
                 max_tokens=100,
                 messages=[{
                     "role": "user", 
-                    "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love Big Brother strategy."
+                    "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love both strategic gameplay and social dynamics in Big Brother."
                 }]
             )
             
