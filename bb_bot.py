@@ -689,8 +689,11 @@ class BBDiscordBot(commands.Bot):
     def __init__(self):
         self.config = Config()
         
-        if not self.config.get('bot_token'):
-            logger.error("Bot token not configured! Please set BOT_TOKEN environment variable")
+        # Check for bot token early
+        bot_token = self.config.get('bot_token')
+        if not bot_token or bot_token == "":
+            logger.error("Bot token not configured! Please set BOT_TOKEN environment variable or add it to config.json")
+            logger.error("You can get a bot token from https://discord.com/developers/applications")
             sys.exit(1)
         
         intents = discord.Intents.default()
