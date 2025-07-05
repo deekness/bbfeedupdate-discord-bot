@@ -483,15 +483,8 @@ class UpdateBatcher:
                 'description': update.description[:200] if update.description != update.title else ""
             })
         
-        # Detect finale night vs regular season
-        is_finale_night = any(
-            keyword in update.title.lower() 
-            for update in self.update_queue 
-            for keyword in ['winner', 'crowned', 'finale', 'americas favorite']
-        )
-        
-        # Create appropriate prompt
-        prompt = self._create_llm_prompt(updates_data, is_finale_night)
+        # Create LLM prompt (single prompt for all scenarios)
+        prompt = self._create_llm_prompt(updates_data)
         
         try:
             # Make LLM request
@@ -507,7 +500,7 @@ class UpdateBatcher:
             analysis = self._parse_llm_response(response.content[0].text)
             
             # Create main embed
-            embeds = self._create_embeds_from_analysis(analysis, is_finale_night)
+            embeds = self._create_embeds_from_analysis(analysis)
             
             # Add highlights embed for batches with 7+ updates if rate limits allow
             if len(self.update_queue) >= 7:
@@ -541,44 +534,14 @@ class UpdateBatcher:
             logger.error(f"LLM request failed: {e}")
             raise
     
-    def _create_llm_prompt(self, updates_data: List[Dict], is_finale_night: bool) -> str:
-        """Create appropriate LLM prompt based on context"""
+    def _create_llm_prompt(self, updates_data: List[Dict]) -> str:
+        """Create LLM prompt for all scenarios"""
         updates_text = "\n".join([
             f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
             for u in updates_data
         ])
         
-        if is_finale_night:
-            return f"""You are Taran Armstrong, the ultimate Big Brother superfan analyzing the FINALE NIGHT of Big Brother.
-
-Analyze these {len(updates_data)} finale night updates:
-
-{updates_text}
-
-For FINALE NIGHT coverage, provide comprehensive analysis including:
-- Strategic game outcome and jury decision
-- Social moments and houseguest interactions
-- Host segments and special announcements
-- America's Favorite Houseguest results
-- Post-game relationships and connections
-- Jury questioning and final speeches
-
-Provide your analysis in this JSON format:
-{{
-    "headline": "Finale night headline capturing the winner and key moments",
-    "summary": "3-4 sentence summary covering winner, jury decision, and notable social moments",
-    "strategic_analysis": "Why the winner won and what their victory means strategically",
-    "social_highlights": "Notable social moments, relationships, and interactions from finale night",
-    "key_players": ["winner", "runner-up", "afh", "other", "notable", "houseguests"],
-    "game_phase": "finale_night",
-    "strategic_importance": 10,
-    "jury_analysis": "How the jury voted and what influenced their decision",
-    "finale_moments": "Special finale segments, host interactions, and memorable moments"
-}}
-
-Focus on providing complete finale night coverage for superfans who want both strategic analysis AND social moments."""
-        else:
-            return f"""You are the ultimate Big Brother superfan - part Taran Armstrong's strategic genius, part live feed obsessive who loves ALL aspects of the BB experience.
+        return f"""You are the ultimate Big Brother superfan - part Taran Armstrong's strategic genius, part live feed obsessive who loves ALL aspects of the BB experience.
 
 Analyze these {len(updates_data)} Big Brother live feed updates:
 
@@ -599,7 +562,14 @@ As a complete Big Brother superfan, provide analysis covering BOTH strategic gam
     "relationship_updates": "Showmance developments, friendship changes, or alliance shifts"
 }}
 
-Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects."""
+Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects. Include:
+- Strategic gameplay (your specialty)
+- Social relationships and dynamics
+- Entertainment value and memorable moments
+- House culture and personality interactions
+- Relationship developments (romantic and platonic)
+
+Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big Brother, and entertainment value matters to superfans."""
     
     def _parse_llm_response(self, response_text: str) -> dict:
         """Parse LLM response with fallback handling"""
@@ -639,7 +609,7 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
         
         return analysis
     
-    def _create_embeds_from_analysis(self, analysis: dict, is_finale_night: bool) -> List[discord.Embed]:
+    def _create_embeds_from_analysis(self, analysis: dict) -> List[discord.Embed]:
         """Create Discord embeds from LLM analysis"""
         game_phase_colors = {
             "early_game": 0x3498db,
@@ -665,71 +635,41 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
                 inline=False
             )
         
-        # Add content based on finale vs regular season
-        if is_finale_night:
-            self._add_finale_fields(main_embed, analysis)
-        else:
-            self._add_regular_fields(main_embed, analysis)
-        
-        # Add common fields
-        self._add_common_fields(main_embed, analysis, is_finale_night)
-        
-        return [main_embed]
-    
-    def _add_finale_fields(self, embed: discord.Embed, analysis: dict):
-        """Add finale-specific fields to embed"""
-        if analysis.get('social_highlights'):
-            embed.add_field(
-                name="🎭 Finale Night Highlights",
-                value=analysis['social_highlights'],
-                inline=False
-            )
-        
-        if analysis.get('jury_analysis'):
-            embed.add_field(
-                name="⚖️ Jury Decision Analysis",
-                value=analysis['jury_analysis'],
-                inline=False
-            )
-        
-        if analysis.get('finale_moments'):
-            embed.add_field(
-                name="✨ Special Finale Moments",
-                value=analysis['finale_moments'],
-                inline=False
-            )
-    
-    def _add_regular_fields(self, embed: discord.Embed, analysis: dict):
-        """Add regular season fields to embed"""
+        # Add regular season fields
         if analysis.get('social_dynamics'):
-            embed.add_field(
+            main_embed.add_field(
                 name="👥 Social Dynamics",
                 value=analysis['social_dynamics'],
                 inline=False
             )
         
         if analysis.get('entertainment_highlights'):
-            embed.add_field(
+            main_embed.add_field(
                 name="🎬 Entertainment Highlights",
                 value=analysis['entertainment_highlights'],
                 inline=False
             )
         
         if analysis.get('relationship_updates'):
-            embed.add_field(
+            main_embed.add_field(
                 name="💕 Relationship Updates",
                 value=analysis['relationship_updates'],
                 inline=False
             )
         
         if analysis.get('house_culture'):
-            embed.add_field(
+            main_embed.add_field(
                 name="🏠 House Culture",
                 value=analysis['house_culture'],
                 inline=False
             )
+        
+        # Add common fields
+        self._add_common_fields(main_embed, analysis)
+        
+        return [main_embed]
     
-    def _add_common_fields(self, embed: discord.Embed, analysis: dict, is_finale_night: bool):
+    def _add_common_fields(self, embed: discord.Embed, analysis: dict):
         """Add common fields to embed"""
         # Key players
         if analysis.get('key_players'):
@@ -750,9 +690,7 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
         )
         
         # Footer
-        footer_text = ("Finale Night Analysis • BB Superfan AI" if is_finale_night 
-                      else "Strategic Analysis + Social Dynamics • BB Superfan AI")
-        embed.set_footer(text=footer_text)
+        embed.set_footer(text="Strategic Analysis + Social Dynamics • BB Superfan AI")
     
     def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
         """Enhanced pattern-based summary with explanation"""
