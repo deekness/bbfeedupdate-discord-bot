@@ -605,12 +605,15 @@ def main():
     try:
         bot = BBDiscordBot()
         
+        # Remove default help command to avoid conflicts
+        bot.remove_command('help')
+        
         @bot.event
         async def on_command_error(ctx, error):
             if isinstance(error, commands.MissingPermissions):
                 await ctx.send("You don't have permission to use this command.")
             elif isinstance(error, commands.CommandNotFound):
-                await ctx.send("Command not found. Use !bbcommands for available commands.")
+                await ctx.send("Command not found. Use `!bbcommands` for available commands.")
             else:
                 logger.error(f"Command error: {error}")
                 await ctx.send("An error occurred while processing the command.")
