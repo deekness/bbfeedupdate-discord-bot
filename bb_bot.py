@@ -552,24 +552,24 @@ As a complete Big Brother superfan, provide analysis covering BOTH strategic gam
 {{
     "headline": "Compelling headline that captures the most significant development (strategic OR social)",
     "summary": "3-4 sentence summary balancing strategic implications with social dynamics and entertainment value",
-    "strategic_analysis": "Strategic implications - alliances, targets, power shifts, competition positioning",
-    "social_dynamics": "Social relationships, showmances, conflicts, friendships, house dynamics",
+    "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning, voting plans",
+    "social_dynamics": "Alliance formations, alliance shifts, trust levels, betrayals, strategic partnerships",
     "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes, or unique interactions",
     "key_players": ["houseguests", "involved", "in", "strategic", "and", "social", "moments"],
     "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
     "strategic_importance": 7,
     "house_culture": "Inside jokes, daily routines, house traditions, or quirky moments that define this group",
-    "relationship_updates": "Showmance developments, friendship changes, or alliance shifts"
+    "relationship_updates": "Showmance developments, romantic connections, dating situations, or relationship changes"
 }}
 
 Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects. Include:
-- Strategic gameplay (your specialty)
-- Social relationships and dynamics
+- Strategic gameplay and voting plans
+- Alliance dynamics and strategic partnerships
 - Entertainment value and memorable moments
 - House culture and personality interactions
-- Relationship developments (romantic and platonic)
+- Showmance and romantic developments
 
-Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big Brother, and entertainment value matters to superfans."""
+Focus Social Dynamics on ALLIANCES and strategic relationships, while Relationship Updates covers SHOWMANCES and romantic connections."""
     
     def _parse_llm_response(self, response_text: str) -> dict:
         """Parse LLM response with fallback handling"""
@@ -638,7 +638,7 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
         # Add regular season fields
         if analysis.get('social_dynamics'):
             main_embed.add_field(
-                name="👥 Social Dynamics",
+                name="🤝 Alliance Dynamics",
                 value=analysis['social_dynamics'],
                 inline=False
             )
@@ -652,7 +652,7 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
         
         if analysis.get('relationship_updates'):
             main_embed.add_field(
-                name="💕 Relationship Updates",
+                name="💕 Showmance Updates",
                 value=analysis['relationship_updates'],
                 inline=False
             )
