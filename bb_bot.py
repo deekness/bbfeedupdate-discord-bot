@@ -346,6 +346,8 @@ class UpdateBatcher:
     def _create_llm_summary(self) -> List[discord.Embed]:
         """Use Claude to create intelligent summaries with balanced superfan coverage"""
         try:
+            logger.info("Starting LLM summary creation")
+            
             # Prepare comprehensive update data for LLM
             updates_data = []
             for update in self.update_queue:
@@ -362,6 +364,8 @@ class UpdateBatcher:
                 for update in self.update_queue 
                 for keyword in ['winner', 'crowned', 'finale', 'americas favorite']
             )
+            
+            logger.info(f"Detected finale night: {is_finale_night}")
             
             if is_finale_night:
                 # Use finale-specific prompt (strategic focus)
@@ -426,6 +430,8 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
 
 Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big Brother, and entertainment value matters to superfans."""
 
+            logger.info("Sending LLM request for main summary")
+            
             # Get LLM response with proper error handling
             response = self.llm_client.messages.create(
                 model=self.llm_model,
@@ -433,6 +439,8 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
+            
+            logger.info("Received LLM response for main summary")
             
             # Parse JSON response with fallback
             try:
@@ -445,6 +453,7 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 if json_start != -1 and json_end != -1:
                     json_text = response_text[json_start:json_end]
                     analysis = json.loads(json_text)
+                    logger.info("Successfully parsed LLM JSON response")
                 else:
                     raise ValueError("No JSON found in response")
                     
@@ -469,6 +478,8 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 color=color,
                 timestamp=datetime.now()
             )
+            
+            logger.info("Created main embed successfully")
             
             # Strategic analysis (always included)
             if analysis.get('strategic_analysis'):
@@ -554,13 +565,18 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
             main_embed.set_footer(text=footer_text)
             
             embeds = [main_embed]
+            logger.info("Main embed added to embeds list")
             
             # Add LLM-curated highlights timeline for batches with 5+ updates
             if len(self.update_queue) >= 5:
                 highlights_embed = self._create_llm_highlights_embed(analysis.get('game_phase', 'current'))
                 if highlights_embed:
                     embeds.append(highlights_embed)
+                    logger.info("Highlights embed added to embeds list")
+                else:
+                    logger.warning("Highlights embed creation failed")
             
+            logger.info(f"Returning {len(embeds)} embeds from LLM summary")
             return embeds
             
         except Exception as e:
