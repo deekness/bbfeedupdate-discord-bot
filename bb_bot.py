@@ -1727,7 +1727,7 @@ class BBDiscordBot(commands.Bot):
             
             # Calculate day number (days since season start)
             # For now, we'll use a simple calculation - you might want to adjust this
-            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
+            season_start = datetime(2025, 7, 10)  # Adjust this date for actual season start
             day_number = (end_time.date() - season_start.date()).days + 1
             
             # Create daily recap
