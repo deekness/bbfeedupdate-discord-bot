@@ -10,7 +10,7 @@ import sys
 import signal
 from datetime import datetime, timedelta
 import pytz
-from typing import List, Dict, Set, Optional
+from typing import List, Dict, Set, Optional, Tuple
 import logging
 from dataclasses import dataclass
 import json
@@ -22,6 +22,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from collections import defaultdict, Counter, deque, OrderedDict
 import anthropic
+from enum import Enum
 
 # Configuration constants
 DEFAULT_CONFIG = {
@@ -137,6 +138,20 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 logger = setup_logging()
+
+# Alliance tracking enums
+class AllianceStatus(Enum):
+    ACTIVE = "active"
+    BROKEN = "broken"
+    SUSPECTED = "suspected"
+    DISSOLVED = "dissolved"
+
+class AllianceEventType(Enum):
+    FORMED = "formed"
+    EXPANDED = "expanded"
+    BETRAYAL = "betrayal"
+    DISSOLVED = "dissolved"
+    SUSPECTED = "suspected"
 
 class LRUCache:
     """Thread-safe LRU Cache implementation for tracking processed hashes"""
@@ -425,6 +440,689 @@ class BBAnalyzer:
                 score += 4
         
         return min(score, 10)
+
+class AllianceTracker:
+    """Tracks and analyzes Big Brother alliances"""
+    
+    # Alliance detection patterns
+    ALLIANCE_FORMATION_PATTERNS = [
+        (r"([\w\s]+) and ([\w\s]+) make a final (\d+)", "final_deal"),
+        (r"([\w\s]+) forms? an? alliance with ([\w\s]+)", "alliance"),
+        (r"([\w\s]+) and ([\w\s]+) agree to work together", "agreement"),
+        (r"([\w\s]+) and ([\w\s]+) shake on it", "handshake"),
+        (r"([\w\s]+), ([\w\s]+),? and ([\w\s]+) form an? alliance", "group_alliance"),
+        (r"([\w\s]+) joins? forces with ([\w\s]+)", "joining_forces"),
+        (r"([\w\s]+) wants? to work with ([\w\s]+)", "wants_work"),
+        (r"([\w\s]+) trusts? ([\w\s]+) completely", "trust"),
+    ]
+    
+    BETRAYAL_PATTERNS = [
+        (r"([\w\s]+) wants? to backdoor ([\w\s]+)", "backdoor"),
+        (r"([\w\s]+) throws? ([\w\s]+) under the bus", "bus"),
+        (r"([\w\s]+) is now targeting ([\w\s]+)", "targeting"),
+        (r"([\w\s]+) turns? on ([\w\s]+)", "turns"),
+        (r"([\w\s]+) betrays? ([\w\s]+)", "betrays"),
+        (r"([\w\s]+) flips? on ([\w\s]+)", "flips"),
+        (r"([\w\s]+) wants? ([\w\s]+) out", "wants_out"),
+    ]
+    
+    ALLIANCE_NAME_PATTERNS = [
+        r"(?:The|the) ([\w\s]+) alliance",
+        r"alliance (?:called|named) (?:The|the)? ?([\w\s]+)",
+        r"(?:The|the) ([\w\s]+) \([\w\s,]+\)",  # The Core (Chelsie, Cam, etc)
+    ]
+    
+    def __init__(self, db_path: str = "bb_updates.db"):
+        self.db_path = db_path
+        self.init_alliance_tables()
+        self._alliance_cache = {}
+        self._member_cache = defaultdict(set)  # houseguest -> alliance_ids
+    
+    def init_alliance_tables(self):
+        """Initialize alliance tracking tables"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Main alliances table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alliances (
+                alliance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT,
+                formed_date TIMESTAMP,
+                dissolved_date TIMESTAMP,
+                status TEXT DEFAULT 'active',
+                confidence_level INTEGER DEFAULT 50,
+                last_activity TIMESTAMP,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        
+        # Alliance members table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alliance_members (
+                alliance_id INTEGER,
+                houseguest_name TEXT,
+                joined_date TIMESTAMP,
+                left_date TIMESTAMP,
+                is_active BOOLEAN DEFAULT 1,
+                FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
+                UNIQUE(alliance_id, houseguest_name)
+            )
+        """)
+        
+        # Alliance events table
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS alliance_events (
+                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                alliance_id INTEGER,
+                event_type TEXT,
+                description TEXT,
+                involved_houseguests TEXT,
+                timestamp TIMESTAMP,
+                update_hash TEXT,
+                FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
+            )
+        """)
+        
+        # Create indexes
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_status ON alliances(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members ON alliance_members(houseguest_name)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_events_type ON alliance_events(event_type)")
+        
+        conn.commit()
+        conn.close()
+        
+        logger.info("Alliance tracking tables initialized")
+    
+    def analyze_update_for_alliances(self, update: BBUpdate) -> List[Dict]:
+        """Analyze an update for alliance information"""
+        content = f"{update.title} {update.description}".strip()
+        detected_events = []
+        
+        # Check for alliance formations
+        for pattern, pattern_type in self.ALLIANCE_FORMATION_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                groups = match.groups()
+                houseguests = [g.strip() for g in groups if g and not g.isdigit()]
+                
+                # Filter out common words that aren't houseguests
+                houseguests = [hg for hg in houseguests if hg not in EXCLUDE_WORDS]
+                
+                if len(houseguests) >= 2:
+                    detected_events.append({
+                        'type': AllianceEventType.FORMED,
+                        'houseguests': houseguests,
+                        'pattern_type': pattern_type,
+                        'confidence': self._calculate_confidence(pattern_type),
+                        'update': update
+                    })
+        
+        # Check for betrayals
+        for pattern, pattern_type in self.BETRAYAL_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                groups = match.groups()
+                if len(groups) >= 2:
+                    betrayer = groups[0].strip()
+                    betrayed = groups[1].strip()
+                    
+                    if betrayer not in EXCLUDE_WORDS and betrayed not in EXCLUDE_WORDS:
+                        detected_events.append({
+                            'type': AllianceEventType.BETRAYAL,
+                            'betrayer': betrayer,
+                            'betrayed': betrayed,
+                            'pattern_type': pattern_type,
+                            'update': update
+                        })
+        
+        # Check for named alliances
+        for pattern in self.ALLIANCE_NAME_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                alliance_name = match.group(1).strip()
+                if alliance_name and len(alliance_name) > 2:
+                    # Try to extract members mentioned nearby
+                    members = self._extract_nearby_houseguests(content, match.start(), match.end())
+                    detected_events.append({
+                        'type': AllianceEventType.FORMED,
+                        'alliance_name': alliance_name,
+                        'houseguests': members,
+                        'pattern_type': 'named_alliance',
+                        'confidence': 80,  # Named alliances have higher confidence
+                        'update': update
+                    })
+        
+        return detected_events
+    
+    def _calculate_confidence(self, pattern_type: str) -> int:
+        """Calculate confidence level based on pattern type"""
+        confidence_map = {
+            'final_deal': 90,
+            'alliance': 85,
+            'handshake': 80,
+            'group_alliance': 85,
+            'agreement': 75,
+            'joining_forces': 70,
+            'wants_work': 50,
+            'trust': 60,
+            'named_alliance': 80
+        }
+        return confidence_map.get(pattern_type, 50)
+    
+    def _extract_nearby_houseguests(self, content: str, start: int, end: int, window: int = 100) -> List[str]:
+        """Extract houseguest names near an alliance mention"""
+        # Look in a window around the alliance name
+        search_start = max(0, start - window)
+        search_end = min(len(content), end + window)
+        search_text = content[search_start:search_end]
+        
+        # Find capitalized words that could be names
+        potential_names = re.findall(r'\b[A-Z][a-z]+\b', search_text)
+        
+        # Filter out common words
+        houseguests = [name for name in potential_names if name not in EXCLUDE_WORDS]
+        
+        return list(set(houseguests))  # Remove duplicates
+    
+    def process_alliance_event(self, event: Dict) -> Optional[int]:
+        """Process a detected alliance event and update database"""
+        try:
+            if event['type'] == AllianceEventType.FORMED:
+                return self._handle_alliance_formation(event)
+            elif event['type'] == AllianceEventType.BETRAYAL:
+                return self._handle_betrayal(event)
+            
+        except Exception as e:
+            logger.error(f"Error processing alliance event: {e}")
+            return None
+    
+    def _handle_alliance_formation(self, event: Dict) -> Optional[int]:
+        """Handle alliance formation event"""
+        houseguests = event.get('houseguests', [])
+        if len(houseguests) < 2:
+            return None
+        
+        # Check if these houseguests already have an alliance together
+        existing_alliance = self._find_existing_alliance(houseguests)
+        
+        if existing_alliance:
+            # Update confidence and last activity
+            self._update_alliance_confidence(existing_alliance['alliance_id'], event['confidence'])
+            return existing_alliance['alliance_id']
+        else:
+            # Create new alliance
+            alliance_name = event.get('alliance_name')
+            if not alliance_name:
+                # Generate a name if not provided
+                alliance_name = f"{houseguests[0]}/{houseguests[1]}"
+                if len(houseguests) > 2:
+                    alliance_name += f" +{len(houseguests)-2}"
+            
+            return self._create_alliance(
+                name=alliance_name,
+                members=houseguests,
+                confidence=event['confidence'],
+                formed_date=event['update'].pub_date
+            )
+    
+    def _handle_betrayal(self, event: Dict) -> None:
+        """Handle betrayal event"""
+        betrayer = event['betrayer']
+        betrayed = event['betrayed']
+        
+        # Find alliances containing both houseguests
+        shared_alliances = self._find_shared_alliances(betrayer, betrayed)
+        
+        for alliance in shared_alliances:
+            # Record betrayal event
+            self._record_alliance_event(
+                alliance_id=alliance['alliance_id'],
+                event_type=AllianceEventType.BETRAYAL,
+                description=f"{betrayer} betrayed {betrayed}",
+                involved=[betrayer, betrayed],
+                timestamp=event['update'].pub_date,
+                update_hash=event['update'].content_hash
+            )
+            
+            # Consider marking alliance as broken if confidence drops
+            self._update_alliance_confidence(alliance['alliance_id'], -30)
+    
+    def _create_alliance(self, name: str, members: List[str], confidence: int, formed_date: datetime) -> int:
+        """Create a new alliance in the database"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        try:
+            # Insert alliance
+            cursor.execute("""
+                INSERT INTO alliances (name, formed_date, status, confidence_level, last_activity)
+                VALUES (?, ?, ?, ?, ?)
+            """, (name, formed_date, AllianceStatus.ACTIVE.value, confidence, formed_date))
+            
+            alliance_id = cursor.lastrowid
+            
+            # Insert members
+            for member in members:
+                cursor.execute("""
+                    INSERT OR IGNORE INTO alliance_members (alliance_id, houseguest_name, joined_date)
+                    VALUES (?, ?, ?)
+                """, (alliance_id, member, formed_date))
+            
+            # Record formation event
+            cursor.execute("""
+                INSERT INTO alliance_events (alliance_id, event_type, description, involved_houseguests, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """, (alliance_id, AllianceEventType.FORMED.value, 
+                  f"Alliance '{name}' formed", ",".join(members), formed_date))
+            
+            conn.commit()
+            logger.info(f"Created new alliance: {name} with members {members}")
+            
+            return alliance_id
+            
+        except Exception as e:
+            logger.error(f"Error creating alliance: {e}")
+            conn.rollback()
+            return None
+        finally:
+            conn.close()
+    
+    def get_active_alliances(self) -> List[Dict]:
+        """Get all currently active alliances"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
+                   GROUP_CONCAT(am.houseguest_name) as members
+            FROM alliances a
+            JOIN alliance_members am ON a.alliance_id = am.alliance_id
+            WHERE a.status = ? AND am.is_active = 1
+            GROUP BY a.alliance_id
+            ORDER BY a.confidence_level DESC, a.last_activity DESC
+        """, (AllianceStatus.ACTIVE.value,))
+        
+        alliances = []
+        for row in cursor.fetchall():
+            alliances.append({
+                'alliance_id': row[0],
+                'name': row[1],
+                'confidence': row[2],
+                'last_activity': row[3],
+                'members': row[4].split(',') if row[4] else []
+            })
+        
+        conn.close()
+        return alliances
+    
+    def create_alliance_map_embed(self) -> discord.Embed:
+        """Create an embed showing current alliance relationships"""
+        alliances = self.get_active_alliances()
+        broken_alliances = self.get_recently_broken_alliances()
+        
+        if not alliances and not broken_alliances:
+            embed = discord.Embed(
+                title="🤝 Big Brother Alliance Map",
+                description="No active alliances detected yet",
+                color=0x95a5a6,
+                timestamp=datetime.now()
+            )
+            return embed
+        
+        embed = discord.Embed(
+            title="🤝 Big Brother Alliance Map",
+            description=f"**{len(alliances)} Active Alliances**",
+            color=0x3498db,
+            timestamp=datetime.now()
+        )
+        
+        # Group alliances by confidence
+        high_conf = [a for a in alliances if a['confidence'] >= 70]
+        med_conf = [a for a in alliances if 40 <= a['confidence'] < 70]
+        low_conf = [a for a in alliances if a['confidence'] < 40]
+        
+        if high_conf:
+            alliance_text = []
+            for alliance in high_conf[:5]:  # Limit to 5
+                members_str = " + ".join([f"**{m}**" for m in alliance['members']])
+                alliance_text.append(f"🔗 {alliance['name']}\n{members_str}")
+            
+            embed.add_field(
+                name="💪 Strong Alliances",
+                value="\n\n".join(alliance_text),
+                inline=False
+            )
+        
+        if med_conf:
+            alliance_text = []
+            for alliance in med_conf[:3]:  # Limit to 3
+                members_str = " + ".join(alliance['members'])
+                alliance_text.append(f"🤝 {alliance['name']}: {members_str}")
+            
+            embed.add_field(
+                name="🤔 Suspected Alliances",
+                value="\n".join(alliance_text),
+                inline=False
+            )
+        
+        # Add recently broken strong alliances
+        if broken_alliances:
+            broken_text = []
+            for alliance in broken_alliances[:3]:  # Limit to 3
+                members_str = " + ".join(alliance['members'])
+                days_ago = (datetime.now() - datetime.fromisoformat(alliance['broken_date'])).days
+                broken_text.append(f"💔 {alliance['name']}: {members_str}\n   *Broke {days_ago}d ago after {alliance['days_strong']} days*")
+            
+            embed.add_field(
+                name="⚰️ Recently Broken Alliances",
+                value="\n\n".join(broken_text),
+                inline=False
+            )
+        
+        # Add recent betrayals
+        recent_betrayals = self.get_recent_betrayals(days=3)
+        if recent_betrayals:
+            betrayal_text = []
+            for betrayal in recent_betrayals[:3]:
+                betrayal_text.append(f"⚡ {betrayal['description']}")
+            
+            embed.add_field(
+                name="💥 Recent Betrayals",
+                value="\n".join(betrayal_text),
+                inline=False
+            )
+        
+        embed.set_footer(text="Alliance confidence based on feed activity")
+        
+        return embed
+    
+    def get_recently_broken_alliances(self, days: int = 7) -> List[Dict]:
+        """Get alliances that were strong but recently broke"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        # Find alliances that:
+        # 1. Are now marked as broken/dissolved
+        # 2. Were previously at 70+ confidence for at least 7 days
+        # 3. Broke within the last week
+        cursor.execute("""
+            SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
+                   MAX(ae.timestamp) as broken_date,
+                   GROUP_CONCAT(DISTINCT am.houseguest_name) as members
+            FROM alliances a
+            JOIN alliance_members am ON a.alliance_id = am.alliance_id
+            JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
+            WHERE a.status IN (?, ?)
+              AND a.alliance_id IN (
+                  SELECT alliance_id FROM alliance_events
+                  WHERE event_type = ? AND timestamp > ?
+              )
+              AND a.alliance_id IN (
+                  SELECT alliance_id FROM alliances
+                  WHERE confidence_level >= 70
+                  AND julianday(last_activity) - julianday(formed_date) >= 7
+              )
+            GROUP BY a.alliance_id
+            ORDER BY broken_date DESC
+        """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
+              AllianceEventType.BETRAYAL.value, cutoff_date))
+        
+        broken_alliances = []
+        for row in cursor.fetchall():
+            alliance_id, name, formed_date, broken_date, members = row
+            
+            # Calculate how long it was strong
+            formed = datetime.fromisoformat(formed_date)
+            broken = datetime.fromisoformat(broken_date)
+            days_strong = (broken - formed).days
+            
+            broken_alliances.append({
+                'alliance_id': alliance_id,
+                'name': name,
+                'members': members.split(',') if members else [],
+                'formed_date': formed_date,
+                'broken_date': broken_date,
+                'days_strong': days_strong
+            })
+        
+        conn.close()
+        return broken_alliances
+    
+    def get_houseguest_loyalty_embed(self, houseguest: str) -> discord.Embed:
+        """Create an embed showing a houseguest's alliance history"""
+        # Get all alliances for this houseguest
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
+                   GROUP_CONCAT(am2.houseguest_name) as all_members
+            FROM alliance_members am
+            JOIN alliances a ON am.alliance_id = a.alliance_id
+            JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
+            WHERE am.houseguest_name = ?
+            GROUP BY a.alliance_id
+            ORDER BY am.joined_date DESC
+        """, (houseguest,))
+        
+        alliances = cursor.fetchall()
+        
+        # Get betrayal count
+        cursor.execute("""
+            SELECT COUNT(*) FROM alliance_events
+            WHERE event_type = ? AND involved_houseguests LIKE ?
+        """, (AllianceEventType.BETRAYAL.value, f"%{houseguest}%"))
+        
+        betrayal_count = cursor.fetchone()[0]
+        
+        conn.close()
+        
+        # Create embed
+        embed = discord.Embed(
+            title=f"🎭 {houseguest}'s Alliance History",
+            color=0xe74c3c if betrayal_count > 2 else 0x2ecc71,
+            timestamp=datetime.now()
+        )
+        
+        if not alliances:
+            embed.description = f"{houseguest} has not been detected in any alliances"
+            return embed
+        
+        # Calculate loyalty score
+        active_alliances = sum(1 for a in alliances if a[1] == AllianceStatus.ACTIVE.value)
+        broken_alliances = sum(1 for a in alliances if a[1] in [AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value])
+        
+        loyalty_score = max(0, 100 - (betrayal_count * 20) - (broken_alliances * 10))
+        loyalty_emoji = "🏆" if loyalty_score >= 80 else "⚠️" if loyalty_score >= 50 else "🚨"
+        
+        embed.description = f"**Loyalty Score**: {loyalty_emoji} {loyalty_score}/100\n"
+        embed.description += f"**Betrayals**: {betrayal_count} | **Active Alliances**: {active_alliances}"
+        
+        # Add alliance history
+        alliance_text = []
+        for alliance in alliances[:6]:  # Limit display
+            name, status, joined, left, confidence, members = alliance
+            status_emoji = "✅" if status == AllianceStatus.ACTIVE.value else "❌"
+            
+            # Parse members
+            other_members = [m for m in members.split(',') if m != houseguest]
+            members_str = ", ".join(other_members[:3])
+            if len(other_members) > 3:
+                members_str += f" +{len(other_members)-3}"
+            
+            alliance_text.append(f"{status_emoji} **{name}** (w/ {members_str})")
+        
+        embed.add_field(
+            name="📋 Alliance History",
+            value="\n".join(alliance_text) if alliance_text else "No alliances found",
+            inline=False
+        )
+        
+        return embed
+    
+    def get_recent_betrayals(self, days: int = 7) -> List[Dict]:
+        """Get recent betrayal events"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cutoff_date = datetime.now() - timedelta(days=days)
+        
+        cursor.execute("""
+            SELECT description, timestamp, involved_houseguests
+            FROM alliance_events
+            WHERE event_type = ? AND timestamp > ?
+            ORDER BY timestamp DESC
+        """, (AllianceEventType.BETRAYAL.value, cutoff_date))
+        
+        betrayals = []
+        for row in cursor.fetchall():
+            betrayals.append({
+                'description': row[0],
+                'timestamp': row[1],
+                'involved': row[2].split(',') if row[2] else []
+            })
+        
+        conn.close()
+        return betrayals
+    
+    def _find_existing_alliance(self, houseguests: List[str]) -> Optional[Dict]:
+        """Find if these houseguests already have an alliance"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Get all active alliances for first houseguest
+        cursor.execute("""
+            SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
+            FROM alliance_members am
+            JOIN alliances a ON am.alliance_id = a.alliance_id
+            WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
+        """, (houseguests[0], AllianceStatus.ACTIVE.value))
+        
+        for row in cursor.fetchall():
+            alliance_id = row[0]
+            
+            # Check if all houseguests are in this alliance
+            all_in = True
+            for hg in houseguests[1:]:
+                cursor.execute("""
+                    SELECT 1 FROM alliance_members
+                    WHERE alliance_id = ? AND houseguest_name = ? AND is_active = 1
+                """, (alliance_id, hg))
+                
+                if not cursor.fetchone():
+                    all_in = False
+                    break
+            
+            if all_in:
+                conn.close()
+                return {
+                    'alliance_id': alliance_id,
+                    'name': row[1],
+                    'confidence': row[2]
+                }
+        
+        conn.close()
+        return None
+    
+    def _find_shared_alliances(self, hg1: str, hg2: str) -> List[Dict]:
+        """Find alliances containing both houseguests"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            SELECT DISTINCT a.alliance_id, a.name
+            FROM alliance_members am1
+            JOIN alliance_members am2 ON am1.alliance_id = am2.alliance_id
+            JOIN alliances a ON am1.alliance_id = a.alliance_id
+            WHERE am1.houseguest_name = ? AND am2.houseguest_name = ?
+                  AND am1.is_active = 1 AND am2.is_active = 1
+                  AND a.status = ?
+        """, (hg1, hg2, AllianceStatus.ACTIVE.value))
+        
+        alliances = []
+        for row in cursor.fetchall():
+            alliances.append({
+                'alliance_id': row[0],
+                'name': row[1]
+            })
+        
+        conn.close()
+        return alliances
+    
+    def _update_alliance_confidence(self, alliance_id: int, change: int):
+        """Update alliance confidence level"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Get current confidence and status
+        cursor.execute("""
+            SELECT confidence_level, status, formed_date 
+            FROM alliances WHERE alliance_id = ?
+        """, (alliance_id,))
+        
+        current_conf, status, formed_date = cursor.fetchone()
+        
+        # Track if this was a strong alliance before the change
+        was_strong = current_conf >= 70 and status == AllianceStatus.ACTIVE.value
+        
+        # Calculate how long it's been active if it was strong
+        if was_strong:
+            formed = datetime.fromisoformat(formed_date)
+            days_active = (datetime.now() - formed).days
+        else:
+            days_active = 0
+        
+        # Update confidence
+        new_confidence = max(0, min(100, current_conf + change))
+        
+        cursor.execute("""
+            UPDATE alliances 
+            SET confidence_level = ?,
+                last_activity = ?
+            WHERE alliance_id = ?
+        """, (new_confidence, datetime.now(), alliance_id))
+        
+        # Check if confidence dropped too low
+        if new_confidence < 20:
+            # Mark alliance as broken
+            new_status = AllianceStatus.BROKEN.value
+            cursor.execute("""
+                UPDATE alliances SET status = ? WHERE alliance_id = ?
+            """, (new_status, alliance_id))
+            
+            # If this was a strong alliance for over a week, record it as a major break
+            if was_strong and days_active >= 7:
+                cursor.execute("""
+                    INSERT INTO alliance_events 
+                    (alliance_id, event_type, description, timestamp)
+                    VALUES (?, ?, ?, ?)
+                """, (alliance_id, AllianceEventType.DISSOLVED.value,
+                      f"Alliance dissolved after {days_active} days", datetime.now()))
+                
+                logger.info(f"Major alliance break: Alliance {alliance_id} was strong for {days_active} days")
+        
+        conn.commit()
+        conn.close()
+    
+    def _record_alliance_event(self, alliance_id: int, event_type: AllianceEventType, 
+                             description: str, involved: List[str], 
+                             timestamp: datetime, update_hash: str = None):
+        """Record an alliance event"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute("""
+            INSERT INTO alliance_events 
+            (alliance_id, event_type, description, involved_houseguests, timestamp, update_hash)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (alliance_id, event_type.value, description, 
+              ",".join(involved), timestamp, update_hash))
+        
+        conn.commit()
+        conn.close()
 
 class UpdateBatcher:
     """Groups and analyzes updates like a BB superfan using LLM intelligence"""
@@ -1513,6 +2211,7 @@ class BBDiscordBot(commands.Bot):
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
+        self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
         
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
@@ -1678,7 +2377,10 @@ class BBDiscordBot(commands.Bot):
                 ("/commands", "Show this help message"),
                 ("/forcebatch", "Force send any queued updates (Admin only)"),
                 ("/testllm", "Test LLM connection (Admin only)"),
-                ("/sync", "Sync slash commands (Owner only)")
+                ("/sync", "Sync slash commands (Owner only)"),
+                ("/alliances", "Show current Big Brother alliances"),
+                ("/loyalty", "Show a houseguest's alliance history"),
+                ("/betrayals", "Show recent alliance betrayals")
             ]
             
             for name, description in commands_list:
@@ -1795,6 +2497,79 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error in sync command: {e}")
                 await interaction.followup.send("Error syncing commands.", ephemeral=True)
+
+        @self.tree.command(name="alliances", description="Show current Big Brother alliances")
+        async def alliances_slash(interaction: discord.Interaction):
+            """Show current alliance map"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                embed = self.alliance_tracker.create_alliance_map_embed()
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error showing alliances: {e}")
+                await interaction.followup.send("Error generating alliance map.", ephemeral=True)
+
+        @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
+        async def loyalty_slash(interaction: discord.Interaction, houseguest: str):
+            """Show loyalty information for a houseguest"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                # Capitalize the name properly
+                houseguest = houseguest.strip().title()
+                
+                embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest)
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error showing loyalty: {e}")
+                await interaction.followup.send("Error generating loyalty information.", ephemeral=True)
+
+        @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
+        async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
+            """Show recent betrayals"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                if days < 1 or days > 30:
+                    await interaction.followup.send("Days must be between 1 and 30", ephemeral=True)
+                    return
+                
+                betrayals = self.alliance_tracker.get_recent_betrayals(days)
+                
+                embed = discord.Embed(
+                    title="💔 Recent Alliance Betrayals",
+                    description=f"Betrayals in the last {days} days",
+                    color=0xe74c3c,
+                    timestamp=datetime.now()
+                )
+                
+                if not betrayals:
+                    embed.add_field(
+                        name="No Betrayals",
+                        value="No alliance betrayals detected in this time period",
+                        inline=False
+                    )
+                else:
+                    for i, betrayal in enumerate(betrayals[:10], 1):
+                        time_ago = datetime.now() - datetime.fromisoformat(betrayal['timestamp'])
+                        hours_ago = int(time_ago.total_seconds() / 3600)
+                        time_str = f"{hours_ago}h ago" if hours_ago < 24 else f"{hours_ago//24}d ago"
+                        
+                        embed.add_field(
+                            name=f"⚡ {time_str}",
+                            value=betrayal['description'],
+                            inline=False
+                        )
+                
+                embed.set_footer(text="Based on live feed updates")
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error showing betrayals: {e}")
+                await interaction.followup.send("Error generating betrayal list.", ephemeral=True)
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -1981,6 +2756,13 @@ class BBDiscordBot(commands.Bot):
                     
                     self.db.store_update(update, importance, categories)
                     await self.update_batcher.add_update(update)  # Now async
+                    
+                    # Check for alliance information
+                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    for event in alliance_events:
+                        alliance_id = self.alliance_tracker.process_alliance_event(event)
+                        if alliance_id:
+                            logger.info(f"Alliance event processed: {event['type'].value}")
                     
                     self.total_updates_processed += 1
                     
