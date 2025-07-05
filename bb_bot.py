@@ -631,12 +631,12 @@ For each selected update, provide:
             "time": "exact time from update",
             "title": "exact title from update",
             "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-            "reason": "1 sentence why this matters to superfans"
+            "reason": "Brief explanation of what happened and why it matters - be specific and factual, NO phrases like 'exciting for fans' or 'juicy for superfans'"
         }}
     ]
 }}
 
-Focus on variety - don't just pick all strategic moves. Mix strategy, drama, and entertainment."""
+Focus on variety - don't just pick all strategic moves. Mix strategy, drama, and entertainment. Keep explanations factual and specific about WHAT happened, not how fans might react."""
 
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
@@ -668,7 +668,7 @@ Focus on variety - don't just pick all strategic moves. Mix strategy, drama, and
                         inline=False
                     )
                 
-                embed.set_footer(text=f"AI-Curated Highlights • {game_phase.replace('_', ' ').title()}")
+                embed.set_footer(text=f"Chen Bot Highlights • {game_phase.replace('_', ' ').title()}")
                 
                 return embed
                 
