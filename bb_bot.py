@@ -599,6 +599,7 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
     def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
         """Create LLM-curated highlights embed showing only the most important moments"""
         if not self.llm_client:
+            logger.debug("No LLM client available for highlights curation")
             return None
             
         try:
@@ -610,30 +611,20 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 updates_data.append({
                     'index': i + 1,
                     'time': time_str,
-                    'title': update.title,
+                    'title': update.title[:100],  # Truncate for prompt
                     'importance': importance
                 })
             
             # Create LLM prompt for highlight curation
-            prompt = f"""As a Big Brother superfan, curate the most important and interesting moments from these {len(updates_data)} live feed updates.
+            prompt = f"""As a Big Brother superfan, select the most important moments from these {len(updates_data)} updates.
 
-UPDATES TO ANALYZE:
-{chr(10).join([f"{u['index']}. {u['time']} - {u['title']} (Strategic Importance: {u['importance']}/10)" for u in updates_data])}
+UPDATES:
+{chr(10).join([f"{u['index']}. {u['time']} - {u['title']} (Importance: {u['importance']}/10)" for u in updates_data])}
 
-Select 5-8 of the MOST NOTEWORTHY updates that tell the story of this period. Focus on:
-- Strategic developments (alliances, targets, plans)
-- Competition results or preparations
-- Social dynamics and relationship changes
-- Entertainment moments (drama, funny interactions)
-- Game-changing conversations or revelations
+Select 5-8 of the MOST NOTEWORTHY updates. Focus on strategy, competitions, social dynamics, and entertainment.
 
-AVOID including:
-- Routine activities (eating, sleeping, basic conversations)
-- Commercial breaks or show production notes
-- Repetitive or minor updates
-
-Respond with ONLY the numbers (1-{len(updates_data)}) of the updates you want to highlight, separated by commas.
-Example response: 1, 3, 7, 12, 15, 18, 22
+Respond with ONLY the numbers separated by commas.
+Example: 1, 3, 7, 12, 15
 
 Your selection:"""
 
@@ -647,19 +638,16 @@ Your selection:"""
             
             # Parse the response to get selected indices
             response_text = response.content[0].text.strip()
-            logger.debug(f"LLM highlights selection: {response_text}")
+            logger.info(f"LLM highlights selection: {response_text}")
             
             # Extract numbers from response
-            import re
             selected_indices = []
-            numbers = re.findall(r'\d+', response_text)
-            for num_str in numbers:
-                try:
-                    idx = int(num_str) - 1  # Convert to 0-based index
-                    if 0 <= idx < len(self.update_queue):
-                        selected_indices.append(idx)
-                except ValueError:
-                    continue
+            try:
+                # Try to parse comma-separated numbers
+                numbers = [int(x.strip()) for x in response_text.split(',') if x.strip().isdigit()]
+                selected_indices = [num - 1 for num in numbers if 1 <= num <= len(self.update_queue)]
+            except Exception as e:
+                logger.warning(f"Failed to parse LLM selection: {e}")
             
             # Fallback: if LLM selection failed, use top importance scores
             if not selected_indices or len(selected_indices) < 3:
@@ -668,6 +656,13 @@ Your selection:"""
                                          for i, update in enumerate(self.update_queue)]
                 updates_with_importance.sort(key=lambda x: x[1], reverse=True)
                 selected_indices = [i for i, _ in updates_with_importance[:6]]
+            
+            # Ensure we have valid indices
+            selected_indices = [idx for idx in selected_indices if 0 <= idx < len(self.update_queue)]
+            
+            if not selected_indices:
+                logger.warning("No valid indices selected for highlights")
+                return None
             
             # Create the highlights embed
             phase_colors = {
@@ -707,10 +702,12 @@ Your selection:"""
             
             embed.set_footer(text=f"Curated by BB Superfan AI • {len(selected_indices)} key moments selected")
             
+            logger.info(f"Created highlights embed with {len(selected_indices)} highlights")
             return embed
             
         except Exception as e:
             logger.error(f"LLM highlights curation failed: {e}")
+            logger.error(traceback.format_exc())
             return None
         """Create timeline embeds with smart pagination based on importance"""
         phase_colors = {
