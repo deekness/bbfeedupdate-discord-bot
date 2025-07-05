@@ -1560,22 +1560,41 @@ class BBDiscordBot(commands.Bot):
             return
         
         try:
+            logger.info(f"Attempting to send batch update to channel {channel_id}")
+            
             channel = self.get_channel(channel_id)
             if not channel:
                 logger.error(f"Channel {channel_id} not found")
                 return
             
-            # Get batch summary embeds
+            logger.info(f"Found channel: {channel.name}")
+            
+            # Get batch summary embeds (this clears the queue)
             embeds = self.update_batcher.create_batch_summary()
             
-            # Send all embeds
-            for embed in embeds[:10]:  # Discord limit is 10 embeds per message
-                await channel.send(embed=embed)
+            logger.info(f"Got {len(embeds)} embeds from batch summary")
             
-            logger.info(f"Sent batch update with {len(embeds)} embeds")
+            if not embeds:
+                logger.warning("No embeds returned from batch summary")
+                return
+            
+            # Send all embeds
+            sent_count = 0
+            for i, embed in enumerate(embeds[:10]):  # Discord limit is 10 embeds per message
+                try:
+                    logger.info(f"Sending embed {i+1}/{len(embeds)}: {embed.title}")
+                    await channel.send(embed=embed)
+                    sent_count += 1
+                    logger.info(f"Successfully sent embed {i+1}")
+                except Exception as e:
+                    logger.error(f"Failed to send embed {i+1}: {e}")
+                    logger.error(traceback.format_exc())
+            
+            logger.info(f"Sent batch update with {sent_count} embeds")
             
         except Exception as e:
             logger.error(f"Error sending batch update: {e}")
+            logger.error(traceback.format_exc())
 
 # Create bot instance
 bot = BBDiscordBot()
