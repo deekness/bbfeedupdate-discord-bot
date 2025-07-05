@@ -1192,6 +1192,149 @@ Focus on creating a cohesive daily story from these summaries."""
             logger.error(f"Pattern highlights creation failed: {e}")
             return None
 
+class BBDatabase:
+    """Handles database operations with connection pooling and error recovery"""
+    
+    def __init__(self, db_path: str = "bb_updates.db"):
+        self.db_path = db_path
+        self.connection_timeout = 30
+        self.init_database()
+    
+    def get_connection(self):
+        """Get database connection with proper error handling"""
+        try:
+            conn = sqlite3.connect(
+                self.db_path, 
+                timeout=self.connection_timeout,
+                check_same_thread=False
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            return conn
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+    
+    def init_database(self):
+        """Initialize the database schema with proper indexing"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS updates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash TEXT UNIQUE,
+                    title TEXT,
+                    description TEXT,
+                    link TEXT,
+                    pub_date TIMESTAMP,
+                    author TEXT,
+                    importance_score INTEGER DEFAULT 1,
+                    categories TEXT,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
+            
+            conn.commit()
+            logger.info("Database initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
+            raise
+        finally:
+            conn.close()
+    
+    def is_duplicate(self, content_hash: str) -> bool:
+        """Check if update already exists"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Database duplicate check error: {e}")
+            return False
+    
+    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
+        """Store a new update"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            categories_str = ",".join(categories) if categories else ""
+            
+            cursor.execute("""
+                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (update.content_hash, update.title, update.description, 
+                  update.link, update.pub_date, update.author, importance_score, categories_str))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database store error: {e}")
+            raise
+    
+    def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
+        """Get updates from the last N hours"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author
+                FROM updates 
+                WHERE pub_date > ?
+                ORDER BY pub_date DESC
+            """, (cutoff_time,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [BBUpdate(*row) for row in results]
+            
+        except Exception as e:
+            logger.error(f"Database query error: {e}")
+            return []
+
+    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates from a specific 24-hour period"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author, importance_score
+                FROM updates 
+                WHERE pub_date >= ? AND pub_date < ?
+                ORDER BY pub_date ASC
+            """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database daily query error: {e}")
+            return []
+
 class AllianceTracker:
     """Tracks and manages Big Brother alliances"""
     
@@ -1384,8 +1527,6 @@ class AllianceTracker:
         embed.set_footer(text="Alliance Tracker • BB Superfan AI • Use with caution - alliances shift quickly!")
         
         return embed
-
-class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
     def __init__(self, db_path: str = "bb_updates.db"):
