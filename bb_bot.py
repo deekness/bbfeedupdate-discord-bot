@@ -613,7 +613,7 @@ async def setchannel_slash(interaction: discord.Interaction, channel: discord.Te
             return
         
         bot.config.set('update_channel_id', channel.id)
-        https://github.com/deekness/bbfeedupdate-discord-bot/blob/main/bb_bot.py
+        
         await interaction.response.send_message(
             f"Update channel set to {channel.mention}", 
             ephemeral=True
