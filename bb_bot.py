@@ -1057,6 +1057,252 @@ class BBDiscordBot(commands.Bot):
         # Remove all slash commands and add them properly
         self.remove_command('help')
         
+        # Setup commands after initialization
+        self.setup_commands()
+    
+    def setup_commands(self):
+        """Setup all slash commands"""
+        
+        @self.tree.command(name="status", description="Show bot status and statistics")
+        async def status_slash(interaction: discord.Interaction):
+            """Show bot status"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                embed = discord.Embed(
+                    title="Big Brother Bot Status",
+                    color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(name="RSS Feed", value=self.rss_url, inline=False)
+                embed.add_field(name="Update Channel", 
+                               value=f"<#{self.config.get('update_channel_id')}>" if self.config.get('update_channel_id') else "Not set", 
+                               inline=True)
+                embed.add_field(name="Updates Processed", value=str(self.total_updates_processed), inline=True)
+                embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
+                
+                time_since_check = datetime.now() - self.last_successful_check
+                embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
+                
+                # Add batch queue status
+                queue_size = len(self.update_batcher.update_queue)
+                embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
+                
+                # Add LLM status
+                llm_status = "✅ Enabled" if self.update_batcher.llm_client else "❌ Disabled (Pattern Mode)"
+                embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error generating status: {e}")
+                await interaction.followup.send("Error generating status.", ephemeral=True)
+
+        @self.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
+        async def summary_slash(interaction: discord.Interaction, hours: int = 24):
+            """Generate a summary of updates"""
+            try:
+                if hours < 1 or hours > 168:
+                    await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                updates = self.db.get_recent_updates(hours)
+                
+                if not updates:
+                    await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
+                    return
+                
+                categories = {}
+                for update in updates:
+                    update_categories = self.analyzer.categorize_update(update)
+                    for category in update_categories:
+                        if category not in categories:
+                            categories[category] = []
+                        categories[category].append(update)
+                
+                embed = discord.Embed(
+                    title=f"Big Brother Updates Summary ({hours}h)",
+                    description=f"**{len(updates)} total updates**",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for category, cat_updates in categories.items():
+                    top_updates = sorted(cat_updates, 
+                                       key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                                       reverse=True)[:3]
+                    
+                    summary_text = "\n".join([f"• {update.title[:100]}..." 
+                                            if len(update.title) > 100 
+                                            else f"• {update.title}" 
+                                            for update in top_updates])
+                    
+                    embed.add_field(
+                        name=f"{category} ({len(cat_updates)} updates)",
+                        value=summary_text or "No updates",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}")
+                await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
+
+        @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
+        async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+            """Set the channel for RSS updates"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                if not channel.permissions_for(interaction.guild.me).send_messages:
+                    await interaction.response.send_message(
+                        f"I don't have permission to send messages in {channel.mention}", 
+                        ephemeral=True
+                    )
+                    return
+                
+                self.config.set('update_channel_id', channel.id)
+                
+                await interaction.response.send_message(
+                    f"Update channel set to {channel.mention}", 
+                    ephemeral=True
+                )
+                logger.info(f"Update channel set to {channel.id}")
+                
+            except Exception as e:
+                logger.error(f"Error setting channel: {e}")
+                await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
+
+        @self.tree.command(name="commands", description="Show all available commands")
+        async def commands_slash(interaction: discord.Interaction):
+            """Show available commands"""
+            embed = discord.Embed(
+                title="Big Brother Bot Commands",
+                description="Monitor Jokers Updates RSS feed with intelligent analysis",
+                color=0x3498db
+            )
+            
+            commands_list = [
+                ("/summary", "Get a summary of recent updates (default: 24h)"),
+                ("/status", "Show bot status and statistics"),
+                ("/setchannel", "Set update channel (Admin only)"),
+                ("/commands", "Show this help message"),
+                ("/forcebatch", "Force send any queued updates (Admin only)"),
+                ("/testllm", "Test LLM connection (Admin only)"),
+                ("/sync", "Sync slash commands (Owner only)")
+            ]
+            
+            for name, description in commands_list:
+                embed.add_field(name=name, value=description, inline=False)
+            
+            embed.set_footer(text="All commands are ephemeral (only you can see the response)")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        @self.tree.command(name="forcebatch", description="Force send any queued updates")
+        async def forcebatch_slash(interaction: discord.Interaction):
+            """Force send batch update"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                queue_size = len(self.update_batcher.update_queue)
+                if queue_size == 0:
+                    await interaction.followup.send("No updates in queue to send.", ephemeral=True)
+                    return
+                
+                # Force send the batch
+                await self.send_batch_update()
+                
+                await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error forcing batch: {e}")
+                await interaction.followup.send("Error sending batch.", ephemeral=True)
+
+        @self.tree.command(name="testllm", description="Test LLM connection and functionality")
+        async def test_llm_slash(interaction: discord.Interaction):
+            """Test LLM integration"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Test API key presence
+                api_key = self.config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY', '')
+                if not api_key:
+                    await interaction.followup.send("❌ No Anthropic API key found!", ephemeral=True)
+                    return
+                
+                # Test connection
+                if not self.update_batcher.llm_client:
+                    await interaction.followup.send("❌ LLM client not initialized", ephemeral=True)
+                    return
+                
+                # Test actual API call
+                try:
+                    test_response = self.update_batcher.llm_client.messages.create(
+                        model=self.update_batcher.llm_model,
+                        max_tokens=100,
+                        messages=[{
+                            "role": "user", 
+                            "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love both strategic gameplay and social dynamics in Big Brother."
+                        }]
+                    )
+                    
+                    response_text = test_response.content[0].text
+                    
+                    embed = discord.Embed(
+                        title="✅ LLM Connection Test",
+                        description=f"**Model**: {self.update_batcher.llm_model}\n**Response**: {response_text}",
+                        color=0x2ecc71,
+                        timestamp=datetime.now()
+                    )
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    
+                except Exception as e:
+                    await interaction.followup.send(f"❌ LLM API call failed: {str(e)}", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error testing LLM: {e}")
+                await interaction.followup.send("Error testing LLM connection.", ephemeral=True)
+
+        @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
+        async def sync_slash(interaction: discord.Interaction):
+            """Manually sync slash commands"""
+            try:
+                # Add your Discord user ID here for owner check
+                # Replace 123456789 with your actual Discord user ID
+                if interaction.user.id != 123456789:  # Replace with your user ID
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                try:
+                    synced = await self.tree.sync()
+                    await interaction.followup.send(f"✅ Synced {len(synced)} slash commands!", ephemeral=True)
+                    logger.info(f"Manually synced {len(synced)} commands")
+                except Exception as e:
+                    await interaction.followup.send(f"❌ Failed to sync commands: {e}", ephemeral=True)
+                    logger.error(f"Manual sync failed: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Error in sync command: {e}")
+                await interaction.followup.send("Error syncing commands.", ephemeral=True)
+        
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
@@ -1268,222 +1514,6 @@ class BBDiscordBot(commands.Bot):
 
 # Create bot instance
 bot = BBDiscordBot()
-
-# Define slash commands using the bot.tree decorator
-@bot.tree.command(name="status", description="Show bot status and statistics")
-async def status_slash(interaction: discord.Interaction):
-    """Show bot status"""
-    try:
-        await interaction.response.defer(ephemeral=True)
-        
-        embed = discord.Embed(
-            title="Big Brother Bot Status",
-            color=0x2ecc71 if bot.consecutive_errors == 0 else 0xe74c3c,
-            timestamp=datetime.now()
-        )
-        
-        embed.add_field(name="RSS Feed", value=bot.rss_url, inline=False)
-        embed.add_field(name="Update Channel", 
-                       value=f"<#{bot.config.get('update_channel_id')}>" if bot.config.get('update_channel_id') else "Not set", 
-                       inline=True)
-        embed.add_field(name="Updates Processed", value=str(bot.total_updates_processed), inline=True)
-        embed.add_field(name="Consecutive Errors", value=str(bot.consecutive_errors), inline=True)
-        
-        time_since_check = datetime.now() - bot.last_successful_check
-        embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
-        
-        # Add batch queue status
-        queue_size = len(bot.update_batcher.update_queue)
-        embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
-        
-        # Add LLM status
-        llm_status = "✅ Enabled" if bot.update_batcher.llm_client else "❌ Disabled (Pattern Mode)"
-        embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"Error generating status: {e}")
-        await interaction.followup.send("Error generating status.", ephemeral=True)
-
-@bot.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
-async def summary_slash(interaction: discord.Interaction, hours: int = 24):
-    """Generate a summary of updates"""
-    try:
-        if hours < 1 or hours > 168:
-            await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
-            return
-        
-        await interaction.response.defer(ephemeral=True)
-        
-        updates = bot.db.get_recent_updates(hours)
-        
-        if not updates:
-            await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
-            return
-        
-        categories = {}
-        for update in updates:
-            update_categories = bot.analyzer.categorize_update(update)
-            for category in update_categories:
-                if category not in categories:
-                    categories[category] = []
-                categories[category].append(update)
-        
-        embed = discord.Embed(
-            title=f"Big Brother Updates Summary ({hours}h)",
-            description=f"**{len(updates)} total updates**",
-            color=0x3498db,
-            timestamp=datetime.now()
-        )
-        
-        for category, cat_updates in categories.items():
-            top_updates = sorted(cat_updates, 
-                               key=lambda x: bot.analyzer.analyze_strategic_importance(x), 
-                               reverse=True)[:3]
-            
-            summary_text = "\n".join([f"• {update.title[:100]}..." 
-                                    if len(update.title) > 100 
-                                    else f"• {update.title}" 
-                                    for update in top_updates])
-            
-            embed.add_field(
-                name=f"{category} ({len(cat_updates)} updates)",
-                value=summary_text or "No updates",
-                inline=False
-            )
-        
-        await interaction.followup.send(embed=embed, ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"Error generating summary: {e}")
-        await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
-
-@bot.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
-async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-    """Set the channel for RSS updates"""
-    try:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-            return
-            
-        if not channel.permissions_for(interaction.guild.me).send_messages:
-            await interaction.response.send_message(
-                f"I don't have permission to send messages in {channel.mention}", 
-                ephemeral=True
-            )
-            return
-        
-        bot.config.set('update_channel_id', channel.id)
-        
-        await interaction.response.send_message(
-            f"Update channel set to {channel.mention}", 
-            ephemeral=True
-        )
-        logger.info(f"Update channel set to {channel.id}")
-        
-    except Exception as e:
-        logger.error(f"Error setting channel: {e}")
-        await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
-
-@bot.tree.command(name="commands", description="Show all available commands")
-async def commands_slash(interaction: discord.Interaction):
-    """Show available commands"""
-    embed = discord.Embed(
-        title="Big Brother Bot Commands",
-        description="Monitor Jokers Updates RSS feed with intelligent analysis",
-        color=0x3498db
-    )
-    
-    commands_list = [
-        ("/summary", "Get a summary of recent updates (default: 24h)"),
-        ("/status", "Show bot status and statistics"),
-        ("/setchannel", "Set update channel (Admin only)"),
-        ("/commands", "Show this help message"),
-        ("/forcebatch", "Force send any queued updates (Admin only)"),
-        ("/testllm", "Test LLM connection (Admin only)")
-    ]
-    
-    for name, description in commands_list:
-        embed.add_field(name=name, value=description, inline=False)
-    
-    embed.set_footer(text="All commands are ephemeral (only you can see the response)")
-    
-    await interaction.response.send_message(embed=embed, ephemeral=True)
-
-@bot.tree.command(name="forcebatch", description="Force send any queued updates")
-async def forcebatch_slash(interaction: discord.Interaction):
-    """Force send batch update"""
-    try:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-            return
-        
-        await interaction.response.defer(ephemeral=True)
-        
-        queue_size = len(bot.update_batcher.update_queue)
-        if queue_size == 0:
-            await interaction.followup.send("No updates in queue to send.", ephemeral=True)
-            return
-        
-        # Force send the batch
-        await bot.send_batch_update()
-        
-        await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
-        
-    except Exception as e:
-        logger.error(f"Error forcing batch: {e}")
-        await interaction.followup.send("Error sending batch.", ephemeral=True)
-
-@bot.tree.command(name="testllm", description="Test LLM connection and functionality")
-async def test_llm_slash(interaction: discord.Interaction):
-    """Test LLM integration"""
-    try:
-        if not interaction.user.guild_permissions.administrator:
-            await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-            return
-        
-        await interaction.response.defer(ephemeral=True)
-        
-        # Test API key presence
-        api_key = bot.config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY', '')
-        if not api_key:
-            await interaction.followup.send("❌ No Anthropic API key found!", ephemeral=True)
-            return
-        
-        # Test connection
-        if not bot.update_batcher.llm_client:
-            await interaction.followup.send("❌ LLM client not initialized", ephemeral=True)
-            return
-        
-        # Test actual API call
-        try:
-            test_response = bot.update_batcher.llm_client.messages.create(
-                model=bot.update_batcher.llm_model,
-                max_tokens=100,
-                messages=[{
-                    "role": "user", 
-                    "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love both strategic gameplay and social dynamics in Big Brother."
-                }]
-            )
-            
-            response_text = test_response.content[0].text
-            
-            embed = discord.Embed(
-                title="✅ LLM Connection Test",
-                description=f"**Model**: {bot.update_batcher.llm_model}\n**Response**: {response_text}",
-                color=0x2ecc71,
-                timestamp=datetime.now()
-            )
-            
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            
-        except Exception as e:
-            await interaction.followup.send(f"❌ LLM API call failed: {str(e)}", ephemeral=True)
-            
-    except Exception as e:
-        logger.error(f"Error testing LLM: {e}")
-        await interaction.followup.send("Error testing LLM connection.", ephemeral=True)
 
 def main():
     """Main function to run the bot"""
