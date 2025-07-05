@@ -1569,7 +1569,7 @@ class BBDiscordBot(commands.Bot):
             
             logger.info(f"Found channel: {channel.name}")
             
-            # Get batch summary embeds (this clears the queue)
+            # Get batch summary embeds (don't clear queue yet)
             embeds = self.update_batcher.create_batch_summary()
             
             logger.info(f"Got {len(embeds)} embeds from batch summary")
@@ -1589,6 +1589,11 @@ class BBDiscordBot(commands.Bot):
                 except Exception as e:
                     logger.error(f"Failed to send embed {i+1}: {e}")
                     logger.error(traceback.format_exc())
+            
+            # Only clear the queue after successful sending
+            if sent_count > 0:
+                self.update_batcher.clear_batch_queue()
+                logger.info(f"Cleared batch queue after sending {sent_count} embeds")
             
             logger.info(f"Sent batch update with {sent_count} embeds")
             
