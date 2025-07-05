@@ -846,6 +846,28 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
         """Get current rate limiting statistics"""
         return self.rate_limiter.get_stats()
 
+    def _extract_correct_time(self, update: BBUpdate) -> str:
+        """Extract the correct time from the update content rather than pub_date"""
+        # Look for time patterns in the title like "07:56 PM PST"
+        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
+        
+        # First try the title
+        match = re.search(time_pattern, update.title)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Then try the description
+        match = re.search(time_pattern, update.description)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Fallback to pub_date if no time found in content
+        return update.pub_date.strftime("%I:%M %p")
+
     def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
         """Create highlights embed using pattern matching when LLM unavailable"""
         try:
