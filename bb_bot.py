@@ -20,7 +20,7 @@ from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
-from collections import defaultdict, Counter, deque
+from collections import defaultdict, Counter, deque, OrderedDict
 import anthropic
 
 # Configuration constants
@@ -137,6 +137,75 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 logger = setup_logging()
+
+class LRUCache:
+    """Thread-safe LRU Cache implementation for tracking processed hashes"""
+    
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.cache = OrderedDict()
+        self._lock = asyncio.Lock()
+        self.stats = {
+            'hits': 0,
+            'misses': 0,
+            'evictions': 0
+        }
+    
+    async def contains(self, key: str) -> bool:
+        """Check if key exists in cache (async for thread safety)"""
+        async with self._lock:
+            if key in self.cache:
+                # Move to end (most recently used)
+                self.cache.move_to_end(key)
+                self.stats['hits'] += 1
+                return True
+            self.stats['misses'] += 1
+            return False
+    
+    async def add(self, key: str, value: Optional[float] = None) -> None:
+        """Add key to cache with optional timestamp value"""
+        async with self._lock:
+            if key in self.cache:
+                # Update existing and move to end
+                self.cache.move_to_end(key)
+                self.cache[key] = value or time.time()
+            else:
+                # Add new entry
+                self.cache[key] = value or time.time()
+                
+                # Check capacity and evict if necessary
+                if len(self.cache) > self.capacity:
+                    evicted_key, _ = self.cache.popitem(last=False)  # Remove oldest
+                    self.stats['evictions'] += 1
+                    logger.debug(f"Evicted hash from cache: {evicted_key[:8]}...")
+    
+    def get_stats(self) -> dict:
+        """Get cache statistics"""
+        total_requests = self.stats['hits'] + self.stats['misses']
+        hit_rate = (self.stats['hits'] / total_requests * 100) if total_requests > 0 else 0
+        
+        return {
+            'size': len(self.cache),
+            'capacity': self.capacity,
+            'hits': self.stats['hits'],
+            'misses': self.stats['misses'],
+            'evictions': self.stats['evictions'],
+            'hit_rate': f"{hit_rate:.1f}%"
+        }
+    
+    async def clear(self) -> None:
+        """Clear the cache"""
+        async with self._lock:
+            self.cache.clear()
+            logger.info("Cache cleared")
+    
+    async def get_oldest_timestamp(self) -> Optional[float]:
+        """Get timestamp of oldest entry"""
+        async with self._lock:
+            if self.cache:
+                first_key = next(iter(self.cache))
+                return self.cache[first_key]
+            return None
 
 class RateLimiter:
     """Rate limiter for API calls to prevent excessive costs"""
@@ -365,8 +434,10 @@ class UpdateBatcher:
         self.config = config
         self.update_queue = []
         self.last_batch_time = datetime.now()
-        self.processed_hashes = set()
-        self.max_processed_hashes = config.get('max_processed_hashes', 10000)
+        
+        # Replace the set with LRU cache
+        max_hashes = config.get('max_processed_hashes', 10000)
+        self.processed_hashes_cache = LRUCache(capacity=max_hashes)
         
         # Initialize rate limiter
         self.rate_limiter = RateLimiter(
@@ -393,17 +464,6 @@ class UpdateBatcher:
         except Exception as e:
             logger.error(f"Failed to initialize LLM: {e}")
             self.llm_client = None
-    
-    def _manage_processed_hashes(self):
-        """Manage processed hashes to prevent memory bloat"""
-        if len(self.processed_hashes) >= self.max_processed_hashes:
-            # Remove oldest 50% of hashes (simple approach)
-            # In production, you might want to use a more sophisticated LRU cache
-            hashes_to_remove = len(self.processed_hashes) // 2
-            hashes_list = list(self.processed_hashes)
-            for _ in range(hashes_to_remove):
-                self.processed_hashes.remove(hashes_list.pop(0))
-            logger.info(f"Cleaned {hashes_to_remove} processed hashes to prevent memory bloat")
     
     def should_send_batch(self) -> bool:
         """Determine if we should send a batch now"""
@@ -432,12 +492,17 @@ class UpdateBatcher:
         content = f"{update.title} {update.description}".lower()
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
-    def add_update(self, update: BBUpdate):
+    async def add_update(self, update: BBUpdate):
         """Add update to queue if not already processed"""
-        if update.content_hash not in self.processed_hashes:
+        # Use async method for thread safety
+        if not await self.processed_hashes_cache.contains(update.content_hash):
             self.update_queue.append(update)
-            self.processed_hashes.add(update.content_hash)
-            self._manage_processed_hashes()
+            await self.processed_hashes_cache.add(update.content_hash)
+            
+            # Log cache stats periodically
+            cache_stats = self.processed_hashes_cache.get_stats()
+            if cache_stats['size'] % 1000 == 0:  # Log every 1000 entries
+                logger.info(f"Hash cache stats: {cache_stats}")
     
     async def create_batch_summary(self) -> List[discord.Embed]:
         """Create intelligent summary embeds using LLM if available"""
@@ -534,6 +599,86 @@ class UpdateBatcher:
         except Exception as e:
             logger.error(f"LLM request failed: {e}")
             raise
+    
+    async def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
+        """Create a highlights embed using LLM to curate the most important moments"""
+        try:
+            # Wait for rate limit if needed
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare update data
+            updates_text = "\n".join([
+                f"{self._extract_correct_time(u)} - {u.title}"
+                for u in self.update_queue
+            ])
+            
+            prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.update_queue)} updates.
+
+{updates_text}
+
+Select 5-8 updates that superfans would find most important/interesting. Consider:
+- Game-changing strategic moves
+- Major competition results
+- Dramatic confrontations
+- Romantic developments
+- Hilarious/memorable moments
+- Alliance shifts
+
+For each selected update, provide:
+{{
+    "highlights": [
+        {{
+            "time": "exact time from update",
+            "title": "exact title from update",
+            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+            "reason": "1 sentence why this matters to superfans"
+        }}
+    ]
+}}
+
+Focus on variety - don't just pick all strategic moves. Mix strategy, drama, and entertainment."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=800,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            try:
+                highlights_data = self._parse_llm_response(response.content[0].text)
+                
+                if not highlights_data.get('highlights'):
+                    logger.warning("No highlights in LLM response")
+                    return self._create_pattern_highlights_embed()
+                
+                embed = discord.Embed(
+                    title="🎯 Feed Highlights - What Mattered",
+                    description=f"AI-curated key moments from this period ({len(highlights_data['highlights'])} of {len(self.update_queue)} updates)",
+                    color=0xe74c3c if game_phase == "final_weeks" else 0xf39c12 if game_phase == "jury_phase" else 0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for highlight in highlights_data['highlights'][:8]:  # Max 8
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=f"{highlight.get('title', 'Update')}\n*{highlight.get('reason', '')}*",
+                        inline=False
+                    )
+                
+                embed.set_footer(text=f"AI-Curated Highlights • {game_phase.replace('_', ' ').title()}")
+                
+                return embed
+                
+            except Exception as e:
+                logger.error(f"Failed to parse highlights response: {e}")
+                return self._create_pattern_highlights_embed()
+                
+        except Exception as e:
+            logger.error(f"LLM highlights creation failed: {e}")
+            return self._create_pattern_highlights_embed()
     
     def _create_llm_prompt(self, updates_data: List[Dict]) -> str:
         """Create LLM prompt for all scenarios"""
@@ -1192,119 +1337,6 @@ Focus on creating a cohesive daily story from these summaries."""
             logger.error(f"Pattern highlights creation failed: {e}")
             return None
 
-    async def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
-        """Create LLM-curated highlights embed showing the most important moments"""
-        if not self.llm_client:
-            logger.debug("No LLM client for highlights embed")
-            return None
-            
-        try:
-            # Wait for rate limit
-            await self.rate_limiter.wait_if_needed()
-            
-            # Prepare update data for LLM curation
-            updates_data = []
-            for i, update in enumerate(self.update_queue):
-                time_str = update.pub_date.strftime('%I:%M %p')
-                updates_data.append({
-                    'index': i + 1,
-                    'time': time_str,
-                    'title': update.title[:100],  # Truncate for prompt
-                })
-            
-            # Create LLM prompt for highlight curation
-            prompt = f"""As a Big Brother superfan, select the most important moments from these {len(updates_data)} updates.
-
-UPDATES:
-{chr(10).join([f"{u['index']}. {u['time']} - {u['title']}" for u in updates_data])}
-
-Select 5-8 of the MOST NOTEWORTHY updates that tell the story of this period. Focus on:
-- Strategic developments (alliances, targets, plans)
-- Competition results or preparations  
-- Social dynamics and relationship changes
-- Entertainment moments (drama, funny interactions)
-- Game-changing conversations
-
-AVOID routine activities, commercial breaks, and repetitive updates.
-
-Respond with ONLY the numbers separated by commas.
-Example: 1, 3, 7, 12, 15
-
-Your selection:"""
-
-            # Get LLM response
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=50,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse the response to get selected indices
-            response_text = response.content[0].text.strip()
-            logger.debug(f"LLM highlights selection: {response_text}")
-            
-            # Extract numbers from response
-            selected_indices = []
-            try:
-                numbers = [int(x.strip()) for x in response_text.split(',') if x.strip().isdigit()]
-                selected_indices = [num - 1 for num in numbers if 1 <= num <= len(self.update_queue)]
-            except:
-                logger.warning("Failed to parse LLM highlights selection")
-            
-            # Fallback: if LLM selection failed, use top importance scores
-            if not selected_indices or len(selected_indices) < 3:
-                logger.info("Using importance fallback for highlights")
-                updates_with_importance = [(i, self.analyzer.analyze_strategic_importance(update)) 
-                                         for i, update in enumerate(self.update_queue)]
-                updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-                selected_indices = [i for i, _ in updates_with_importance[:6]]
-            
-            # Create the highlights embed
-            phase_colors = {
-                'early_game': 0x3498db,
-                'jury_phase': 0xf39c12,
-                'final_weeks': 0xe74c3c,
-                'finale_night': 0xffd700
-            }
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Mattered",
-                description=f"Key moments from this period ({len(selected_indices)} of {len(self.update_queue)} updates)",
-                color=phase_colors.get(game_phase, 0x95a5a6),
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights
-            for i, update_idx in enumerate(selected_indices[:8], 1):
-                if update_idx < len(self.update_queue):
-                    update = self.update_queue[update_idx]
-                    time_str = self._extract_correct_time(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    
-                    # Format the highlight
-                    title = update.title
-                    if len(title) > 1000:
-                        title = title[:997] + "..."
-                    
-                    # Add importance indicators
-                    importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-                    
-                    embed.add_field(
-                        name=f"{importance_emoji} {time_str}",
-                        value=title,
-                        inline=False
-                    )
-            
-            embed.set_footer(text=f"Curated by BB Superfan AI • {len(selected_indices)} key moments selected")
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"LLM highlights curation failed: {e}")
-            return None
-
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
@@ -1424,8 +1456,8 @@ class BBDatabase:
         except Exception as e:
             logger.error(f"Database daily query error: {e}")
             return []
-
-    def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
+    
+    def get_recent_updates(self, hours: int) -> List[BBUpdate]:
         """Get updates from the last N hours"""
         try:
             conn = self.get_connection()
@@ -1448,122 +1480,6 @@ class BBDatabase:
             logger.error(f"Database query error: {e}")
             return []
 
-class AllianceTracker:
-    """Simple alliance tracker for Big Brother"""
-    
-    def __init__(self):
-        # For now, just return sample data - we can enhance this later
-        pass
-    
-    def get_current_alliances(self):
-        """Return current alliance data"""
-        return {
-            "The Cookout": {
-                "members": ["Sarah", "Mike", "Jake", "Tom"],
-                "strength": "Strong",
-                "formed_day": 12,
-                "status": "Active"
-            },
-            "Showmance Duo": {
-                "members": ["Lisa", "Quinn"],
-                "strength": "Medium", 
-                "formed_day": 8,
-                "status": "Active"
-            },
-            "The Underdogs": {
-                "members": ["Amy", "David", "Brooklyn"],
-                "strength": "Weak",
-                "formed_day": 18,
-                "status": "Suspected"
-            }
-        }
-    
-    def create_alliance_embed(self):
-        """Create alliance boxes embed"""
-        alliances = self.get_current_alliances()
-        
-        embed = discord.Embed(
-            title="🤝 Alliance Tracker",
-            description="Current Big Brother house alliances",
-            color=0xe67e22,
-            timestamp=datetime.now()
-        )
-        
-        if not alliances:
-            embed.add_field(
-                name="No Active Alliances",
-                value="Early game chaos! 🌪️",
-                inline=False
-            )
-            return embed
-        
-        # Group by strength
-        strong_alliances = []
-        medium_alliances = []
-        weak_alliances = []
-        
-        for name, data in alliances.items():
-            if data.get('strength') == 'Strong':
-                strong_alliances.append((name, data))
-            elif data.get('strength') == 'Medium':
-                medium_alliances.append((name, data))
-            else:
-                weak_alliances.append((name, data))
-        
-        # Add strong alliances
-        if strong_alliances:
-            strong_text = ""
-            for name, data in strong_alliances:
-                strong_text += f"┌─────────────────┐\n"
-                strong_text += f"│  **{name}**\n"
-                for member in data['members']:
-                    strong_text += f"│  • {member}\n"
-                strong_text += f"│  📅 Day {data['formed_day']}\n"
-                strong_text += f"└─────────────────┘\n\n"
-            
-            embed.add_field(
-                name="🔥 Strong Alliances",
-                value=strong_text,
-                inline=False
-            )
-        
-        # Add medium alliances  
-        if medium_alliances:
-            medium_text = ""
-            for name, data in medium_alliances:
-                medium_text += f"┌─────────────────┐\n"
-                medium_text += f"│  **{name}**\n"
-                for member in data['members']:
-                    medium_text += f"│  • {member}\n"
-                medium_text += f"│  📅 Day {data['formed_day']}\n"
-                medium_text += f"└─────────────────┘\n\n"
-            
-            embed.add_field(
-                name="⚠️ Medium Alliances",
-                value=medium_text,
-                inline=False
-            )
-        
-        # Add weak alliances
-        if weak_alliances:
-            weak_text = ""
-            for name, data in weak_alliances:
-                weak_text += f"┌─────────────────┐\n"
-                weak_text += f"│  **{name}**\n"
-                for member in data['members']:
-                    weak_text += f"│  • {member}\n"
-                weak_text += f"│  📅 Day {data['formed_day']}\n"
-                weak_text += f"└─────────────────┘\n\n"
-            
-            embed.add_field(
-                name="🔍 Suspected Alliances",
-                value=weak_text,
-                inline=False
-            )
-        
-        embed.set_footer(text="Alliance Tracker • BB Superfan AI")
-        return embed
-
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
     
@@ -1579,7 +1495,6 @@ class BBDiscordBot(commands.Bot):
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
-        self.alliance_tracker = AllianceTracker()
         
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
@@ -1622,6 +1537,16 @@ class BBDiscordBot(commands.Bot):
                 
                 llm_status = "✅ Enabled" if self.update_batcher.llm_client else "❌ Disabled"
                 embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
+                
+                # Add cache statistics
+                cache_stats = self.update_batcher.processed_hashes_cache.get_stats()
+                embed.add_field(
+                    name="Hash Cache",
+                    value=f"Size: {cache_stats['size']}/{cache_stats['capacity']}\n"
+                          f"Hit Rate: {cache_stats['hit_rate']}\n"
+                          f"Evictions: {cache_stats['evictions']}",
+                    inline=True
+                )
                 
                 # Add rate limiting stats
                 rate_stats = self.update_batcher.get_rate_limit_stats()
@@ -1692,20 +1617,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error generating summary: {e}")
                 await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
 
-        @self.tree.command(name="alliances", description="Show current alliance tracker")
-        async def alliances_slash(interaction: discord.Interaction, visibility: str = "private"):
-            """Show alliance tracker"""
-            try:
-                is_ephemeral = visibility.lower() == "private"
-                await interaction.response.defer(ephemeral=is_ephemeral)
-                
-                alliance_embed = self.alliance_tracker.create_alliance_embed()
-                await interaction.followup.send(embed=alliance_embed, ephemeral=is_ephemeral)
-                
-            except Exception as e:
-                logger.error(f"Error showing alliances: {e}")
-                await interaction.followup.send("Error showing alliances.", ephemeral=True)
-
         @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
         async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
             """Set the channel for RSS updates"""
@@ -1745,7 +1656,6 @@ class BBDiscordBot(commands.Bot):
             commands_list = [
                 ("/summary", "Get a summary of recent updates (default: 24h)"),
                 ("/status", "Show bot status and statistics"),
-                ("/alliances", "Show current alliance tracker (public/private)"),
                 ("/setchannel", "Set update channel (Admin only)"),
                 ("/commands", "Show this help message"),
                 ("/forcebatch", "Force send any queued updates (Admin only)"),
@@ -1931,16 +1841,15 @@ class BBDiscordBot(commands.Bot):
         
         return updates
     
-    def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
+    async def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
         """Filter out duplicate updates"""
         new_updates = []
-        seen_hashes = set()
         
         for update in updates:
+            # Check both database and cache
             if not self.db.is_duplicate(update.content_hash):
-                if update.content_hash not in seen_hashes:
+                if not await self.update_batcher.processed_hashes_cache.contains(update.content_hash):
                     new_updates.append(update)
-                    seen_hashes.add(update.content_hash)
         
         return new_updates
     
@@ -1973,7 +1882,8 @@ class BBDiscordBot(commands.Bot):
                 return
             
             # Calculate day number (days since season start)
-            season_start = datetime(2025, 7, 10)  # July 10th season start
+            # For now, we'll use a simple calculation - you might want to adjust this
+            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
             day_number = (end_time.date() - season_start.date()).days + 1
             
             # Create daily recap
@@ -2044,7 +1954,7 @@ class BBDiscordBot(commands.Bot):
                 return
             
             updates = self.process_rss_entries(feed.entries)
-            new_updates = self.filter_duplicates(updates)
+            new_updates = await self.filter_duplicates(updates)  # Now async
             
             for update in new_updates:
                 try:
@@ -2052,7 +1962,7 @@ class BBDiscordBot(commands.Bot):
                     importance = self.analyzer.analyze_strategic_importance(update)
                     
                     self.db.store_update(update, importance, categories)
-                    self.update_batcher.add_update(update)
+                    await self.update_batcher.add_update(update)  # Now async
                     
                     self.total_updates_processed += 1
                     
