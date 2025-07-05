@@ -8,14 +8,17 @@ import re
 import os
 import sys
 import signal
-from datetime import datetime, timedelta, time as dtime
-from typing import List
+from datetime import datetime, timedelta
+from typing import List, Dict, Set
 import logging
 from dataclasses import dataclass
 import json
+import time
 import traceback
 from pathlib import Path
-import pytz
+import requests
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
 
 # Configure comprehensive logging
 def setup_logging():
@@ -53,15 +56,6 @@ def setup_logging():
     return logging.getLogger(__name__)
 
 logger = setup_logging()
-
-@dataclass
-class BBUpdate:
-    title: str
-    description: str
-    link: str
-    pub_date: datetime
-    content_hash: str
-    author: str = ""
 
 class Config:
     """Configuration management for the bot"""
@@ -118,6 +112,16 @@ class Config:
     def set(self, key: str, value):
         """Set configuration value"""
         self.config[key] = value
+
+@dataclass
+class BBUpdate:
+    """Represents a Big Brother update"""
+    title: str
+    description: str
+    link: str
+    pub_date: datetime
+    content_hash: str
+    author: str = ""
 
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights"""
@@ -279,18 +283,19 @@ class BBDatabase:
             logger.error(f"Database store error: {e}")
             raise
     
-    def get_recent_updates(self, since: datetime) -> List[BBUpdate]:
-        """Get updates since given datetime"""
+    def get_recent_updates(self, hours: int = 24) -> List[BBUpdate]:
+        """Get updates from the last N hours"""
         try:
             conn = self.get_connection()
             cursor = conn.cursor()
             
+            cutoff_time = datetime.now() - timedelta(hours=hours)
             cursor.execute("""
                 SELECT title, description, link, pub_date, content_hash, author
                 FROM updates 
-                WHERE pub_date >= ?
+                WHERE pub_date > ?
                 ORDER BY pub_date DESC
-            """, (since,))
+            """, (cutoff_time,))
             
             results = cursor.fetchall()
             conn.close()
@@ -302,6 +307,8 @@ class BBDatabase:
             return []
 
 class BBDiscordBot(commands.Bot):
+    """Main Discord bot class with 24/7 reliability features"""
+    
     def __init__(self):
         self.config = Config()
         
@@ -322,11 +329,6 @@ class BBDiscordBot(commands.Bot):
         self.total_updates_processed = 0
         self.consecutive_errors = 0
         
-        # Set timezone for PT (Pacific Time) with DST awareness
-        self.pt = pytz.timezone("America/Los_Angeles")
-        self.daily_summary_hour = 6
-        self.daily_summary_minute = 1
-        
         signal.signal(signal.SIGTERM, self.signal_handler)
         signal.signal(signal.SIGINT, self.signal_handler)
         
@@ -337,51 +339,71 @@ class BBDiscordBot(commands.Bot):
         asyncio.create_task(self.close())
     
     async def on_ready(self):
+        """Bot startup event"""
         logger.info(f'{self.user} has connected to Discord!')
         logger.info(f'Bot is in {len(self.guilds)} guilds')
         
         try:
             self.check_rss_feed.start()
-            self.daily_summary_task.start()
-            logger.info("Background tasks started")
+            logger.info("RSS feed monitoring started")
             
         except Exception as e:
             logger.error(f"Error starting background tasks: {e}")
     
     def create_content_hash(self, title: str, description: str) -> str:
+        """Create a unique hash for content deduplication"""
         content = f"{title}|{description}".lower()
         content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
         content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
         return hashlib.md5(content.encode()).hexdigest()
     
     def process_rss_entries(self, entries) -> List[BBUpdate]:
+        """Process RSS entries into BBUpdate objects"""
         updates = []
+        
         for entry in entries:
             try:
                 title = entry.get('title', 'No title')
                 description = entry.get('description', 'No description')
                 link = entry.get('link', '')
-                pub_date = datetime.now(tz=self.pt)
+                
+                pub_date = datetime.now()
                 if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    pub_date = datetime(*entry.published_parsed[:6], tzinfo=pytz.utc).astimezone(self.pt)
+                    pub_date = datetime(*entry.published_parsed[:6])
+                
                 content_hash = self.create_content_hash(title, description)
                 author = entry.get('author', '')
-                updates.append(BBUpdate(title, description, link, pub_date, content_hash, author))
+                
+                updates.append(BBUpdate(
+                    title=title,
+                    description=description,
+                    link=link,
+                    pub_date=pub_date,
+                    content_hash=content_hash,
+                    author=author
+                ))
+                
             except Exception as e:
                 logger.error(f"Error processing RSS entry: {e}")
+                continue
+        
         return updates
     
     def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
+        """Filter out duplicate updates"""
         new_updates = []
         seen_hashes = set()
+        
         for update in updates:
             if not self.db.is_duplicate(update.content_hash):
                 if update.content_hash not in seen_hashes:
                     new_updates.append(update)
                     seen_hashes.add(update.content_hash)
+        
         return new_updates
     
     def create_update_embed(self, update: BBUpdate) -> discord.Embed:
+        """Create a Discord embed for an update"""
         categories = self.analyzer.categorize_update(update)
         importance = self.analyzer.analyze_strategic_importance(update)
         
@@ -420,6 +442,7 @@ class BBDiscordBot(commands.Bot):
         return embed
     
     async def send_update_to_channel(self, update: BBUpdate):
+        """Send an update to the configured channel"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
             logger.warning("Update channel not configured")
@@ -439,11 +462,13 @@ class BBDiscordBot(commands.Bot):
     
     @tasks.loop(minutes=2)
     async def check_rss_feed(self):
+        """Check RSS feed for new updates"""
         if self.is_shutting_down:
             return
         
         try:
             feed = feedparser.parse(self.rss_url)
+            
             if not feed.entries:
                 logger.warning("No entries returned from RSS feed")
                 return
@@ -466,7 +491,7 @@ class BBDiscordBot(commands.Bot):
                     logger.error(f"Error processing update: {e}")
                     self.consecutive_errors += 1
             
-            self.last_successful_check = datetime.now(tz=self.pt)
+            self.last_successful_check = datetime.now()
             self.consecutive_errors = 0
             
             if new_updates:
@@ -475,88 +500,151 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
-
-    @tasks.loop(minutes=1)
-    async def daily_summary_task(self):
-        now = datetime.now(tz=self.pt)
-        if now.hour == self.daily_summary_hour and now.minute == self.daily_summary_minute:
-            logger.info("Running daily summary task...")
-            since = datetime.combine(now.date(), dtime(hour=6, minute=1), tzinfo=self.pt)
-            updates = self.db.get_recent_updates(since)
+    
+    @commands.command(name='summary')
+    async def daily_summary(self, ctx, hours: int = 24):
+        """Generate a summary of updates"""
+        try:
+            if hours < 1 or hours > 168:
+                await ctx.send("Hours must be between 1 and 168")
+                return
+                
+            updates = self.db.get_recent_updates(hours)
+            
             if not updates:
-                logger.info("No updates found for daily summary")
+                await ctx.send(f"No updates found in the last {hours} hours.")
                 return
             
-            channel_id = self.config.get('update_channel_id')
-            if not channel_id:
-                logger.warning("Update channel not configured for daily summary")
-                return
-            
-            channel = self.get_channel(channel_id)
-            if not channel:
-                logger.error(f"Channel {channel_id} not found for daily summary")
-                return
+            categories = {}
+            for update in updates:
+                update_categories = self.analyzer.categorize_update(update)
+                for category in update_categories:
+                    if category not in categories:
+                        categories[category] = []
+                    categories[category].append(update)
             
             embed = discord.Embed(
-                title="📋 Big Brother Daily Summary",
-                description=f"Updates since 6:01 AM PT ({since.strftime('%Y-%m-%d')})",
+                title=f"Big Brother Updates Summary ({hours}h)",
+                description=f"**{len(updates)} total updates**",
                 color=0x3498db,
-                timestamp=now
+                timestamp=datetime.now()
             )
-            for update in updates[:10]:
-                embed.add_field(name=update.title[:256], value=update.description[:512], inline=False)
             
-            await channel.send(embed=embed)
+            for category, cat_updates in categories.items():
+                top_updates = sorted(cat_updates, 
+                                   key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                                   reverse=True)[:3]
+                
+                summary_text = "\n".join([f"• {update.title[:100]}..." 
+                                        if len(update.title) > 100 
+                                        else f"• {update.title}" 
+                                        for update in top_updates])
+                
+                embed.add_field(
+                    name=f"{category} ({len(cat_updates)} updates)",
+                    value=summary_text or "No updates",
+                    inline=False
+                )
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error generating summary: {e}")
+            await ctx.send("Error generating summary. Please try again.")
     
-    @commands.command(name="bbstatus")
-    async def bbstatus(self, ctx):
-        """Status command - reports bot status"""
-        uptime = datetime.now(tz=self.pt) - self.last_successful_check
-        message = (
-            f"Big Brother Bot is running.\n"
-            f"Last RSS check: {self.last_successful_check.strftime('%Y-%m-%d %H:%M:%S %Z')}\n"
-            f"Total updates processed: {self.total_updates_processed}\n"
-            f"Uptime since last check: {uptime}\n"
-            f"Consecutive errors: {self.consecutive_errors}"
-        )
-        await ctx.send(message)
+    @commands.command(name='setchannel')
+    @commands.has_permissions(administrator=True)
+    async def set_update_channel(self, ctx, channel_id: int):
+        """Set the channel for RSS updates"""
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                await ctx.send(f"Channel with ID {channel_id} not found.")
+                return
+            
+            if not channel.permissions_for(ctx.guild.me).send_messages:
+                await ctx.send(f"I don't have permission to send messages in <#{channel_id}>")
+                return
+            
+            self.config.set('update_channel_id', channel_id)
+            await ctx.send(f"Update channel set to <#{channel_id}>")
+            logger.info(f"Update channel set to {channel_id}")
+            
+        except Exception as e:
+            logger.error(f"Error setting channel: {e}")
+            await ctx.send("Error setting channel. Please try again.")
     
-    # Add more commands here as needed, preserving your original code
-    
-    # Slash command for ephemeral daily summary
-    @discord.app_commands.command(name="summary", description="Get today's Big Brother update summary")
-    async def summary(self, interaction: discord.Interaction):
-        now = datetime.now(tz=self.pt)
-        since = datetime.combine(now.date(), dtime(hour=6, minute=1), tzinfo=self.pt)
-        if now < since:
-            since -= timedelta(days=1)
-        
-        updates = self.db.get_recent_updates(since)
-        if not updates:
-            await interaction.response.send_message("No updates found for today.", ephemeral=True)
-            return
-        
-        embed = discord.Embed(title="Big Brother Daily Summary", color=0x3498db)
-        for update in updates[:5]:
-            embed.add_field(name=update.title[:256], value=update.description[:512], inline=False)
-        await interaction.response.send_message(embed=embed, ephemeral=True)
-    
-    async def setup_hook(self):
-        # Register slash commands
-        self.tree.add_command(self.summary)
-        await self.tree.sync()
-        logger.info("Slash commands synced")
+    @commands.command(name='status')
+    async def bot_status(self, ctx):
+        """Show bot status"""
+        try:
+            embed = discord.Embed(
+                title="Big Brother Bot Status",
+                color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(name="RSS Feed", value=self.rss_url, inline=False)
+            embed.add_field(name="Update Channel", 
+                           value=f"<#{self.config.get('update_channel_id')}>" if self.config.get('update_channel_id') else "Not set", 
+                           inline=True)
+            embed.add_field(name="Updates Processed", value=str(self.total_updates_processed), inline=True)
+            embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
+            
+            time_since_check = datetime.now() - self.last_successful_check
+            embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
+            
+            await ctx.send(embed=embed)
+            
+        except Exception as e:
+            logger.error(f"Error generating status: {e}")
+            await ctx.send("Error generating status.")
 
 def main():
-    bot = BBDiscordBot()
-    
-    # Add legacy commands
-    @bot.command(name="bbstatus")
-    async def bbstatus(ctx):
-        await bot.bbstatus(ctx)
-    
-    # Start bot
-    bot.run(bot.config.get('bot_token'))
+    """Main function to run the bot"""
+    try:
+        bot = BBDiscordBot()
+        
+        # Remove default help command to avoid conflicts
+        bot.remove_command('help')
+        
+        @bot.event
+        async def on_command_error(ctx, error):
+            if isinstance(error, commands.MissingPermissions):
+                await ctx.send("You don't have permission to use this command.")
+            elif isinstance(error, commands.CommandNotFound):
+                await ctx.send("Command not found. Use `!bbcommands` for available commands.")
+            else:
+                logger.error(f"Command error: {error}")
+                await ctx.send("An error occurred while processing the command.")
+        
+        @bot.command(name='commands')
+        async def commands_help(ctx):
+            """Show available commands"""
+            embed = discord.Embed(
+                title="Big Brother Bot Commands",
+                description="Monitor Jokers Updates RSS feed with intelligent analysis",
+                color=0x3498db
+            )
+            
+            embed.add_field(name="!bbsummary [hours]", value="Generate summary of updates", inline=False)
+            embed.add_field(name="!bbstatus", value="Show bot status", inline=False)
+            embed.add_field(name="!bbsetchannel [ID]", value="Set update channel (Admin only)", inline=False)
+            embed.add_field(name="!bbcommands", value="Show this help message", inline=False)
+            
+            await ctx.send(embed=embed)
+        
+        bot_token = bot.config.get('bot_token')
+        if not bot_token:
+            logger.error("No bot token found!")
+            return
+        
+        logger.info("Starting Big Brother Discord Bot...")
+        bot.run(bot_token, reconnect=True)
+        
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+        logger.critical(traceback.format_exc())
 
 if __name__ == "__main__":
     main()
