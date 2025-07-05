@@ -2231,6 +2231,10 @@ class BBDiscordBot(commands.Bot):
         async def status_slash(interaction: discord.Interaction):
             """Show bot status"""
             try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
                 await interaction.response.defer(ephemeral=True)
                 
                 embed = discord.Embed(
@@ -2285,6 +2289,10 @@ class BBDiscordBot(commands.Bot):
         async def summary_slash(interaction: discord.Interaction, hours: int = 24):
             """Generate a summary of updates"""
             try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
                 if hours < 1 or hours > 168:
                     await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
                     return
@@ -2371,8 +2379,8 @@ class BBDiscordBot(commands.Bot):
             )
             
             commands_list = [
-                ("/summary", "Get a summary of recent updates (default: 24h)"),
-                ("/status", "Show bot status and statistics"),
+                ("/summary", "Get a summary of recent updates (Admin only)"),
+                ("/status", "Show bot status and statistics (Admin only)"),
                 ("/setchannel", "Set update channel (Admin only)"),
                 ("/commands", "Show this help message"),
                 ("/forcebatch", "Force send any queued updates (Admin only)"),
