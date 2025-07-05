@@ -9,7 +9,7 @@ import os
 import sys
 import signal
 from datetime import datetime, timedelta
-from typing import List, Dict, Set
+from typing import List, Dict, Set, Optional
 import logging
 from dataclasses import dataclass
 import json
@@ -20,6 +20,7 @@ import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from collections import defaultdict, Counter
+import anthropic
 
 # Configure comprehensive logging
 def setup_logging():
@@ -74,7 +75,10 @@ class Config:
             "heartbeat_interval": 300,
             "max_update_age_hours": 168,
             "enable_auto_restart": True,
-            "max_consecutive_errors": 10
+            "max_consecutive_errors": 10,
+            "anthropic_api_key": "",
+            "enable_llm_summaries": True,
+            "llm_model": "claude-3-haiku-20240307"
         }
         self.config = self.load_config()
     
@@ -92,7 +96,10 @@ class Config:
             "heartbeat_interval": int(os.getenv('HEARTBEAT_INTERVAL', '300')),
             "max_update_age_hours": int(os.getenv('MAX_UPDATE_AGE_HOURS', '168')),
             "enable_auto_restart": os.getenv('ENABLE_AUTO_RESTART', 'true').lower() == 'true',
-            "max_consecutive_errors": int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10'))
+            "max_consecutive_errors": int(os.getenv('MAX_CONSECUTIVE_ERRORS', '10')),
+            "anthropic_api_key": os.getenv('ANTHROPIC_API_KEY', ''),
+            "enable_llm_summaries": os.getenv('ENABLE_LLM_SUMMARIES', 'true').lower() == 'true',
+            "llm_model": os.getenv('LLM_MODEL', 'claude-3-haiku-20240307')
         }
         
         # If no bot token from environment, try config file
@@ -193,24 +200,28 @@ class BBAnalyzer:
         return min(score, 10)
 
 class UpdateBatcher:
-    """Groups and analyzes updates like a BB superfan"""
+    """Groups and analyzes updates like a BB superfan using LLM intelligence"""
     
-    def __init__(self, analyzer: BBAnalyzer):
+    def __init__(self, analyzer: BBAnalyzer, api_key: Optional[str] = None):
         self.analyzer = analyzer
         self.update_queue = []
         self.last_batch_time = datetime.now()
+        self.processed_hashes = set()  # Prevent duplicate processing
         
-        # Superfan knowledge patterns
-        self.vote_patterns = re.compile(r'(votes?|voted|voting)\s+for\s+(\w+)', re.IGNORECASE)
-        self.comp_win_patterns = re.compile(r'(\w+)\s+(wins?|won)\s+(HOH|Head of Household|POV|Power of Veto|Veto)', re.IGNORECASE)
-        self.nomination_patterns = re.compile(r'(nominates?|nominated|noms?)\s+(\w+)(?:\s+and\s+(\w+))?', re.IGNORECASE)
-        self.alliance_patterns = re.compile(r'(alliance|deal|final \d|working with)', re.IGNORECASE)
+        # Initialize Anthropic client if API key provided
+        self.llm_client = None
+        if api_key:
+            try:
+                self.llm_client = anthropic.Anthropic(api_key=api_key)
+                logger.info("LLM integration initialized")
+            except Exception as e:
+                logger.error(f"Failed to initialize LLM: {e}")
         
         # Game-defining moments that need immediate attention
         self.urgent_keywords = [
             'evicted', 'eliminated', 'wins hoh', 'wins pov', 'backdoor', 
             'self-evict', 'expelled', 'quit', 'medical', 'pandora', 'coup',
-            'diamond veto', 'secret power', 'battle back', 'return'
+            'diamond veto', 'secret power', 'battle back', 'return', 'winner'
         ]
     
     def should_send_batch(self) -> bool:
@@ -241,28 +252,23 @@ class UpdateBatcher:
         return any(keyword in content for keyword in self.urgent_keywords)
     
     def add_update(self, update: BBUpdate):
-        """Add update to queue"""
-        self.update_queue.append(update)
+        """Add update to queue if not already processed"""
+        if update.content_hash not in self.processed_hashes:
+            self.update_queue.append(update)
+            self.processed_hashes.add(update.content_hash)
     
     def create_batch_summary(self) -> List[discord.Embed]:
-        """Create intelligent summary embeds like a superfan would"""
+        """Create intelligent summary embeds using LLM if available"""
         if not self.update_queue:
             return []
         
-        # Group updates by type
-        grouped = self._group_updates()
         embeds = []
         
-        # Create main summary embed
-        main_embed = self._create_main_embed(grouped)
-        embeds.append(main_embed)
-        
-        # Create detailed embeds for important groups
-        for group_type, updates in grouped.items():
-            if group_type in ['votes', 'competition_wins', 'nominations'] and updates:
-                detail_embed = self._create_detail_embed(group_type, updates)
-                if detail_embed:
-                    embeds.append(detail_embed)
+        # Use LLM if available, otherwise fall back to pattern matching
+        if self.llm_client:
+            embeds = self._create_llm_summary()
+        else:
+            embeds = self._create_pattern_summary()
         
         # Clear queue after processing
         self.update_queue.clear()
@@ -270,283 +276,229 @@ class UpdateBatcher:
         
         return embeds
     
-    def _group_updates(self) -> Dict[str, List[BBUpdate]]:
-        """Group updates by game event type"""
-        groups = defaultdict(list)
-        
-        for update in self.update_queue:
-            content = f"{update.title} {update.description}"
+    def _create_llm_summary(self) -> List[discord.Embed]:
+        """Use Claude to create intelligent summaries"""
+        try:
+            # Prepare updates for LLM
+            updates_text = "\n".join([
+                f"{update.pub_date.strftime('%I:%M %p')} - {update.title}"
+                for update in self.update_queue
+            ])
             
-            # Check for vote patterns
-            vote_match = self.vote_patterns.search(content)
-            if vote_match:
-                groups['votes'].append(update)
-                continue
+            # Create prompt for Claude
+            prompt = f"""You are a Big Brother superfan analyst (like Taran Armstrong). 
+Analyze these updates and create a strategic summary:
+
+{updates_text}
+
+Provide:
+1. A headline that captures the most important event
+2. A brief summary grouping similar events (like multiple votes for the same person)
+3. Strategic analysis of what this means for the game
+4. Key players mentioned and their roles
+
+Format your response as JSON with these fields:
+- headline: string
+- summary: string (2-3 sentences max)
+- strategic_analysis: string (1-2 sentences)
+- key_players: list of strings
+- event_type: one of [competition, voting, strategy, drama, finale]
+- importance: number 1-10"""
+
+            # Get LLM response
+            response = self.llm_client.messages.create(
+                model="claude-3-haiku-20240307",
+                max_tokens=500,
+                temperature=0.3,
+                messages=[
+                    {"role": "user", "content": prompt}
+                ]
+            )
             
-            # Check for competition wins
-            comp_match = self.comp_win_patterns.search(content)
-            if comp_match:
-                groups['competition_wins'].append(update)
-                continue
+            # Parse response
+            import json
+            try:
+                analysis = json.loads(response.content[0].text)
+            except:
+                # If JSON parsing fails, use the text as-is
+                analysis = {
+                    "headline": "Big Brother Update",
+                    "summary": response.content[0].text[:200],
+                    "strategic_analysis": "Analysis pending.",
+                    "key_players": [],
+                    "event_type": "general",
+                    "importance": 5
+                }
             
-            # Check for nominations
-            nom_match = self.nomination_patterns.search(content)
-            if nom_match:
-                groups['nominations'].append(update)
-                continue
+            # Create main embed
+            color_map = {
+                "competition": 0xf39c12,
+                "voting": 0xe74c3c,
+                "strategy": 0x3498db,
+                "drama": 0x9b59b6,
+                "finale": 0xffd700,
+                "general": 0x95a5a6
+            }
             
-            # Check for alliance/strategy
-            if self.alliance_patterns.search(content):
-                groups['strategy'].append(update)
-                continue
+            main_embed = discord.Embed(
+                title=f"🎭 {analysis['headline']}",
+                description=f"**{len(self.update_queue)} updates** from the last batch period\n\n{analysis['summary']}",
+                color=color_map.get(analysis['event_type'], 0x3498db),
+                timestamp=datetime.now()
+            )
             
-            # Categorize by analyzer categories
-            categories = self.analyzer.categorize_update(update)
-            if "💥 Drama" in categories:
-                groups['drama'].append(update)
-            elif "💕 Romance" in categories:
-                groups['showmance'].append(update)
-            else:
-                groups['general'].append(update)
-        
-        return groups
+            # Add strategic analysis
+            if analysis['strategic_analysis']:
+                main_embed.add_field(
+                    name="🎯 Superfan Analysis",
+                    value=analysis['strategic_analysis'],
+                    inline=False
+                )
+            
+            # Add key players
+            if analysis['key_players']:
+                main_embed.add_field(
+                    name="👥 Key Players",
+                    value=", ".join(analysis['key_players']),
+                    inline=False
+                )
+            
+            embeds = [main_embed]
+            
+            # Add detailed breakdown if many updates
+            if len(self.update_queue) > 5:
+                detail_embed = self._create_detail_embed_llm(analysis['event_type'])
+                if detail_embed:
+                    embeds.append(detail_embed)
+            
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"LLM summary failed: {e}")
+            # Fall back to pattern matching
+            return self._create_pattern_summary()
     
-    def _create_main_embed(self, grouped: Dict[str, List[BBUpdate]]) -> discord.Embed:
-        """Create the main summary embed with superfan analysis"""
-        total_updates = sum(len(updates) for updates in grouped.values())
+    def _create_pattern_summary(self) -> List[discord.Embed]:
+        """Fallback pattern-based summary when LLM unavailable"""
+        # Group updates by type
+        grouped = self._group_updates_pattern()
         
-        # Determine the headline based on most important events
-        headline = self._get_headline(grouped)
+        # Create main summary
+        total_updates = sum(len(updates) for updates in grouped.values())
+        headline = self._get_headline_pattern(grouped)
         
         embed = discord.Embed(
             title=f"🎭 {headline}",
             description=f"**{total_updates} updates** from the last batch period",
-            color=self._get_batch_color(grouped),
+            color=self._get_batch_color_pattern(grouped),
             timestamp=datetime.now()
         )
         
-        # Add quick summary for each category
-        if grouped['competition_wins']:
-            winners = self._extract_comp_winners(grouped['competition_wins'])
-            embed.add_field(
-                name="🏆 Competition Results",
-                value=winners,
-                inline=False
-            )
-        
-        if grouped['votes']:
-            vote_summary = self._summarize_votes(grouped['votes'])
+        # Add summaries for each type
+        if grouped.get('votes'):
+            vote_summary = self._summarize_votes_pattern(grouped['votes'])
             embed.add_field(
                 name="🗳️ Voting Update",
                 value=vote_summary,
                 inline=False
             )
         
-        if grouped['nominations']:
-            nom_summary = self._summarize_nominations(grouped['nominations'])
-            embed.add_field(
-                name="🎯 Nomination Ceremony",
-                value=nom_summary,
-                inline=False
-            )
-        
-        if grouped['drama']:
-            embed.add_field(
-                name="💥 House Drama",
-                value=f"{len(grouped['drama'])} incidents - check details below",
-                inline=True
-            )
-        
-        if grouped['strategy']:
-            embed.add_field(
-                name="🧠 Strategic Moves",
-                value=f"{len(grouped['strategy'])} game moves detected",
-                inline=True
-            )
-        
-        # Add superfan analysis
-        analysis = self._get_superfan_analysis(grouped)
-        if analysis:
-            embed.add_field(
-                name="🎯 Superfan Analysis",
-                value=analysis,
-                inline=False
-            )
-        
-        return embed
+        return [embed]
     
-    def _get_headline(self, grouped: Dict[str, List[BBUpdate]]) -> str:
-        """Generate a smart headline based on the most important events"""
-        if grouped['competition_wins']:
-            return "New Competition Winner Changes the Game!"
-        elif grouped['votes']:
-            return "Jury Votes Revealed - Winner Emerging!"
-        elif grouped['nominations']:
-            return "Nomination Ceremony Shakes Up the House!"
-        elif len(grouped['drama']) >= 3:
-            return "House Explodes in Drama!"
-        elif grouped['strategy']:
-            return "Strategic Gameplay in Motion"
-        else:
-            return "Big Brother House Update"
-    
-    def _get_batch_color(self, grouped: Dict[str, List[BBUpdate]]) -> int:
-        """Color code based on update importance"""
-        if grouped['competition_wins'] or grouped['votes']:
-            return 0xe74c3c  # Red for game-critical
-        elif grouped['nominations'] or len(grouped['strategy']) >= 2:
-            return 0xf39c12  # Orange for important
-        elif grouped['drama']:
-            return 0x9b59b6  # Purple for drama
-        else:
-            return 0x3498db  # Blue for standard
-    
-    def _extract_comp_winners(self, updates: List[BBUpdate]) -> str:
-        """Extract and format competition winners"""
-        winners = []
-        for update in updates:
-            content = f"{update.title} {update.description}"
-            match = self.comp_win_patterns.search(content)
-            if match:
-                winner = match.group(1)
-                comp = match.group(3)
-                winners.append(f"**{winner}** won {comp}")
-        
-        return "\n".join(winners) if winners else "Competition results detected"
-    
-    def _summarize_votes(self, updates: List[BBUpdate]) -> str:
-        """Summarize voting patterns like a superfan would notice"""
-        vote_counts = defaultdict(list)
-        
-        for update in updates:
-            content = f"{update.title} {update.description}"
-            match = self.vote_patterns.search(content)
-            if match:
-                votee = match.group(2)
-                # Extract voter name from the update
-                voter_match = re.search(r'(\w+)\s+votes?', content, re.IGNORECASE)
-                if voter_match:
-                    voter = voter_match.group(1)
-                    vote_counts[votee].append(voter)
-        
-        # Format the summary
-        summary_parts = []
-        for votee, voters in vote_counts.items():
-            if len(voters) > 1:
-                summary_parts.append(f"**{votee}** received votes from: {', '.join(voters)} ({len(voters)} votes)")
-            else:
-                summary_parts.append(f"**{votee}** received a vote from {voters[0]}")
-        
-        return "\n".join(summary_parts) if summary_parts else "Votes were cast"
-    
-    def _summarize_nominations(self, updates: List[BBUpdate]) -> str:
-        """Summarize nomination ceremony results"""
-        all_nominees = set()
-        nominators = []
-        
-        for update in updates:
-            content = f"{update.title} {update.description}"
-            match = self.nomination_patterns.search(content)
-            if match:
-                nominator_match = re.search(r'(\w+)\s+nominates?', content, re.IGNORECASE)
-                if nominator_match:
-                    nominators.append(nominator_match.group(1))
-                
-                nominee1 = match.group(2)
-                if nominee1:
-                    all_nominees.add(nominee1)
-                nominee2 = match.group(3)
-                if nominee2:
-                    all_nominees.add(nominee2)
-        
-        if all_nominees:
-            return f"**Nominees**: {', '.join(all_nominees)}\nNominated by: {', '.join(set(nominators))}"
-        return "Nomination ceremony completed"
-    
-    def _get_superfan_analysis(self, grouped: Dict[str, List[BBUpdate]]) -> str:
-        """Provide strategic analysis like Taran would"""
-        analysis_parts = []
-        
-        # Analyze competition wins impact
-        if grouped['competition_wins']:
-            analysis_parts.append("💡 **Comp Win Impact**: This changes the entire week's trajectory. Watch for deals being made in the next few hours.")
-        
-        # Analyze voting patterns
-        if grouped['votes'] and len(grouped['votes']) >= 3:
-            vote_count = len(grouped['votes'])
-            if vote_count >= 5:
-                analysis_parts.append("💡 **Jury Analysis**: This looks like a steamroll victory. The jury is clearly unified.")
-            else:
-                analysis_parts.append("💡 **Jury Analysis**: Split votes detected. We might see a closer finale than expected.")
-        
-        # Analyze strategic patterns
-        if grouped['strategy'] and grouped['drama']:
-            analysis_parts.append("💡 **House Dynamics**: Strategy mixed with drama usually means someone's game is blown up. Expect shifting alliances.")
-        
-        return "\n".join(analysis_parts) if analysis_parts else None
-    
-    def _create_detail_embed(self, group_type: str, updates: List[BBUpdate]) -> discord.Embed:
-        """Create detailed embed for specific update groups"""
-        titles = {
-            'votes': "🗳️ Detailed Voting Breakdown",
-            'competition_wins': "🏆 Competition Results Details",
-            'nominations': "🎯 Nomination Ceremony Details",
-            'drama': "💥 Drama Breakdown",
-            'strategy': "🧠 Strategic Moves Breakdown"
-        }
-        
+    def _create_detail_embed_llm(self, event_type: str) -> Optional[discord.Embed]:
+        """Create detailed breakdown embed"""
         colors = {
-            'votes': 0xe74c3c,
-            'competition_wins': 0xf1c40f,
-            'nominations': 0xe67e22,
+            'voting': 0xe74c3c,
+            'competition': 0xf1c40f,
+            'strategy': 0x3498db,
             'drama': 0x9b59b6,
-            'strategy': 0x3498db
+            'finale': 0xffd700
         }
         
         embed = discord.Embed(
-            title=titles.get(group_type, "Update Details"),
-            color=colors.get(group_type, 0x95a5a6),
+            title=f"📋 Detailed Timeline",
+            color=colors.get(event_type, 0x95a5a6),
             timestamp=datetime.now()
         )
         
-        # Add individual updates with timestamps
-        for i, update in enumerate(updates[:10]):  # Limit to 10 to avoid embed limits
+        # Add updates with proper timestamps
+        for update in self.update_queue[-10:]:  # Last 10 to avoid embed limits
+            # Remove duplicate content
+            content = update.title
+            if update.title == update.description:
+                content = update.title
+            
+            # Format timestamp properly
             time_str = update.pub_date.strftime("%I:%M %p")
             
-            # Extract key info instead of showing full title/description
-            key_info = self._extract_key_info(update, group_type)
-            
             embed.add_field(
-                name=f"{time_str}",
-                value=key_info,
+                name=time_str,
+                value=content[:100] + "..." if len(content) > 100 else content,
                 inline=False
             )
         
-        if len(updates) > 10:
-            embed.set_footer(text=f"Showing 10 of {len(updates)} updates")
+        if len(self.update_queue) > 10:
+            embed.set_footer(text=f"Showing last 10 of {len(self.update_queue)} updates")
         
         return embed
     
-    def _extract_key_info(self, update: BBUpdate, group_type: str) -> str:
-        """Extract the most important info from an update"""
-        content = f"{update.title} {update.description}"
+    def _group_updates_pattern(self) -> Dict[str, List[BBUpdate]]:
+        """Pattern-based grouping when LLM unavailable"""
+        groups = defaultdict(list)
         
-        # Remove duplicate title/description
-        if update.title == update.description:
+        for update in self.update_queue:
+            content = f"{update.title} {update.description}".lower()
+            
+            if 'vote' in content or 'voting' in content:
+                groups['votes'].append(update)
+            elif any(word in content for word in ['wins', 'won', 'hoh', 'pov', 'veto']):
+                groups['competitions'].append(update)
+            elif any(word in content for word in ['nominat', 'ceremony']):
+                groups['nominations'].append(update)
+            else:
+                groups['general'].append(update)
+        
+        return groups
+    
+    def _get_headline_pattern(self, grouped: Dict[str, List[BBUpdate]]) -> str:
+        """Generate headline without LLM"""
+        if grouped.get('votes'):
+            return "Jury Votes Revealed!"
+        elif grouped.get('competitions'):
+            return "Competition Results!"
+        elif grouped.get('nominations'):
+            return "Nomination Ceremony!"
+        else:
+            return "Big Brother Update"
+    
+    def _get_batch_color_pattern(self, grouped: Dict[str, List[BBUpdate]]) -> int:
+        """Determine color without LLM"""
+        if grouped.get('votes'):
+            return 0xe74c3c  # Red
+        elif grouped.get('competitions'):
+            return 0xf39c12  # Orange
+        else:
+            return 0x3498db  # Blue
+    
+    def _summarize_votes_pattern(self, vote_updates: List[BBUpdate]) -> str:
+        """Summarize votes without LLM"""
+        vote_counts = defaultdict(list)
+        
+        for update in vote_updates:
             content = update.title
+            # Simple pattern: "X votes for Y"
+            parts = content.lower().split('votes for')
+            if len(parts) == 2:
+                voter = parts[0].strip().split()[-1].title()
+                votee = parts[1].strip().split()[0].title()
+                vote_counts[votee].append(voter)
         
-        # Extract key information based on type
-        if group_type == 'votes':
-            match = self.vote_patterns.search(content)
-            if match:
-                voter_match = re.search(r'(\w+)\s+votes?', content, re.IGNORECASE)
-                if voter_match:
-                    return f"{voter_match.group(1)} → {match.group(2)}"
+        summaries = []
+        for votee, voters in vote_counts.items():
+            if voters:
+                summaries.append(f"**{votee}** received votes from: {', '.join(voters)} ({len(voters)} votes)")
         
-        # For other types, return a shortened version
-        if len(content) > 100:
-            return content[:97] + "..."
-        return content
+        return "\n".join(summaries) if summaries else "Votes were cast"
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
@@ -682,7 +634,18 @@ class BBDiscordBot(commands.Bot):
         self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
-        self.update_batcher = UpdateBatcher(self.analyzer)
+        
+        # Initialize LLM-enhanced batcher
+        anthropic_key = self.config.get('anthropic_api_key')
+        if not anthropic_key:
+            anthropic_key = os.getenv('ANTHROPIC_API_KEY', '')
+        
+        self.update_batcher = UpdateBatcher(self.analyzer, api_key=anthropic_key)
+        
+        if anthropic_key:
+            logger.info("LLM summaries enabled with Claude")
+        else:
+            logger.warning("No Anthropic API key found - using pattern matching for summaries")
         
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
@@ -933,6 +896,10 @@ async def status_slash(interaction: discord.Interaction):
         # Add batch queue status
         queue_size = len(bot.update_batcher.update_queue)
         embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
+        
+        # Add LLM status
+        llm_status = "✅ Enabled" if bot.update_batcher.llm_client else "❌ Disabled (Pattern Mode)"
+        embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
         
         await interaction.followup.send(embed=embed, ephemeral=True)
         
