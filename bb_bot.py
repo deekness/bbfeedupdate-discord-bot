@@ -341,13 +341,11 @@ class UpdateBatcher:
         self.update_queue.clear()
         self.last_batch_time = datetime.now()
         
-        return []  # Legacy method - no longer used
+        return embeds
     
     def _create_llm_summary(self) -> List[discord.Embed]:
         """Use Claude to create intelligent summaries with balanced superfan coverage"""
         try:
-            logger.info("Starting LLM summary creation")
-            
             # Prepare comprehensive update data for LLM
             updates_data = []
             for update in self.update_queue:
@@ -364,8 +362,6 @@ class UpdateBatcher:
                 for update in self.update_queue 
                 for keyword in ['winner', 'crowned', 'finale', 'americas favorite']
             )
-            
-            logger.info(f"Detected finale night: {is_finale_night}")
             
             if is_finale_night:
                 # Use finale-specific prompt (strategic focus)
@@ -430,8 +426,6 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
 
 Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big Brother, and entertainment value matters to superfans."""
 
-            logger.info("Sending LLM request for main summary")
-            
             # Get LLM response with proper error handling
             response = self.llm_client.messages.create(
                 model=self.llm_model,
@@ -439,8 +433,6 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
-            
-            logger.info("Received LLM response for main summary")
             
             # Parse JSON response with fallback
             try:
@@ -453,7 +445,6 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 if json_start != -1 and json_end != -1:
                     json_text = response_text[json_start:json_end]
                     analysis = json.loads(json_text)
-                    logger.info("Successfully parsed LLM JSON response")
                 else:
                     raise ValueError("No JSON found in response")
                     
@@ -478,8 +469,6 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
                 color=color,
                 timestamp=datetime.now()
             )
-            
-            logger.info("Created main embed successfully")
             
             # Strategic analysis (always included)
             if analysis.get('strategic_analysis'):
@@ -565,18 +554,13 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
             main_embed.set_footer(text=footer_text)
             
             embeds = [main_embed]
-            logger.info("Main embed added to embeds list")
             
-            # Add LLM-curated highlights timeline for batches with 5+ updates
-            if len(self.update_queue) >= 5:
+            # Add LLM-curated highlights for batches with 7+ updates
+            if len(self.update_queue) >= 7:
                 highlights_embed = self._create_llm_highlights_embed(analysis.get('game_phase', 'current'))
                 if highlights_embed:
                     embeds.append(highlights_embed)
-                    logger.info("Highlights embed added to embeds list")
-                else:
-                    logger.warning("Highlights embed creation failed")
             
-            logger.info(f"Returning {len(embeds)} embeds from LLM summary")
             return embeds
             
         except Exception as e:
@@ -584,6 +568,114 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
             logger.error(traceback.format_exc())
             # Fall back to pattern matching with explanation
             return self._create_pattern_summary_with_explanation("LLM analysis unavailable")
+    
+    def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
+        """Create LLM-curated highlights embed showing the most important moments"""
+        if not self.llm_client:
+            return None
+            
+        try:
+            # Prepare update data for LLM curation
+            updates_data = []
+            for i, update in enumerate(self.update_queue):
+                time_str = update.pub_date.strftime('%I:%M %p')
+                updates_data.append({
+                    'index': i + 1,
+                    'time': time_str,
+                    'title': update.title[:100],  # Truncate for prompt
+                })
+            
+            # Create LLM prompt for highlight curation
+            prompt = f"""As a Big Brother superfan, select the most important moments from these {len(updates_data)} updates.
+
+UPDATES:
+{chr(10).join([f"{u['index']}. {u['time']} - {u['title']}" for u in updates_data])}
+
+Select 5-8 of the MOST NOTEWORTHY updates that tell the story of this period. Focus on:
+- Strategic developments (alliances, targets, plans)
+- Competition results or preparations  
+- Social dynamics and relationship changes
+- Entertainment moments (drama, funny interactions)
+- Game-changing conversations
+
+AVOID routine activities, commercial breaks, and repetitive updates.
+
+Respond with ONLY the numbers separated by commas.
+Example: 1, 3, 7, 12, 15
+
+Your selection:"""
+
+            # Get LLM response
+            response = self.llm_client.messages.create(
+                model=self.llm_model,
+                max_tokens=50,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse the response to get selected indices
+            response_text = response.content[0].text.strip()
+            logger.debug(f"LLM highlights selection: {response_text}")
+            
+            # Extract numbers from response
+            selected_indices = []
+            try:
+                numbers = [int(x.strip()) for x in response_text.split(',') if x.strip().isdigit()]
+                selected_indices = [num - 1 for num in numbers if 1 <= num <= len(self.update_queue)]
+            except:
+                pass
+            
+            # Fallback: if LLM selection failed, use top importance scores
+            if not selected_indices or len(selected_indices) < 3:
+                logger.info("Using importance fallback for highlights")
+                updates_with_importance = [(i, self.analyzer.analyze_strategic_importance(update)) 
+                                         for i, update in enumerate(self.update_queue)]
+                updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+                selected_indices = [i for i, _ in updates_with_importance[:6]]
+            
+            # Create the highlights embed
+            phase_colors = {
+                'early_game': 0x3498db,
+                'jury_phase': 0xf39c12,
+                'final_weeks': 0xe74c3c,
+                'finale_night': 0xffd700
+            }
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Mattered",
+                description=f"Key moments from this period ({len(selected_indices)} of {len(self.update_queue)} updates)",
+                color=phase_colors.get(game_phase, 0x95a5a6),
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, update_idx in enumerate(selected_indices[:8], 1):
+                if update_idx < len(self.update_queue):
+                    update = self.update_queue[update_idx]
+                    time_str = update.pub_date.strftime("%I:%M %p")
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    
+                    # Format the highlight
+                    title = update.title
+                    if len(title) > 100:
+                        title = title[:97] + "..."
+                    
+                    # Add importance indicators
+                    importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                    
+                    embed.add_field(
+                        name=f"{importance_emoji} {time_str}",
+                        value=title,
+                        inline=False
+                    )
+            
+            embed.set_footer(text=f"Curated by BB Superfan AI • {len(selected_indices)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"LLM highlights curation failed: {e}")
+            return None
     
     def _parse_text_response(self, response_text: str) -> dict:
         """Parse LLM response when JSON parsing fails"""
@@ -611,219 +703,6 @@ Don't dismiss moments as "surface-level" - social dynamics ARE strategic in Big 
             logger.debug(f"Text parsing error: {e}")
         
         return analysis
-    
-    def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
-        """Create LLM-curated highlights embed showing only the most important moments"""
-        if not self.llm_client:
-            logger.debug("No LLM client available for highlights curation")
-            return None
-            
-        try:
-            # Prepare update data for LLM curation
-            updates_data = []
-            for i, update in enumerate(self.update_queue):
-                time_str = update.pub_date.strftime('%I:%M %p')
-                importance = self.analyzer.analyze_strategic_importance(update)
-                updates_data.append({
-                    'index': i + 1,
-                    'time': time_str,
-                    'title': update.title[:100],  # Truncate for prompt
-                    'importance': importance
-                })
-            
-            # Create LLM prompt for highlight curation
-            prompt = f"""As a Big Brother superfan, select the most important moments from these {len(updates_data)} updates.
-
-UPDATES:
-{chr(10).join([f"{u['index']}. {u['time']} - {u['title']} (Importance: {u['importance']}/10)" for u in updates_data])}
-
-Select 5-8 of the MOST NOTEWORTHY updates. Focus on strategy, competitions, social dynamics, and entertainment.
-
-Respond with ONLY the numbers separated by commas.
-Example: 1, 3, 7, 12, 15
-
-Your selection:"""
-
-            # Get LLM response
-            response = self.llm_client.messages.create(
-                model=self.llm_model,
-                max_tokens=100,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse the response to get selected indices
-            response_text = response.content[0].text.strip()
-            logger.info(f"LLM highlights selection: {response_text}")
-            
-            # Extract numbers from response
-            selected_indices = []
-            try:
-                # Try to parse comma-separated numbers
-                numbers = [int(x.strip()) for x in response_text.split(',') if x.strip().isdigit()]
-                selected_indices = [num - 1 for num in numbers if 1 <= num <= len(self.update_queue)]
-            except Exception as e:
-                logger.warning(f"Failed to parse LLM selection: {e}")
-            
-            # Fallback: if LLM selection failed, use top importance scores
-            if not selected_indices or len(selected_indices) < 3:
-                logger.warning("LLM highlight selection failed, using importance fallback")
-                updates_with_importance = [(i, self.analyzer.analyze_strategic_importance(update)) 
-                                         for i, update in enumerate(self.update_queue)]
-                updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-                selected_indices = [i for i, _ in updates_with_importance[:6]]
-            
-            # Ensure we have valid indices
-            selected_indices = [idx for idx in selected_indices if 0 <= idx < len(self.update_queue)]
-            
-            if not selected_indices:
-                logger.warning("No valid indices selected for highlights")
-                return None
-            
-            # Create the highlights embed
-            phase_colors = {
-                'early_game': 0x3498db,
-                'jury_phase': 0xf39c12,
-                'final_weeks': 0xe74c3c,
-                'finale_night': 0xffd700
-            }
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Mattered",
-                description=f"Key moments from this batch period ({len(selected_indices)} of {len(self.update_queue)} updates)",
-                color=phase_colors.get(game_phase, 0x95a5a6),
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights
-            for i, update_idx in enumerate(selected_indices[:8], 1):  # Limit to 8 to avoid embed limits
-                if update_idx < len(self.update_queue):
-                    update = self.update_queue[update_idx]
-                    time_str = update.pub_date.strftime("%I:%M %p")
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    
-                    # Format the highlight
-                    title = update.title
-                    if len(title) > 100:
-                        title = title[:97] + "..."
-                    
-                    # Add importance indicators
-                    importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-                    
-                    embed.add_field(
-                        name=f"{importance_emoji} {time_str}",
-                        value=title,
-                        inline=False
-                    )
-            
-            embed.set_footer(text=f"Curated by BB Superfan AI • {len(selected_indices)} key moments selected")
-            
-            logger.info(f"Created highlights embed with {len(selected_indices)} highlights")
-            return embed
-            
-        except Exception as e:
-            logger.error(f"LLM highlights curation failed: {e}")
-            logger.error(traceback.format_exc())
-            return None
-        """Create timeline embeds with smart pagination based on importance"""
-        phase_colors = {
-            'early_game': 0x3498db,
-            'jury_phase': 0xf39c12,
-            'final_weeks': 0xe74c3c,
-            'finale_night': 0xffd700
-        }
-        
-        color = phase_colors.get(game_phase, 0x95a5a6)
-        
-        # Analyze and sort updates by importance and time
-        updates_with_importance = []
-        for update in self.update_queue:
-            importance = self.analyzer.analyze_strategic_importance(update)
-            updates_with_importance.append((update, importance))
-        
-        # Sort by importance first, then by time
-        updates_with_importance.sort(key=lambda x: (x[1], x[0].pub_date), reverse=True)
-        
-        embeds = []
-        
-        # First embed: Top strategic moments
-        high_importance = [u for u, i in updates_with_importance if i >= 7]
-        if high_importance:
-            embed = discord.Embed(
-                title="🔥 Key Strategic Moments",
-                description=f"Most important updates from this batch ({len(high_importance)} of {len(self.update_queue)})",
-                color=0xe74c3c,  # Red for high importance
-                timestamp=datetime.now()
-            )
-            
-            for i, update in enumerate(high_importance[:12], 1):  # Limit to 12 for readability
-                time_str = update.pub_date.strftime("%I:%M %p")
-                importance = self.analyzer.analyze_strategic_importance(update)
-                
-                content = update.title
-                if len(content) > 150:
-                    content = content[:147] + "..."
-                
-                embed.add_field(
-                    name=f"{'🔥' * min(importance, 3)} {time_str}",
-                    value=content,
-                    inline=False
-                )
-            
-            embeds.append(embed)
-        
-        # Second embed: Complete chronological timeline
-        embed = discord.Embed(
-            title="📋 Complete Live Feed Timeline",
-            description=f"All {len(self.update_queue)} updates in chronological order",
-            color=color,
-            timestamp=datetime.now()
-        )
-        
-        # Sort chronologically for this embed
-        sorted_updates = sorted(self.update_queue, key=lambda x: x.pub_date, reverse=True)
-        
-        # Use a more compact format to fit more updates
-        timeline_sections = []
-        current_section = ""
-        
-        for i, update in enumerate(sorted_updates, 1):
-            time_str = update.pub_date.strftime("%I:%M %p")
-            
-            # Don't truncate - show full content up to Discord limits
-            title = update.title
-            if len(title) > 150:
-                title = title[:147] + "..."
-            
-            line = f"**{i}.** {time_str} - {title}\n"
-            
-            # Check if adding this line would exceed field limit
-            if len(current_section + line) > 1000:
-                timeline_sections.append(current_section)
-                current_section = line
-            else:
-                current_section += line
-        
-        # Add the last section
-        if current_section:
-            timeline_sections.append(current_section)
-        
-        # Add sections as fields
-        for i, section in enumerate(timeline_sections):
-            field_name = f"Timeline Part {i + 1}" if len(timeline_sections) > 1 else "Complete Timeline"
-            embed.add_field(
-                name=field_name,
-                value=section,
-                inline=False
-            )
-        
-        embeds.append(embed)
-        
-        return embeds
-    
-    def _create_timeline_embeds(self, game_phase: str) -> List[discord.Embed]:
-        """Legacy method - kept for compatibility but not used in main flow"""
-        return []  # Legacy method - no longer used
     
     def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
         """Enhanced pattern-based summary with explanation"""
@@ -1560,46 +1439,22 @@ class BBDiscordBot(commands.Bot):
             return
         
         try:
-            logger.info(f"Attempting to send batch update to channel {channel_id}")
-            
             channel = self.get_channel(channel_id)
             if not channel:
                 logger.error(f"Channel {channel_id} not found")
                 return
             
-            logger.info(f"Found channel: {channel.name}")
-            
-            # Get batch summary embeds (don't clear queue yet)
+            # Get batch summary embeds
             embeds = self.update_batcher.create_batch_summary()
             
-            logger.info(f"Got {len(embeds)} embeds from batch summary")
-            
-            if not embeds:
-                logger.warning("No embeds returned from batch summary")
-                return
-            
             # Send all embeds
-            sent_count = 0
-            for i, embed in enumerate(embeds[:10]):  # Discord limit is 10 embeds per message
-                try:
-                    logger.info(f"Sending embed {i+1}/{len(embeds)}: {embed.title}")
-                    await channel.send(embed=embed)
-                    sent_count += 1
-                    logger.info(f"Successfully sent embed {i+1}")
-                except Exception as e:
-                    logger.error(f"Failed to send embed {i+1}: {e}")
-                    logger.error(traceback.format_exc())
+            for embed in embeds[:10]:  # Discord limit is 10 embeds per message
+                await channel.send(embed=embed)
             
-            # Only clear the queue after successful sending
-            if sent_count > 0:
-                self.update_batcher.clear_batch_queue()
-                logger.info(f"Cleared batch queue after sending {sent_count} embeds")
-            
-            logger.info(f"Sent batch update with {sent_count} embeds")
+            logger.info(f"Sent batch update with {len(embeds)} embeds")
             
         except Exception as e:
             logger.error(f"Error sending batch update: {e}")
-            logger.error(traceback.format_exc())
 
 # Create bot instance
 bot = BBDiscordBot()
