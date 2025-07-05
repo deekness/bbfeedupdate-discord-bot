@@ -871,12 +871,14 @@ Remember: Big Brother superfans want strategic depth BUT also love the social ex
             
             # Add selected highlights
             for i, (update, importance) in enumerate(selected_updates, 1):
+                # Use consistent time format with main embed
                 time_str = update.pub_date.strftime("%I:%M %p")
                 
-                # Format the highlight
+                # Show full update title for highlights (these are the key moments)
                 title = update.title
-                if len(title) > 100:
-                    title = title[:97] + "..."
+                # Only truncate if extremely long (Discord field limit is 1024 chars)
+                if len(title) > 1000:
+                    title = title[:997] + "..."
                 
                 # Add importance indicators
                 importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
