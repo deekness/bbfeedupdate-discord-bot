@@ -1338,57 +1338,10 @@ class BBDatabase:
 class AllianceTracker:
     """Tracks and manages Big Brother alliances"""
     
-    def __init__(self, db: BBDatabase):
-        self.db = db
+    def __init__(self, database: BBDatabase):
+        self.database = database
         self.alliance_cache = {}
         self.last_update = None
-    
-    def detect_alliances_from_updates(self, updates: List[BBUpdate]) -> Dict[str, List[str]]:
-        """Detect alliances mentioned in updates"""
-        alliances = {}
-        
-        for update in updates:
-            content = f"{update.title} {update.description}".lower()
-            
-            # Look for alliance keywords and patterns
-            alliance_patterns = [
-                r'alliance.*?(?:with|between|of)\s+([a-zA-Z\s,]+)',
-                r'final\s+(\d+).*?(?:with|between|of)\s+([a-zA-Z\s,]+)',
-                r'(?:group|trio|quad|duo).*?(?:with|between|of)\s+([a-zA-Z\s,]+)',
-                r'(\w+)\s+alliance',
-                r'working\s+with\s+([a-zA-Z\s,]+)',
-                r'trusts?\s+([a-zA-Z\s,]+)',
-                r'close\s+to\s+([a-zA-Z\s,]+)'
-            ]
-            
-            for pattern in alliance_patterns:
-                matches = re.findall(pattern, content, re.IGNORECASE)
-                for match in matches:
-                    if isinstance(match, tuple):
-                        match = match[-1]  # Get the last group
-                    
-                    # Extract names from the match
-                    names = self._extract_names_from_text(match)
-                    if len(names) >= 2:
-                        alliance_key = f"Alliance_{len(alliances) + 1}"
-                        alliances[alliance_key] = names
-        
-        return alliances
-    
-    def _extract_names_from_text(self, text: str) -> List[str]:
-        """Extract houseguest names from text"""
-        # Common BB houseguest name patterns
-        name_pattern = r'\b[A-Z][a-z]+\b'
-        potential_names = re.findall(name_pattern, text)
-        
-        # Filter out common words that aren't names
-        exclude_words = {
-            'The', 'And', 'With', 'For', 'But', 'Or', 'As', 'At', 'By', 'In', 'On', 'To',
-            'Big', 'Brother', 'House', 'Game', 'Player', 'Vote', 'Veto', 'Head', 'Household',
-            'Competition', 'Ceremony', 'Nomination', 'Eviction', 'Jury', 'Final', 'Winner'
-        }
-        
-        return [name for name in potential_names if name not in exclude_words and len(name) > 2]
     
     def get_current_alliances(self) -> Dict[str, Dict]:
         """Get current alliance status"""
@@ -1455,7 +1408,6 @@ class AllianceTracker:
         if strong_alliances:
             strong_text = ""
             for name, data in strong_alliances:
-                members = ", ".join(data['members'])
                 leader = data.get('leader', 'Unknown')
                 formed = data.get('formed', 'Unknown')
                 strong_text += f"┌─────────────────┐\n"
@@ -1477,7 +1429,6 @@ class AllianceTracker:
         if medium_alliances:
             medium_text = ""
             for name, data in medium_alliances:
-                members = ", ".join(data['members'])
                 leader = data.get('leader', 'Unknown')
                 formed = data.get('formed', 'Unknown')
                 medium_text += f"┌─────────────────┐\n"
@@ -1499,7 +1450,6 @@ class AllianceTracker:
         if weak_alliances:
             weak_text = ""
             for name, data in weak_alliances:
-                members = ", ".join(data['members'])
                 status = data.get('status', 'Unknown')
                 formed = data.get('formed', 'Unknown')
                 weak_text += f"┌─────────────────┐\n"
