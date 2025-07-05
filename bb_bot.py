@@ -977,7 +977,7 @@ class BBDiscordBot(commands.Bot):
             return
         
         try:
-            feed = await self.fetch_rss_feed()
+            feed = self.fetch_rss_feed()
             
             if not feed or not feed.entries:
                 logger.warning("No entries returned from RSS feed")
@@ -989,7 +989,7 @@ class BBDiscordBot(commands.Bot):
             
             # Check for duplicates
             for update in updates:
-                if not await self.db.is_duplicate(update.content_hash):
+                if not self.db.is_duplicate(update.content_hash):
                     new_updates.append(update)
             
             # Queue new updates
@@ -1007,7 +1007,7 @@ class BBDiscordBot(commands.Bot):
             
             # Save houseguest data periodically
             if self.total_updates_processed % 50 == 0:
-                await self.db.save_houseguest_data(self.houseguest_tracker)
+                self.db.save_houseguest_data(self.houseguest_tracker)
                 
         except Exception as e:
             logger.error(f"Error in RSS check: {e}")
@@ -1051,7 +1051,7 @@ class BBDiscordBot(commands.Bot):
             
             await ctx.typing()
             
-            updates = await self.db.get_recent_updates(hours)
+            updates = self.db.get_recent_updates(hours)
             
             if not updates:
                 await ctx.send(f"No updates found in the last {hours} hours.")
@@ -1204,7 +1204,7 @@ class BBDiscordBot(commands.Bot):
                 self.houseguest_tracker.add_alias(canonical, alias)
             
             # Save to database
-            await self.db.save_houseguest_data(self.houseguest_tracker)
+            self.db.save_houseguest_data(self.houseguest_tracker)
             
             embed = discord.Embed(
                 title="Aliases Added",
@@ -1226,7 +1226,7 @@ class BBDiscordBot(commands.Bot):
             await ctx.typing()
             
             # Search in recent updates (last 7 days)
-            updates = await self.db.get_recent_updates(168)
+            updates = self.db.get_recent_updates(168)
             
             # Filter updates
             query_lower = query.lower()
@@ -1303,11 +1303,6 @@ class BBDiscordBot(commands.Bot):
             # Calculate uptime
             uptime = datetime.now() - self.last_successful_check
             
-            # Get system stats
-            import psutil
-            process = psutil.Process(os.getpid())
-            memory_usage = process.memory_info().rss / 1024 / 1024  # MB
-            
             embed = discord.Embed(
                 title="Big Brother Bot Status",
                 color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
@@ -1349,8 +1344,7 @@ class BBDiscordBot(commands.Bot):
             # System info
             embed.add_field(
                 name="System",
-                value=f"Memory: {memory_usage:.1f} MB\n"
-                      f"Errors: {self.consecutive_errors}",
+                value=f"Errors: {self.consecutive_errors}",
                 inline=True
             )
             
