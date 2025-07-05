@@ -1,6 +1,5 @@
 import discord
 from discord.ext import commands, tasks
-from discord import app_commands
 import feedparser
 import asyncio
 import sqlite3
@@ -334,22 +333,26 @@ class BBDiscordBot(commands.Bot):
         signal.signal(signal.SIGTERM, self.signal_handler)
         signal.signal(signal.SIGINT, self.signal_handler)
         
+        # Remove all slash commands and add them properly
+        self.remove_command('help')
+        
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.is_shutting_down = True
         asyncio.create_task(self.close())
     
-    async def setup_hook(self):
-        """Setup bot and sync slash commands"""
-        # Sync commands globally
-        await self.tree.sync()
-        logger.info("Slash commands synced")
-    
     async def on_ready(self):
         """Bot startup event"""
         logger.info(f'{self.user} has connected to Discord!')
         logger.info(f'Bot is in {len(self.guilds)} guilds')
+        
+        # Sync slash commands properly
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"Synced {len(synced)} slash command(s)")
+        except Exception as e:
+            logger.error(f"Failed to sync commands: {e}")
         
         try:
             self.check_rss_feed.start()
@@ -508,143 +511,145 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
-    
-    # Slash Commands
-    @app_commands.command(name="status", description="Show bot status and statistics")
-    async def status_slash(self, interaction: discord.Interaction):
-        """Show bot status"""
-        try:
-            await interaction.response.defer(ephemeral=True)
-            
-            embed = discord.Embed(
-                title="Big Brother Bot Status",
-                color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(name="RSS Feed", value=self.rss_url, inline=False)
-            embed.add_field(name="Update Channel", 
-                           value=f"<#{self.config.get('update_channel_id')}>" if self.config.get('update_channel_id') else "Not set", 
-                           inline=True)
-            embed.add_field(name="Updates Processed", value=str(self.total_updates_processed), inline=True)
-            embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
-            
-            time_since_check = datetime.now() - self.last_successful_check
-            embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
-            
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            
-        except Exception as e:
-            logger.error(f"Error generating status: {e}")
-            await interaction.followup.send("Error generating status.", ephemeral=True)
 
-    @app_commands.command(name="summary", description="Get a summary of recent Big Brother updates")
-    @app_commands.describe(hours="Number of hours to look back (1-168, default: 24)")
-    async def summary_slash(self, interaction: discord.Interaction, hours: int = 24):
-        """Generate a summary of updates"""
-        try:
-            if hours < 1 or hours > 168:
-                await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
-                return
-            
-            await interaction.response.defer(ephemeral=True)
-            
-            updates = self.db.get_recent_updates(hours)
-            
-            if not updates:
-                await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
-                return
-            
-            categories = {}
-            for update in updates:
-                update_categories = self.analyzer.categorize_update(update)
-                for category in update_categories:
-                    if category not in categories:
-                        categories[category] = []
-                    categories[category].append(update)
-            
-            embed = discord.Embed(
-                title=f"Big Brother Updates Summary ({hours}h)",
-                description=f"**{len(updates)} total updates**",
-                color=0x3498db,
-                timestamp=datetime.now()
-            )
-            
-            for category, cat_updates in categories.items():
-                top_updates = sorted(cat_updates, 
-                                   key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-                                   reverse=True)[:3]
-                
-                summary_text = "\n".join([f"• {update.title[:100]}..." 
-                                        if len(update.title) > 100 
-                                        else f"• {update.title}" 
-                                        for update in top_updates])
-                
-                embed.add_field(
-                    name=f"{category} ({len(cat_updates)} updates)",
-                    value=summary_text or "No updates",
-                    inline=False
-                )
-            
-            await interaction.followup.send(embed=embed, ephemeral=True)
-            
-        except Exception as e:
-            logger.error(f"Error generating summary: {e}")
-            await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
+# Create bot instance
+bot = BBDiscordBot()
 
-    @app_commands.command(name="setchannel", description="Set the channel for Big Brother updates")
-    @app_commands.describe(channel="The channel where updates should be posted")
-    @app_commands.default_permissions(administrator=True)
-    async def setchannel_slash(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        """Set the channel for RSS updates"""
-        try:
-            if not channel.permissions_for(interaction.guild.me).send_messages:
-                await interaction.response.send_message(
-                    f"I don't have permission to send messages in {channel.mention}", 
-                    ephemeral=True
-                )
-                return
-            
-            self.config.set('update_channel_id', channel.id)
-            
-            await interaction.response.send_message(
-                f"Update channel set to {channel.mention}", 
-                ephemeral=True
-            )
-            logger.info(f"Update channel set to {channel.id}")
-            
-        except Exception as e:
-            logger.error(f"Error setting channel: {e}")
-            await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
-
-    @app_commands.command(name="commands", description="Show all available commands")
-    async def commands_slash(self, interaction: discord.Interaction):
-        """Show available commands"""
+# Define slash commands using the bot.tree decorator
+@bot.tree.command(name="status", description="Show bot status and statistics")
+async def status_slash(interaction: discord.Interaction):
+    """Show bot status"""
+    try:
+        await interaction.response.defer(ephemeral=True)
+        
         embed = discord.Embed(
-            title="Big Brother Bot Commands",
-            description="Monitor Jokers Updates RSS feed with intelligent analysis",
-            color=0x3498db
+            title="Big Brother Bot Status",
+            color=0x2ecc71 if bot.consecutive_errors == 0 else 0xe74c3c,
+            timestamp=datetime.now()
         )
         
-        commands_list = [
-            ("/summary [hours]", "Get a summary of recent updates (default: 24h)"),
-            ("/status", "Show bot status and statistics"),
-            ("/setchannel #channel", "Set update channel (Admin only)"),
-            ("/commands", "Show this help message")
-        ]
+        embed.add_field(name="RSS Feed", value=bot.rss_url, inline=False)
+        embed.add_field(name="Update Channel", 
+                       value=f"<#{bot.config.get('update_channel_id')}>" if bot.config.get('update_channel_id') else "Not set", 
+                       inline=True)
+        embed.add_field(name="Updates Processed", value=str(bot.total_updates_processed), inline=True)
+        embed.add_field(name="Consecutive Errors", value=str(bot.consecutive_errors), inline=True)
         
-        for name, description in commands_list:
-            embed.add_field(name=name, value=description, inline=False)
+        time_since_check = datetime.now() - bot.last_successful_check
+        embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
         
-        embed.set_footer(text="All commands are ephemeral (only you can see the response)")
+        await interaction.followup.send(embed=embed, ephemeral=True)
         
-        await interaction.response.send_message(embed=embed, ephemeral=True)
+    except Exception as e:
+        logger.error(f"Error generating status: {e}")
+        await interaction.followup.send("Error generating status.", ephemeral=True)
+
+@bot.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
+async def summary_slash(interaction: discord.Interaction, hours: int = 24):
+    """Generate a summary of updates"""
+    try:
+        if hours < 1 or hours > 168:
+            await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        updates = bot.db.get_recent_updates(hours)
+        
+        if not updates:
+            await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
+            return
+        
+        categories = {}
+        for update in updates:
+            update_categories = bot.analyzer.categorize_update(update)
+            for category in update_categories:
+                if category not in categories:
+                    categories[category] = []
+                categories[category].append(update)
+        
+        embed = discord.Embed(
+            title=f"Big Brother Updates Summary ({hours}h)",
+            description=f"**{len(updates)} total updates**",
+            color=0x3498db,
+            timestamp=datetime.now()
+        )
+        
+        for category, cat_updates in categories.items():
+            top_updates = sorted(cat_updates, 
+                               key=lambda x: bot.analyzer.analyze_strategic_importance(x), 
+                               reverse=True)[:3]
+            
+            summary_text = "\n".join([f"• {update.title[:100]}..." 
+                                    if len(update.title) > 100 
+                                    else f"• {update.title}" 
+                                    for update in top_updates])
+            
+            embed.add_field(
+                name=f"{category} ({len(cat_updates)} updates)",
+                value=summary_text or "No updates",
+                inline=False
+            )
+        
+        await interaction.followup.send(embed=embed, ephemeral=True)
+        
+    except Exception as e:
+        logger.error(f"Error generating summary: {e}")
+        await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
+
+@bot.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
+async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+    """Set the channel for RSS updates"""
+    try:
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+            return
+            
+        if not channel.permissions_for(interaction.guild.me).send_messages:
+            await interaction.response.send_message(
+                f"I don't have permission to send messages in {channel.mention}", 
+                ephemeral=True
+            )
+            return
+        
+        bot.config.set('update_channel_id', channel.id)
+        https://github.com/deekness/bbfeedupdate-discord-bot/blob/main/bb_bot.py
+        await interaction.response.send_message(
+            f"Update channel set to {channel.mention}", 
+            ephemeral=True
+        )
+        logger.info(f"Update channel set to {channel.id}")
+        
+    except Exception as e:
+        logger.error(f"Error setting channel: {e}")
+        await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
+
+@bot.tree.command(name="commands", description="Show all available commands")
+async def commands_slash(interaction: discord.Interaction):
+    """Show available commands"""
+    embed = discord.Embed(
+        title="Big Brother Bot Commands",
+        description="Monitor Jokers Updates RSS feed with intelligent analysis",
+        color=0x3498db
+    )
+    
+    commands_list = [
+        ("/summary", "Get a summary of recent updates (default: 24h)"),
+        ("/status", "Show bot status and statistics"),
+        ("/setchannel", "Set update channel (Admin only)"),
+        ("/commands", "Show this help message")
+    ]
+    
+    for name, description in commands_list:
+        embed.add_field(name=name, value=description, inline=False)
+    
+    embed.set_footer(text="All commands are ephemeral (only you can see the response)")
+    
+    await interaction.response.send_message(embed=embed, ephemeral=True)
 
 def main():
     """Main function to run the bot"""
     try:
-        bot = BBDiscordBot()
-        
         bot_token = bot.config.get('bot_token')
         if not bot_token:
             logger.error("No bot token found!")
