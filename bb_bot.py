@@ -616,13 +616,23 @@ class UpdateBatcher:
 
 {updates_text}
 
-Select 5-8 updates that superfans would find most important/interesting. Consider:
-- Game-changing strategic moves
-- Major competition results
-- Dramatic confrontations
-- Romantic developments
-- Hilarious/memorable moments
-- Alliance shifts
+Select 5-8 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing. 
+
+HIGHLIGHT-WORTHY updates include:
+- Competition wins (HOH, POV, etc.)
+- Major strategic moves or betrayals
+- Dramatic fights or confrontations  
+- Romantic moments (first kiss, breakup, etc.)
+- Hilarious or memorable incidents
+- Game-changing twists revealed
+- Eviction results or surprise votes
+- Alliance formations or breaks
+
+NOT highlights (unless part of something bigger):
+- Single jury votes (unless it's a crucial swing vote)
+- Routine conversations
+- Minor game talk
+- Regular daily activities
 
 For each selected update, provide:
 {{
@@ -631,12 +641,12 @@ For each selected update, provide:
             "time": "exact time from update",
             "title": "exact title from update",
             "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-            "reason": "Brief explanation of what happened and why it matters - be specific and factual, NO phrases like 'exciting for fans' or 'juicy for superfans'"
+            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
         }}
     ]
 }}
 
-Focus on variety - don't just pick all strategic moves. Mix strategy, drama, and entertainment. Keep explanations factual and specific about WHAT happened, not how fans might react."""
+Be selective - these should be the updates that a superfan would want to know about if they could only see 5-8 things from this time period."""
 
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
@@ -662,11 +672,19 @@ Focus on variety - don't just pick all strategic moves. Mix strategy, drama, and
                 )
                 
                 for highlight in highlights_data['highlights'][:8]:  # Max 8
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                        value=f"{highlight.get('title', 'Update')}\n*{highlight.get('reason', '')}*",
-                        inline=False
-                    )
+                    # Only add reason if it exists and isn't empty
+                    if highlight.get('reason') and highlight['reason'].strip():
+                        embed.add_field(
+                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                            value=f"{highlight.get('title', 'Update')}\n*{highlight['reason']}*",
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                            value=highlight.get('title', 'Update'),
+                            inline=False
+                        )
                 
                 embed.set_footer(text=f"Chen Bot Highlights • {game_phase.replace('_', ' ').title()}")
                 
