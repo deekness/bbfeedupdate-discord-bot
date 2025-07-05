@@ -19,6 +19,7 @@ from pathlib import Path
 import requests
 from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
+from collections import defaultdict, Counter
 
 # Configure comprehensive logging
 def setup_logging():
@@ -171,7 +172,8 @@ class BBAnalyzer:
         houseguest_pattern = r'\b[A-Z][a-z]+\b'
         potential_names = re.findall(houseguest_pattern, text)
         
-        exclude_words = {'The', 'This', 'That', 'They', 'Some', 'Many', 'Other', 'First', 'Last'}
+        exclude_words = {'The', 'This', 'That', 'They', 'Some', 'Many', 'Other', 'First', 'Last',
+                        'Big', 'Brother', 'Julie', 'Host', 'Diary', 'Room', 'Have', 'Not'}
         return [name for name in potential_names if name not in exclude_words]
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
@@ -189,6 +191,362 @@ class BBAnalyzer:
             score += 2
         
         return min(score, 10)
+
+class UpdateBatcher:
+    """Groups and analyzes updates like a BB superfan"""
+    
+    def __init__(self, analyzer: BBAnalyzer):
+        self.analyzer = analyzer
+        self.update_queue = []
+        self.last_batch_time = datetime.now()
+        
+        # Superfan knowledge patterns
+        self.vote_patterns = re.compile(r'(votes?|voted|voting)\s+for\s+(\w+)', re.IGNORECASE)
+        self.comp_win_patterns = re.compile(r'(\w+)\s+(wins?|won)\s+(HOH|Head of Household|POV|Power of Veto|Veto)', re.IGNORECASE)
+        self.nomination_patterns = re.compile(r'(nominates?|nominated|noms?)\s+(\w+)(?:\s+and\s+(\w+))?', re.IGNORECASE)
+        self.alliance_patterns = re.compile(r'(alliance|deal|final \d|working with)', re.IGNORECASE)
+        
+        # Game-defining moments that need immediate attention
+        self.urgent_keywords = [
+            'evicted', 'eliminated', 'wins hoh', 'wins pov', 'backdoor', 
+            'self-evict', 'expelled', 'quit', 'medical', 'pandora', 'coup',
+            'diamond veto', 'secret power', 'battle back', 'return'
+        ]
+    
+    def should_send_batch(self) -> bool:
+        """Determine if we should send a batch now"""
+        if not self.update_queue:
+            return False
+            
+        time_elapsed = (datetime.now() - self.last_batch_time).total_seconds() / 60
+        
+        # Check for urgent updates
+        has_urgent = any(self._is_urgent(update) for update in self.update_queue)
+        if has_urgent and len(self.update_queue) >= 3:
+            return True
+        
+        # High activity mode: 10+ updates or 15 minutes
+        if len(self.update_queue) >= 10 or time_elapsed >= 15:
+            return True
+            
+        # Normal mode: 5+ updates or 30 minutes
+        if len(self.update_queue) >= 5 or time_elapsed >= 30:
+            return True
+            
+        return False
+    
+    def _is_urgent(self, update: BBUpdate) -> bool:
+        """Check if update contains game-critical information"""
+        content = f"{update.title} {update.description}".lower()
+        return any(keyword in content for keyword in self.urgent_keywords)
+    
+    def add_update(self, update: BBUpdate):
+        """Add update to queue"""
+        self.update_queue.append(update)
+    
+    def create_batch_summary(self) -> List[discord.Embed]:
+        """Create intelligent summary embeds like a superfan would"""
+        if not self.update_queue:
+            return []
+        
+        # Group updates by type
+        grouped = self._group_updates()
+        embeds = []
+        
+        # Create main summary embed
+        main_embed = self._create_main_embed(grouped)
+        embeds.append(main_embed)
+        
+        # Create detailed embeds for important groups
+        for group_type, updates in grouped.items():
+            if group_type in ['votes', 'competition_wins', 'nominations'] and updates:
+                detail_embed = self._create_detail_embed(group_type, updates)
+                if detail_embed:
+                    embeds.append(detail_embed)
+        
+        # Clear queue after processing
+        self.update_queue.clear()
+        self.last_batch_time = datetime.now()
+        
+        return embeds
+    
+    def _group_updates(self) -> Dict[str, List[BBUpdate]]:
+        """Group updates by game event type"""
+        groups = defaultdict(list)
+        
+        for update in self.update_queue:
+            content = f"{update.title} {update.description}"
+            
+            # Check for vote patterns
+            vote_match = self.vote_patterns.search(content)
+            if vote_match:
+                groups['votes'].append(update)
+                continue
+            
+            # Check for competition wins
+            comp_match = self.comp_win_patterns.search(content)
+            if comp_match:
+                groups['competition_wins'].append(update)
+                continue
+            
+            # Check for nominations
+            nom_match = self.nomination_patterns.search(content)
+            if nom_match:
+                groups['nominations'].append(update)
+                continue
+            
+            # Check for alliance/strategy
+            if self.alliance_patterns.search(content):
+                groups['strategy'].append(update)
+                continue
+            
+            # Categorize by analyzer categories
+            categories = self.analyzer.categorize_update(update)
+            if "💥 Drama" in categories:
+                groups['drama'].append(update)
+            elif "💕 Romance" in categories:
+                groups['showmance'].append(update)
+            else:
+                groups['general'].append(update)
+        
+        return groups
+    
+    def _create_main_embed(self, grouped: Dict[str, List[BBUpdate]]) -> discord.Embed:
+        """Create the main summary embed with superfan analysis"""
+        total_updates = sum(len(updates) for updates in grouped.values())
+        
+        # Determine the headline based on most important events
+        headline = self._get_headline(grouped)
+        
+        embed = discord.Embed(
+            title=f"🎭 {headline}",
+            description=f"**{total_updates} updates** from the last batch period",
+            color=self._get_batch_color(grouped),
+            timestamp=datetime.now()
+        )
+        
+        # Add quick summary for each category
+        if grouped['competition_wins']:
+            winners = self._extract_comp_winners(grouped['competition_wins'])
+            embed.add_field(
+                name="🏆 Competition Results",
+                value=winners,
+                inline=False
+            )
+        
+        if grouped['votes']:
+            vote_summary = self._summarize_votes(grouped['votes'])
+            embed.add_field(
+                name="🗳️ Voting Update",
+                value=vote_summary,
+                inline=False
+            )
+        
+        if grouped['nominations']:
+            nom_summary = self._summarize_nominations(grouped['nominations'])
+            embed.add_field(
+                name="🎯 Nomination Ceremony",
+                value=nom_summary,
+                inline=False
+            )
+        
+        if grouped['drama']:
+            embed.add_field(
+                name="💥 House Drama",
+                value=f"{len(grouped['drama'])} incidents - check details below",
+                inline=True
+            )
+        
+        if grouped['strategy']:
+            embed.add_field(
+                name="🧠 Strategic Moves",
+                value=f"{len(grouped['strategy'])} game moves detected",
+                inline=True
+            )
+        
+        # Add superfan analysis
+        analysis = self._get_superfan_analysis(grouped)
+        if analysis:
+            embed.add_field(
+                name="🎯 Superfan Analysis",
+                value=analysis,
+                inline=False
+            )
+        
+        return embed
+    
+    def _get_headline(self, grouped: Dict[str, List[BBUpdate]]) -> str:
+        """Generate a smart headline based on the most important events"""
+        if grouped['competition_wins']:
+            return "New Competition Winner Changes the Game!"
+        elif grouped['votes']:
+            return "Jury Votes Revealed - Winner Emerging!"
+        elif grouped['nominations']:
+            return "Nomination Ceremony Shakes Up the House!"
+        elif len(grouped['drama']) >= 3:
+            return "House Explodes in Drama!"
+        elif grouped['strategy']:
+            return "Strategic Gameplay in Motion"
+        else:
+            return "Big Brother House Update"
+    
+    def _get_batch_color(self, grouped: Dict[str, List[BBUpdate]]) -> int:
+        """Color code based on update importance"""
+        if grouped['competition_wins'] or grouped['votes']:
+            return 0xe74c3c  # Red for game-critical
+        elif grouped['nominations'] or len(grouped['strategy']) >= 2:
+            return 0xf39c12  # Orange for important
+        elif grouped['drama']:
+            return 0x9b59b6  # Purple for drama
+        else:
+            return 0x3498db  # Blue for standard
+    
+    def _extract_comp_winners(self, updates: List[BBUpdate]) -> str:
+        """Extract and format competition winners"""
+        winners = []
+        for update in updates:
+            content = f"{update.title} {update.description}"
+            match = self.comp_win_patterns.search(content)
+            if match:
+                winner = match.group(1)
+                comp = match.group(3)
+                winners.append(f"**{winner}** won {comp}")
+        
+        return "\n".join(winners) if winners else "Competition results detected"
+    
+    def _summarize_votes(self, updates: List[BBUpdate]) -> str:
+        """Summarize voting patterns like a superfan would notice"""
+        vote_counts = defaultdict(list)
+        
+        for update in updates:
+            content = f"{update.title} {update.description}"
+            match = self.vote_patterns.search(content)
+            if match:
+                votee = match.group(2)
+                # Extract voter name from the update
+                voter_match = re.search(r'(\w+)\s+votes?', content, re.IGNORECASE)
+                if voter_match:
+                    voter = voter_match.group(1)
+                    vote_counts[votee].append(voter)
+        
+        # Format the summary
+        summary_parts = []
+        for votee, voters in vote_counts.items():
+            if len(voters) > 1:
+                summary_parts.append(f"**{votee}** received votes from: {', '.join(voters)} ({len(voters)} votes)")
+            else:
+                summary_parts.append(f"**{votee}** received a vote from {voters[0]}")
+        
+        return "\n".join(summary_parts) if summary_parts else "Votes were cast"
+    
+    def _summarize_nominations(self, updates: List[BBUpdate]) -> str:
+        """Summarize nomination ceremony results"""
+        all_nominees = set()
+        nominators = []
+        
+        for update in updates:
+            content = f"{update.title} {update.description}"
+            match = self.nomination_patterns.search(content)
+            if match:
+                nominator_match = re.search(r'(\w+)\s+nominates?', content, re.IGNORECASE)
+                if nominator_match:
+                    nominators.append(nominator_match.group(1))
+                
+                nominee1 = match.group(2)
+                if nominee1:
+                    all_nominees.add(nominee1)
+                nominee2 = match.group(3)
+                if nominee2:
+                    all_nominees.add(nominee2)
+        
+        if all_nominees:
+            return f"**Nominees**: {', '.join(all_nominees)}\nNominated by: {', '.join(set(nominators))}"
+        return "Nomination ceremony completed"
+    
+    def _get_superfan_analysis(self, grouped: Dict[str, List[BBUpdate]]) -> str:
+        """Provide strategic analysis like Taran would"""
+        analysis_parts = []
+        
+        # Analyze competition wins impact
+        if grouped['competition_wins']:
+            analysis_parts.append("💡 **Comp Win Impact**: This changes the entire week's trajectory. Watch for deals being made in the next few hours.")
+        
+        # Analyze voting patterns
+        if grouped['votes'] and len(grouped['votes']) >= 3:
+            vote_count = len(grouped['votes'])
+            if vote_count >= 5:
+                analysis_parts.append("💡 **Jury Analysis**: This looks like a steamroll victory. The jury is clearly unified.")
+            else:
+                analysis_parts.append("💡 **Jury Analysis**: Split votes detected. We might see a closer finale than expected.")
+        
+        # Analyze strategic patterns
+        if grouped['strategy'] and grouped['drama']:
+            analysis_parts.append("💡 **House Dynamics**: Strategy mixed with drama usually means someone's game is blown up. Expect shifting alliances.")
+        
+        return "\n".join(analysis_parts) if analysis_parts else None
+    
+    def _create_detail_embed(self, group_type: str, updates: List[BBUpdate]) -> discord.Embed:
+        """Create detailed embed for specific update groups"""
+        titles = {
+            'votes': "🗳️ Detailed Voting Breakdown",
+            'competition_wins': "🏆 Competition Results Details",
+            'nominations': "🎯 Nomination Ceremony Details",
+            'drama': "💥 Drama Breakdown",
+            'strategy': "🧠 Strategic Moves Breakdown"
+        }
+        
+        colors = {
+            'votes': 0xe74c3c,
+            'competition_wins': 0xf1c40f,
+            'nominations': 0xe67e22,
+            'drama': 0x9b59b6,
+            'strategy': 0x3498db
+        }
+        
+        embed = discord.Embed(
+            title=titles.get(group_type, "Update Details"),
+            color=colors.get(group_type, 0x95a5a6),
+            timestamp=datetime.now()
+        )
+        
+        # Add individual updates with timestamps
+        for i, update in enumerate(updates[:10]):  # Limit to 10 to avoid embed limits
+            time_str = update.pub_date.strftime("%I:%M %p")
+            
+            # Extract key info instead of showing full title/description
+            key_info = self._extract_key_info(update, group_type)
+            
+            embed.add_field(
+                name=f"{time_str}",
+                value=key_info,
+                inline=False
+            )
+        
+        if len(updates) > 10:
+            embed.set_footer(text=f"Showing 10 of {len(updates)} updates")
+        
+        return embed
+    
+    def _extract_key_info(self, update: BBUpdate, group_type: str) -> str:
+        """Extract the most important info from an update"""
+        content = f"{update.title} {update.description}"
+        
+        # Remove duplicate title/description
+        if update.title == update.description:
+            content = update.title
+        
+        # Extract key information based on type
+        if group_type == 'votes':
+            match = self.vote_patterns.search(content)
+            if match:
+                voter_match = re.search(r'(\w+)\s+votes?', content, re.IGNORECASE)
+                if voter_match:
+                    return f"{voter_match.group(1)} → {match.group(2)}"
+        
+        # For other types, return a shortened version
+        if len(content) > 100:
+            return content[:97] + "..."
+        return content
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
@@ -324,6 +682,7 @@ class BBDiscordBot(commands.Bot):
         self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
+        self.update_batcher = UpdateBatcher(self.analyzer)
         
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
@@ -473,7 +832,7 @@ class BBDiscordBot(commands.Bot):
     
     @tasks.loop(minutes=2)
     async def check_rss_feed(self):
-        """Check RSS feed for new updates"""
+        """Check RSS feed for new updates with intelligent batching"""
         if self.is_shutting_down:
             return
         
@@ -487,30 +846,63 @@ class BBDiscordBot(commands.Bot):
             updates = self.process_rss_entries(feed.entries)
             new_updates = self.filter_duplicates(updates)
             
+            # Add new updates to the batcher instead of sending immediately
             for update in new_updates:
                 try:
+                    # Still need to analyze for categorization
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
                     
+                    # Store in database
                     self.db.store_update(update, importance, categories)
-                    await self.send_update_to_channel(update)
+                    
+                    # Add to batcher queue
+                    self.update_batcher.add_update(update)
                     
                     self.total_updates_processed += 1
-                    await asyncio.sleep(1)
                     
                 except Exception as e:
                     logger.error(f"Error processing update: {e}")
                     self.consecutive_errors += 1
             
+            # Check if we should send a batch
+            if self.update_batcher.should_send_batch():
+                await self.send_batch_update()
+            
             self.last_successful_check = datetime.now()
             self.consecutive_errors = 0
             
             if new_updates:
-                logger.info(f"Processed {len(new_updates)} new updates")
+                logger.info(f"Added {len(new_updates)} updates to batch queue")
                 
         except Exception as e:
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
+    
+    async def send_batch_update(self):
+        """Send intelligent batch summary to Discord"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                return
+            
+            # Get batch summary embeds
+            embeds = self.update_batcher.create_batch_summary()
+            
+            # Send all embeds
+            for embed in embeds[:10]:  # Discord limit is 10 embeds per message
+                await channel.send(embed=embed)
+            
+            logger.info(f"Sent batch update with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending batch update: {e}")
 
 # Create bot instance
 bot = BBDiscordBot()
@@ -537,6 +929,10 @@ async def status_slash(interaction: discord.Interaction):
         
         time_since_check = datetime.now() - bot.last_successful_check
         embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
+        
+        # Add batch queue status
+        queue_size = len(bot.update_batcher.update_queue)
+        embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
         
         await interaction.followup.send(embed=embed, ephemeral=True)
         
@@ -637,7 +1033,8 @@ async def commands_slash(interaction: discord.Interaction):
         ("/summary", "Get a summary of recent updates (default: 24h)"),
         ("/status", "Show bot status and statistics"),
         ("/setchannel", "Set update channel (Admin only)"),
-        ("/commands", "Show this help message")
+        ("/commands", "Show this help message"),
+        ("/forcebatch", "Force send any queued updates (Admin only)")
     ]
     
     for name, description in commands_list:
@@ -646,6 +1043,30 @@ async def commands_slash(interaction: discord.Interaction):
     embed.set_footer(text="All commands are ephemeral (only you can see the response)")
     
     await interaction.response.send_message(embed=embed, ephemeral=True)
+
+@bot.tree.command(name="forcebatch", description="Force send any queued updates")
+async def forcebatch_slash(interaction: discord.Interaction):
+    """Force send batch update"""
+    try:
+        if not interaction.user.guild_permissions.administrator:
+            await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+            return
+        
+        await interaction.response.defer(ephemeral=True)
+        
+        queue_size = len(bot.update_batcher.update_queue)
+        if queue_size == 0:
+            await interaction.followup.send("No updates in queue to send.", ephemeral=True)
+            return
+        
+        # Force send the batch
+        await bot.send_batch_update()
+        
+        await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
+        
+    except Exception as e:
+        logger.error(f"Error forcing batch: {e}")
+        await interaction.followup.send("Error sending batch.", ephemeral=True)
 
 def main():
     """Main function to run the bot"""
