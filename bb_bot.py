@@ -2498,6 +2498,7 @@ class BBDatabase:
 
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
+tree = app_commands.CommandTree(bot)
     
     def __init__(self):
         self.config = Config()
