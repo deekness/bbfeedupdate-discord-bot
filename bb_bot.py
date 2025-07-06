@@ -104,7 +104,9 @@ URGENT_KEYWORDS = [
 
 EXCLUDE_WORDS = {
     'The', 'This', 'That', 'They', 'Some', 'Many', 'Other', 'First', 'Last',
-    'Big', 'Brother', 'Julie', 'Host', 'Diary', 'Room', 'Have', 'Not'
+    'Big', 'Brother', 'Julie', 'Host', 'Diary', 'Room', 'Have', 'Not',
+    'America', 'Favorite', 'Winner', 'Finale', 'Vote', 'Jury', 'Eviction',
+    'Competition', 'Ceremony', 'Veto', 'Power', 'Head', 'Household'
 }
 
 # Configure comprehensive logging
@@ -552,6 +554,28 @@ class AllianceTracker:
         content = f"{update.title} {update.description}".strip()
         detected_events = []
         
+        # Skip finale/voting/competition winner updates
+        skip_phrases = [
+            'votes for', 'voted for', 'to be the winner', 'winner of big brother',
+            'jury vote', 'crown the winner', 'wins bb', 'wins hoh', 'wins pov',
+            'wins the power', 'eviction vote', 'evicted', 'julie pulls the keys',
+            'america\'s favorite', 'afp', 'finale', 'final vote', 'cast their vote',
+            'announces the winner', 'wins big brother', 'jury votes', 'key to vote',
+            'official with a vote', 'makes it official'
+        ]
+        
+        content_lower = content.lower()
+        if any(phrase in content_lower for phrase in skip_phrases):
+            return []  # Don't process these updates for alliances
+        
+        # Also skip if it's clearly a competition/ceremony result
+        if re.search(r'wins?\s+(the\s+)?(hoh|pov|veto|competition|challenge|big\s+brother)', content, re.IGNORECASE):
+            return []
+        
+        # Skip eviction and ceremony updates
+        if re.search(r'(eviction|nomination|veto)\s+ceremony', content, re.IGNORECASE):
+            return []
+        
         # Check for alliance formations
         for pattern, pattern_type in self.ALLIANCE_FORMATION_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
@@ -561,6 +585,9 @@ class AllianceTracker:
                 
                 # Filter out common words that aren't houseguests
                 houseguests = [hg for hg in houseguests if hg not in EXCLUDE_WORDS]
+                
+                # Additional filtering for common false positives
+                houseguests = [hg for hg in houseguests if len(hg) > 2 and not hg.lower() in ['big', 'brother', 'julie', 'host', 'america']]
                 
                 if len(houseguests) >= 2:
                     detected_events.append({
@@ -581,30 +608,33 @@ class AllianceTracker:
                     betrayed = groups[1].strip()
                     
                     if betrayer not in EXCLUDE_WORDS and betrayed not in EXCLUDE_WORDS:
-                        detected_events.append({
-                            'type': AllianceEventType.BETRAYAL,
-                            'betrayer': betrayer,
-                            'betrayed': betrayed,
-                            'pattern_type': pattern_type,
-                            'update': update
-                        })
+                        if len(betrayer) > 2 and len(betrayed) > 2:  # Additional length check
+                            detected_events.append({
+                                'type': AllianceEventType.BETRAYAL,
+                                'betrayer': betrayer,
+                                'betrayed': betrayed,
+                                'pattern_type': pattern_type,
+                                'update': update
+                            })
         
         # Check for named alliances
         for pattern in self.ALLIANCE_NAME_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 alliance_name = match.group(1).strip()
+                # Skip if alliance name contains finale/winner phrases
                 if alliance_name and len(alliance_name) > 2:
-                    # Try to extract members mentioned nearby
-                    members = self._extract_nearby_houseguests(content, match.start(), match.end())
-                    detected_events.append({
-                        'type': AllianceEventType.FORMED,
-                        'alliance_name': alliance_name,
-                        'houseguests': members,
-                        'pattern_type': 'named_alliance',
-                        'confidence': 80,  # Named alliances have higher confidence
-                        'update': update
-                    })
+                    if not any(skip in alliance_name.lower() for skip in ['winner', 'big brother', 'finale']):
+                        # Try to extract members mentioned nearby
+                        members = self._extract_nearby_houseguests(content, match.start(), match.end())
+                        detected_events.append({
+                            'type': AllianceEventType.FORMED,
+                            'alliance_name': alliance_name,
+                            'houseguests': members,
+                            'pattern_type': 'named_alliance',
+                            'confidence': 80,  # Named alliances have higher confidence
+                            'update': update
+                        })
         
         return detected_events
     
@@ -2439,7 +2469,9 @@ class BBDiscordBot(commands.Bot):
                 ("/sync", "Sync slash commands (Owner only)"),
                 ("/alliances", "Show current Big Brother alliances"),
                 ("/loyalty", "Show a houseguest's alliance history"),
-                ("/betrayals", "Show recent alliance betrayals")
+                ("/betrayals", "Show recent alliance betrayals"),
+                ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
+                ("/clearalliances", "Clear all alliance data (Owner only)")
             ]
             
             for name, description in commands_list:
@@ -2637,6 +2669,69 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error showing betrayals: {e}")
                 logger.error(traceback.format_exc())
                 await interaction.followup.send("Error generating betrayal list.", ephemeral=True)
+
+        @self.tree.command(name="removebadalliance", description="Remove incorrectly detected alliance (Admin only)")
+        async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
+            """Remove a bad alliance"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                await interaction.response.defer(ephemeral=True)
+                
+                # Mark alliance as dissolved
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE alliances 
+                    SET status = 'dissolved', confidence_level = 0 
+                    WHERE name = ?
+                """, (alliance_name,))
+                
+                affected = cursor.rowcount
+                conn.commit()
+                conn.close()
+                
+                if affected > 0:
+                    await interaction.followup.send(f"✅ Removed alliance: **{alliance_name}**", ephemeral=True)
+                    logger.info(f"Removed bad alliance: {alliance_name}")
+                else:
+                    await interaction.followup.send(f"❌ Alliance '{alliance_name}' not found", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error removing alliance: {e}")
+                await interaction.followup.send("Error removing alliance", ephemeral=True)
+
+        @self.tree.command(name="clearalliances", description="Clear all alliance data (Owner only)")
+        async def clear_alliances(interaction: discord.Interaction):
+            """Clear all alliance data - owner only"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                # Clear all alliance data
+                cursor.execute("DELETE FROM alliance_events")
+                cursor.execute("DELETE FROM alliance_members")
+                cursor.execute("DELETE FROM alliances")
+                
+                conn.commit()
+                conn.close()
+                
+                await interaction.followup.send("✅ All alliance data has been cleared", ephemeral=True)
+                logger.info("Alliance data cleared by owner")
+                
+            except Exception as e:
+                logger.error(f"Error clearing alliances: {e}")
+                await interaction.followup.send("Error clearing alliance data", ephemeral=True)
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
