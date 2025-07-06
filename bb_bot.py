@@ -2762,31 +2762,7 @@ class BBDiscordBot(commands.Bot):
             discord.app_commands.Choice(name="😅 Self - Zing yourself!", value="self")
         ])
         async def zing_slash(interaction: discord.Interaction, mode: str):
-            """Deliver a zing based on the selected mode"""
-            try:
-                if mode == "random":
-                    # Get all members in the server (excluding bots)
-                    members = [m for m in interaction.guild.members if not m.bot]
-                    if not members:
-                        await interaction.response.send_message("No valid members to zing!", ephemeral=True)
-                        return
-                    
-                    import random
-                    target = random.choice(members)
-                    await self.deliver_zing(interaction, target)
-                    
-                elif mode == "self":
-                    target = interaction.user
-                    await self.deliver_zing(interaction, target)
-                    
-                elif mode == "targeted":
-                    # Show member selection view
-                    await interaction.response.send_message("Select your target:", view=TargetSelectView(self, interaction), ephemeral=True)
-                    return
-                
-            except Exception as e:
-                logger.error(f"Error in zing command: {e}")
-                await interaction.response.send_message("Error processing zing command!", ephemeral=True)
+         
     
     async def deliver_zing(self, interaction: discord.Interaction, target: discord.Member):
         """Deliver a zing to the specified target"""
