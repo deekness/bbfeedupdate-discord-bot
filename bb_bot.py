@@ -525,92 +525,6 @@ class Config:
         # Config file (priority 2)
         if self.config_file.exists():
             try:
-            feed = feedparser.parse(self.rss_url)
-            
-            if not feed.entries:
-                logger.warning("No entries returned from RSS feed")
-                return
-            
-            updates = self.process_rss_entries(feed.entries)
-            new_updates = await self.filter_duplicates(updates)  # Now async
-            
-            for update in new_updates:
-                try:
-                    categories = self.analyzer.categorize_update(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    
-                    self.db.store_update(update, importance, categories)
-                    await self.update_batcher.add_update(update)  # Now async
-                    
-                    # Check for alliance information
-                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
-                    for event in alliance_events:
-                        alliance_id = self.alliance_tracker.process_alliance_event(event)
-                        if alliance_id:
-                            logger.info(f"Alliance event processed: {event['type'].value}")
-                    
-                    self.total_updates_processed += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error processing update: {e}")
-                    self.consecutive_errors += 1
-            
-            if self.update_batcher.should_send_batch():
-                await self.send_batch_update()
-            
-            self.last_successful_check = datetime.now()
-            self.consecutive_errors = 0
-            
-            if new_updates:
-                logger.info(f"Added {len(new_updates)} updates to batch queue")
-                
-        except Exception as e:
-            logger.error(f"Error in RSS check: {e}")
-            self.consecutive_errors += 1
-    
-    async def send_batch_update(self):
-        """Send intelligent batch summary to Discord"""
-        channel_id = self.config.get('update_channel_id')
-        if not channel_id:
-            logger.warning("Update channel not configured")
-            return
-        
-        try:
-            channel = self.get_channel(channel_id)
-            if not channel:
-                logger.error(f"Channel {channel_id} not found")
-                return
-            
-            embeds = await self.update_batcher.create_batch_summary()
-            
-            for embed in embeds[:10]:  # Discord limit
-                await channel.send(embed=embed)
-            
-            logger.info(f"Sent batch update with {len(embeds)} embeds")
-            
-        except Exception as e:
-            logger.error(f"Error sending batch update: {e}")
-
-# Create bot instance
-bot = BBDiscordBot()
-
-def main():
-    """Main function to run the bot"""
-    try:
-        bot_token = bot.config.get('bot_token')
-        if not bot_token:
-            logger.error("No bot token found!")
-            return
-        
-        logger.info("Starting Big Brother Discord Bot...")
-        bot.run(bot_token, reconnect=True)
-        
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        logger.critical(traceback.format_exc())
-
-if __name__ == "__main__":
-    main()
                 with open(self.config_file, 'r') as f:
                     file_config = json.load(f)
                     # Only use file config for missing env vars
@@ -673,568 +587,6 @@ class BBUpdate:
     pub_date: datetime
     content_hash: str
     author: str = ""
-
-class PredictionManager:
-    """Manages prediction polls and leaderboards"""
-    
-    def __init__(self, db_path: str = "bb_updates.db"):
-        self.db_path = db_path
-        self.init_prediction_tables()
-    
-    def get_connection(self):
-        """Get database connection with datetime support"""
-        conn = sqlite3.connect(
-            self.db_path,
-            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-        )
-        return conn
-    
-    def init_prediction_tables(self):
-        """Initialize prediction system tables"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Prediction categories
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_categories (
-                category_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT UNIQUE,
-                points_value INTEGER,
-                description TEXT,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
-        
-        # Prediction polls
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_polls (
-                poll_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category_id INTEGER,
-                title TEXT,
-                description TEXT,
-                created_by INTEGER,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                closes_at TIMESTAMP,
-                status TEXT DEFAULT 'open',
-                correct_option_id INTEGER,
-                guild_id INTEGER,
-                FOREIGN KEY (category_id) REFERENCES prediction_categories(category_id)
-            )
-        """)
-        
-        # Poll options
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS poll_options (
-                option_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                poll_id INTEGER,
-                option_text TEXT,
-                vote_count INTEGER DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (poll_id) REFERENCES prediction_polls(poll_id)
-            )
-        """)
-        
-        # User predictions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_predictions (
-                prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                poll_id INTEGER,
-                user_id INTEGER,
-                option_id INTEGER,
-                predicted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                points_earned INTEGER DEFAULT 0,
-                guild_id INTEGER,
-                FOREIGN KEY (poll_id) REFERENCES prediction_polls(poll_id),
-                FOREIGN KEY (option_id) REFERENCES poll_options(option_id),
-                UNIQUE(poll_id, user_id)
-            )
-        """)
-        
-        # Leaderboard cache
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_leaderboard (
-                user_id INTEGER,
-                guild_id INTEGER,
-                total_points INTEGER DEFAULT 0,
-                correct_predictions INTEGER DEFAULT 0,
-                total_predictions INTEGER DEFAULT 0,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY(user_id, guild_id)
-            )
-        """)
-        
-        # Create indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polls_status ON prediction_polls(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polls_guild ON prediction_polls(guild_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_user ON user_predictions(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_leaderboard_guild ON prediction_leaderboard(guild_id)")
-        
-        # Insert default categories
-        default_categories = [
-            ('season_winner', 100, 'Who will win Big Brother this season?'),
-            ('weekly_hoh', 10, 'Who will win Head of Household this week?'),
-            ('weekly_veto', 8, 'Who will win Power of Veto this week?'),
-            ('weekly_eviction', 15, 'Who will be evicted this week?'),
-            ('jury_vote', 5, 'How will jury members vote?'),
-            ('special_event', 20, 'Special events and twists')
-        ]
-        
-        for name, points, desc in default_categories:
-            cursor.execute("""
-                INSERT OR IGNORE INTO prediction_categories (name, points_value, description)
-                VALUES (?, ?, ?)
-            """, (name, points, desc))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info("Prediction system tables initialized")
-    
-    def create_poll(self, category_name: str, title: str, description: str, 
-                   created_by: int, guild_id: int, hours_open: int, 
-                   options: List[str]) -> Optional[int]:
-        """Create a new prediction poll"""
-        if len(options) < 2:
-            raise ValueError("Poll must have at least 2 options")
-        
-        if len(options) > 10:
-            raise ValueError("Poll cannot have more than 10 options")
-        
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get category ID
-            cursor.execute("SELECT category_id FROM prediction_categories WHERE name = ?", (category_name,))
-            category_result = cursor.fetchone()
-            if not category_result:
-                raise ValueError(f"Category '{category_name}' not found")
-            
-            category_id = category_result[0]
-            
-            # Calculate close time
-            closes_at = datetime.now() + timedelta(hours=hours_open)
-            
-            # Create poll
-            cursor.execute("""
-                INSERT INTO prediction_polls (category_id, title, description, created_by, closes_at, guild_id)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (category_id, title, description, created_by, closes_at, guild_id))
-            
-            poll_id = cursor.lastrowid
-            
-            # Add options
-            for option_text in options:
-                cursor.execute("""
-                    INSERT INTO poll_options (poll_id, option_text)
-                    VALUES (?, ?)
-                """, (poll_id, option_text.strip()))
-            
-            conn.commit()
-            logger.info(f"Created poll {poll_id}: {title}")
-            return poll_id
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Error creating poll: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def vote_on_poll(self, poll_id: int, user_id: int, guild_id: int, option_text: str) -> bool:
-        """Cast a vote on a poll"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Check if poll exists and is open
-            cursor.execute("""
-                SELECT status, closes_at FROM prediction_polls 
-                WHERE poll_id = ? AND guild_id = ?
-            """, (poll_id, guild_id))
-            
-            poll_result = cursor.fetchone()
-            if not poll_result:
-                raise ValueError("Poll not found")
-            
-            status, closes_at = poll_result
-            if status != 'open':
-                raise ValueError("Poll is not open for voting")
-            
-            if closes_at and datetime.now() > closes_at:
-                # Auto-close expired poll
-                cursor.execute("UPDATE prediction_polls SET status = 'closed' WHERE poll_id = ?", (poll_id,))
-                raise ValueError("Poll has expired")
-            
-            # Find option ID
-            cursor.execute("""
-                SELECT option_id FROM poll_options 
-                WHERE poll_id = ? AND option_text = ?
-            """, (poll_id, option_text))
-            
-            option_result = cursor.fetchone()
-            if not option_result:
-                raise ValueError(f"Option '{option_text}' not found")
-            
-            option_id = option_result[0]
-            
-            # Remove existing vote if any
-            cursor.execute("""
-                DELETE FROM user_predictions 
-                WHERE poll_id = ? AND user_id = ?
-            """, (poll_id, user_id))
-            
-            # Add new vote
-            cursor.execute("""
-                INSERT INTO user_predictions (poll_id, user_id, option_id, guild_id)
-                VALUES (?, ?, ?, ?)
-            """, (poll_id, user_id, option_id, guild_id))
-            
-            # Update vote count
-            cursor.execute("""
-                UPDATE poll_options 
-                SET vote_count = (
-                    SELECT COUNT(*) FROM user_predictions 
-                    WHERE option_id = poll_options.option_id
-                )
-                WHERE option_id = ?
-            """, (option_id,))
-            
-            conn.commit()
-            logger.info(f"User {user_id} voted for '{option_text}' in poll {poll_id}")
-            return True
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Error voting on poll: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def get_poll_details(self, poll_id: int, guild_id: int) -> Optional[Dict]:
-        """Get detailed poll information"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get poll info
-            cursor.execute("""
-                SELECT p.title, p.description, p.status, p.closes_at, p.created_at,
-                       pc.name as category, pc.points_value
-                FROM prediction_polls p
-                JOIN prediction_categories pc ON p.category_id = pc.category_id
-                WHERE p.poll_id = ? AND p.guild_id = ?
-            """, (poll_id, guild_id))
-            
-            poll_result = cursor.fetchone()
-            if not poll_result:
-                return None
-            
-            title, description, status, closes_at, created_at, category, points = poll_result
-            
-            # Get options with vote counts
-            cursor.execute("""
-                SELECT option_text, vote_count
-                FROM poll_options
-                WHERE poll_id = ?
-                ORDER BY option_id
-            """, (poll_id,))
-            
-            options = cursor.fetchall()
-            
-            # Get total votes
-            cursor.execute("""
-                SELECT COUNT(*) FROM user_predictions WHERE poll_id = ?
-            """, (poll_id,))
-            
-            total_votes = cursor.fetchone()[0]
-            
-            return {
-                'poll_id': poll_id,
-                'title': title,
-                'description': description,
-                'status': status,
-                'closes_at': closes_at,
-                'created_at': created_at,
-                'category': category,
-                'points_value': points,
-                'options': [{'text': opt[0], 'votes': opt[1]} for opt in options],
-                'total_votes': total_votes
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting poll details: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    def get_active_polls(self, guild_id: int) -> List[Dict]:
-        """Get all active polls for a guild"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT p.poll_id, p.title, pc.name as category, p.closes_at,
-                       COUNT(up.prediction_id) as vote_count
-                FROM prediction_polls p
-                JOIN prediction_categories pc ON p.category_id = pc.category_id
-                LEFT JOIN user_predictions up ON p.poll_id = up.poll_id
-                WHERE p.guild_id = ? AND p.status = 'open'
-                GROUP BY p.poll_id
-                ORDER BY p.created_at DESC
-            """, (guild_id,))
-            
-            results = cursor.fetchall()
-            
-            polls = []
-            for row in results:
-                poll_id, title, category, closes_at, vote_count = row
-                
-                # Check if expired
-                is_expired = closes_at and datetime.now() > closes_at
-                
-                polls.append({
-                    'poll_id': poll_id,
-                    'title': title,
-                    'category': category,
-                    'closes_at': closes_at,
-                    'vote_count': vote_count,
-                    'is_expired': is_expired
-                })
-            
-            return polls
-            
-        except Exception as e:
-            logger.error(f"Error getting active polls: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def close_poll(self, poll_id: int, guild_id: int, user_id: int) -> bool:
-        """Manually close a poll"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Verify poll exists and user has permission (will check in bot command)
-            cursor.execute("""
-                SELECT status FROM prediction_polls 
-                WHERE poll_id = ? AND guild_id = ?
-            """, (poll_id, guild_id))
-            
-            result = cursor.fetchone()
-            if not result:
-                raise ValueError("Poll not found")
-            
-            if result[0] != 'open':
-                raise ValueError("Poll is already closed")
-            
-            cursor.execute("""
-                UPDATE prediction_polls 
-                SET status = 'closed' 
-                WHERE poll_id = ?
-            """, (poll_id,))
-            
-            conn.commit()
-            logger.info(f"Poll {poll_id} closed by user {user_id}")
-            return True
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Error closing poll: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def resolve_poll(self, poll_id: int, guild_id: int, winning_option: str, user_id: int) -> Dict:
-        """Resolve a poll and award points"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get poll and category info
-            cursor.execute("""
-                SELECT p.status, pc.points_value
-                FROM prediction_polls p
-                JOIN prediction_categories pc ON p.category_id = pc.category_id
-                WHERE p.poll_id = ? AND p.guild_id = ?
-            """, (poll_id, guild_id))
-            
-            result = cursor.fetchone()
-            if not result:
-                raise ValueError("Poll not found")
-            
-            status, points_value = result
-            if status == 'resolved':
-                raise ValueError("Poll is already resolved")
-            
-            # Find winning option
-            cursor.execute("""
-                SELECT option_id FROM poll_options 
-                WHERE poll_id = ? AND option_text = ?
-            """, (poll_id, winning_option))
-            
-            option_result = cursor.fetchone()
-            if not option_result:
-                raise ValueError(f"Option '{winning_option}' not found")
-            
-            winning_option_id = option_result[0]
-            
-            # Update poll status
-            cursor.execute("""
-                UPDATE prediction_polls 
-                SET status = 'resolved', correct_option_id = ? 
-                WHERE poll_id = ?
-            """, (winning_option_id, poll_id))
-            
-            # Award points to correct predictors
-            cursor.execute("""
-                UPDATE user_predictions 
-                SET points_earned = ? 
-                WHERE poll_id = ? AND option_id = ?
-            """, (points_value, poll_id, winning_option_id))
-            
-            # Get winners
-            cursor.execute("""
-                SELECT user_id FROM user_predictions 
-                WHERE poll_id = ? AND option_id = ?
-            """, (poll_id, winning_option_id))
-            
-            winners = [row[0] for row in cursor.fetchall()]
-            
-            # Update leaderboard for all participants
-            self._update_leaderboard_for_poll(cursor, poll_id, guild_id)
-            
-            conn.commit()
-            
-            logger.info(f"Poll {poll_id} resolved with winner '{winning_option}' by user {user_id}")
-            
-            return {
-                'winners': winners,
-                'points_awarded': points_value,
-                'winning_option': winning_option,
-                'total_winners': len(winners)
-            }
-            
-        except Exception as e:
-            conn.rollback()
-            logger.error(f"Error resolving poll: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def _update_leaderboard_for_poll(self, cursor, poll_id: int, guild_id: int):
-        """Update leaderboard for all users who participated in a poll"""
-        # Get all users who participated in this poll
-        cursor.execute("""
-            SELECT DISTINCT user_id FROM user_predictions WHERE poll_id = ?
-        """, (poll_id,))
-        
-        users = [row[0] for row in cursor.fetchall()]
-        
-        for user_id in users:
-            self._recalculate_user_leaderboard(cursor, user_id, guild_id)
-    
-    def _recalculate_user_leaderboard(self, cursor, user_id: int, guild_id: int):
-        """Recalculate leaderboard stats for a specific user"""
-        # Calculate total points, correct predictions, and total predictions
-        cursor.execute("""
-            SELECT 
-                COALESCE(SUM(points_earned), 0) as total_points,
-                COUNT(CASE WHEN points_earned > 0 THEN 1 END) as correct_predictions,
-                COUNT(*) as total_predictions
-            FROM user_predictions 
-            WHERE user_id = ? AND guild_id = ?
-        """, (user_id, guild_id))
-        
-        result = cursor.fetchone()
-        total_points, correct_predictions, total_predictions = result
-        
-        # Update or insert leaderboard entry
-        cursor.execute("""
-            INSERT OR REPLACE INTO prediction_leaderboard 
-            (user_id, guild_id, total_points, correct_predictions, total_predictions, last_updated)
-            VALUES (?, ?, ?, ?, ?, ?)
-        """, (user_id, guild_id, total_points, correct_predictions, total_predictions, datetime.now()))
-    
-    def get_leaderboard(self, guild_id: int, limit: int = 10) -> List[Dict]:
-        """Get prediction leaderboard for a guild"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT user_id, total_points, correct_predictions, total_predictions,
-                       CASE WHEN total_predictions > 0 
-                            THEN ROUND(correct_predictions * 100.0 / total_predictions, 1)
-                            ELSE 0 END as accuracy
-                FROM prediction_leaderboard
-                WHERE guild_id = ? AND total_predictions > 0
-                ORDER BY total_points DESC, accuracy DESC
-                LIMIT ?
-            """, (guild_id, limit))
-            
-            results = cursor.fetchall()
-            
-            leaderboard = []
-            for i, row in enumerate(results, 1):
-                user_id, total_points, correct, total, accuracy = row
-                leaderboard.append({
-                    'rank': i,
-                    'user_id': user_id,
-                    'total_points': total_points,
-                    'correct_predictions': correct,
-                    'total_predictions': total,
-                    'accuracy': accuracy
-                })
-            
-            return leaderboard
-            
-        except Exception as e:
-            logger.error(f"Error getting leaderboard: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def get_user_predictions(self, user_id: int, guild_id: int) -> List[Dict]:
-        """Get all predictions for a specific user"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT p.poll_id, p.title, po.option_text, up.points_earned, 
-                       p.status, pc.name as category
-                FROM user_predictions up
-                JOIN prediction_polls p ON up.poll_id = p.poll_id
-                JOIN poll_options po ON up.option_id = po.option_id
-                JOIN prediction_categories pc ON p.category_id = pc.category_id
-                WHERE up.user_id = ? AND up.guild_id = ?
-                ORDER BY up.predicted_at DESC
-            """, (user_id, guild_id))
-            
-            results = cursor.fetchall()
-            
-            predictions = []
-            for row in results:
-                poll_id, title, option, points, status, category = row
-                predictions.append({
-                    'poll_id': poll_id,
-                    'title': title,
-                    'prediction': option,
-                    'points_earned': points,
-                    'status': status,
-                    'category': category
-                })
-            
-            return predictions
-            
-        except Exception as e:
-            logger.error(f"Error getting user predictions: {e}")
-            return []
-        finally:
-            conn.close()
 
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights and social dynamics"""
@@ -3161,9 +2513,6 @@ class BBDiscordBot(commands.Bot):
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
         self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
         
-        # ADD PREDICTION MANAGER HERE
-        self.prediction_manager = PredictionManager(self.config.get('database_path', 'bb_updates.db'))
-        
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
         self.total_updates_processed = 0
@@ -3342,21 +2691,13 @@ class BBDiscordBot(commands.Bot):
                 ("/betrayals", "Show recent alliance betrayals"),
                 ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
                 ("/clearalliances", "Clear all alliance data (Owner only)"),
-                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
-                ("/createpoll", "Create a new prediction poll (Admin only)"),
-                ("/vote", "Vote on a prediction poll"),
-                ("/pollstatus", "Check status of a specific poll"),
-                ("/activepolls", "Show all active prediction polls"),
-                ("/closepoll", "Manually close a poll (Admin only)"),
-                ("/resolvepoll", "Declare poll winner and award points (Admin only)"),
-                ("/leaderboard", "Show the prediction leaderboard"),
-                ("/mypredictions", "Show your prediction history")
+                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)")
             ]
             
             for name, description in commands_list:
                 embed.add_field(name=name, value=description, inline=False)
             
-            embed.set_footer(text="Prediction polls coming soon!")
+            embed.set_footer(text="All commands are ephemeral (only you can see the response)")
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
@@ -3710,458 +3051,6 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error delivering zing: {e}")
                 await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
-
-        # PREDICTION SYSTEM COMMANDS START HERE
-        
-        @self.tree.command(name="createpoll", description="Create a new prediction poll (Admin only)")
-        @discord.app_commands.describe(
-            category="Prediction category",
-            title="Poll title",
-            description="Poll description",
-            hours_open="How many hours poll stays open",
-            option1="First option",
-            option2="Second option",
-            option3="Third option (optional)",
-            option4="Fourth option (optional)",
-            option5="Fifth option (optional)"
-        )
-        @discord.app_commands.choices(category=[
-            discord.app_commands.Choice(name="Season Winner", value="season_winner"),
-            discord.app_commands.Choice(name="Weekly HOH", value="weekly_hoh"),
-            discord.app_commands.Choice(name="Weekly Veto", value="weekly_veto"),
-            discord.app_commands.Choice(name="Weekly Eviction", value="weekly_eviction"),
-            discord.app_commands.Choice(name="Jury Vote", value="jury_vote"),
-            discord.app_commands.Choice(name="Special Event", value="special_event")
-        ])
-        async def create_poll_slash(interaction: discord.Interaction, 
-                                   category: discord.app_commands.Choice[str],
-                                   title: str, description: str, hours_open: int,
-                                   option1: str, option2: str, 
-                                   option3: str = None, option4: str = None, option5: str = None):
-            """Create a new prediction poll"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
-                    return
-                
-                if hours_open < 1 or hours_open > 168:  # Max 1 week
-                    await interaction.response.send_message("Hours must be between 1 and 168 (1 week).", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                # Collect options
-                options = [option1, option2]
-                if option3: options.append(option3)
-                if option4: options.append(option4)
-                if option5: options.append(option5)
-                
-                # Create poll
-                poll_id = self.prediction_manager.create_poll(
-                    category_name=category.value,
-                    title=title,
-                    description=description,
-                    created_by=interaction.user.id,
-                    guild_id=interaction.guild.id,
-                    hours_open=hours_open,
-                    options=options
-                )
-                
-                # Create success embed
-                embed = discord.Embed(
-                    title="🗳️ Poll Created Successfully!",
-                    description=f"**{title}**\n{description}",
-                    color=0x00ff00,
-                    timestamp=datetime.now()
-                )
-                
-                embed.add_field(name="📊 Category", value=category.name, inline=True)
-                embed.add_field(name="🆔 Poll ID", value=str(poll_id), inline=True)
-                embed.add_field(name="⏰ Open For", value=f"{hours_open} hours", inline=True)
-                
-                options_text = "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
-                embed.add_field(name="📝 Options", value=options_text, inline=False)
-                
-                embed.set_footer(text=f"Use /vote {poll_id} <option> to vote!")
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-                # Also send public announcement
-                public_embed = discord.Embed(
-                    title="🆕 New Prediction Poll!",
-                    description=f"**{title}**\n{description}",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                public_embed.add_field(name="📊 Category", value=f"{category.name} ({hours_open}h)", inline=True)
-                public_embed.add_field(name="🆔 Poll ID", value=str(poll_id), inline=True)
-                public_embed.add_field(name="📝 Options", value=options_text, inline=False)
-                public_embed.set_footer(text=f"Vote with: /vote {poll_id} <option_name>")
-                
-                await interaction.followup.send(embed=public_embed)
-                
-            except Exception as e:
-                logger.error(f"Error creating poll: {e}")
-                await interaction.followup.send(f"Error creating poll: {str(e)}", ephemeral=True)
-
-        @self.tree.command(name="vote", description="Vote on a prediction poll")
-        @discord.app_commands.describe(
-            poll_id="Poll ID number",
-            option="Your prediction choice"
-        )
-        async def vote_slash(interaction: discord.Interaction, poll_id: int, option: str):
-            """Vote on a prediction poll"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                # Cast vote
-                self.prediction_manager.vote_on_poll(
-                    poll_id=poll_id,
-                    user_id=interaction.user.id,
-                    guild_id=interaction.guild.id,
-                    option_text=option
-                )
-                
-                # Get updated poll details
-                poll_details = self.prediction_manager.get_poll_details(poll_id, interaction.guild.id)
-                
-                if poll_details:
-                    embed = discord.Embed(
-                        title="✅ Vote Recorded!",
-                        description=f"You voted for **{option}** in:\n*{poll_details['title']}*",
-                        color=0x00ff00,
-                        timestamp=datetime.now()
-                    )
-                    
-                    embed.add_field(name="📊 Category", value=poll_details['category'], inline=True)
-                    embed.add_field(name="🎯 Your Vote", value=option, inline=True)
-                    embed.add_field(name="📈 Total Votes", value=str(poll_details['total_votes']), inline=True)
-                    
-                    if poll_details['closes_at']:
-                        closes_at = poll_details['closes_at']
-                        if isinstance(closes_at, str):
-                            closes_at = datetime.fromisoformat(closes_at)
-                        time_left = closes_at - datetime.now()
-                        
-                        if time_left.total_seconds() > 0:
-                            hours_left = int(time_left.total_seconds() / 3600)
-                            embed.add_field(name="⏰ Time Left", value=f"{hours_left} hours", inline=False)
-                    
-                    embed.set_footer(text="You can change your vote by voting again!")
-                    
-                else:
-                    embed = discord.Embed(
-                        title="✅ Vote Recorded!",
-                        description=f"You voted for **{option}**",
-                        color=0x00ff00
-                    )
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error voting: {e}")
-                await interaction.followup.send(f"Error voting: {str(e)}", ephemeral=True)
-
-        @self.tree.command(name="pollstatus", description="Check status of a specific poll")
-        @discord.app_commands.describe(poll_id="Poll ID number")
-        async def poll_status_slash(interaction: discord.Interaction, poll_id: int):
-            """Check poll status"""
-            try:
-                await interaction.response.defer()
-                
-                poll_details = self.prediction_manager.get_poll_details(poll_id, interaction.guild.id)
-                
-                if not poll_details:
-                    await interaction.followup.send("Poll not found.", ephemeral=True)
-                    return
-                
-                status_colors = {
-                    'open': 0x00ff00,
-                    'closed': 0xff9900,
-                    'resolved': 0x0099ff
-                }
-                
-                embed = discord.Embed(
-                    title=f"📊 Poll #{poll_id} Status",
-                    description=f"**{poll_details['title']}**\n{poll_details['description']}",
-                    color=status_colors.get(poll_details['status'], 0x95a5a6),
-                    timestamp=datetime.now()
-                )
-                
-                embed.add_field(name="📈 Status", value=poll_details['status'].title(), inline=True)
-                embed.add_field(name="📊 Category", value=poll_details['category'], inline=True)
-                embed.add_field(name="🏆 Points Value", value=str(poll_details['points_value']), inline=True)
-                
-                # Show voting results
-                options_text = []
-                for option in poll_details['options']:
-                    percentage = (option['votes'] / poll_details['total_votes'] * 100) if poll_details['total_votes'] > 0 else 0
-                    bar = "█" * int(percentage / 10) + "░" * (10 - int(percentage / 10))
-                    options_text.append(f"**{option['text']}**: {option['votes']} votes ({percentage:.1f}%)\n{bar}")
-                
-                embed.add_field(name="📊 Current Results", value="\n\n".join(options_text), inline=False)
-                embed.add_field(name="🗳️ Total Votes", value=str(poll_details['total_votes']), inline=True)
-                
-                # Time information
-                if poll_details['closes_at'] and poll_details['status'] == 'open':
-                    closes_at = poll_details['closes_at']
-                    if isinstance(closes_at, str):
-                        closes_at = datetime.fromisoformat(closes_at)
-                    
-                    time_left = closes_at - datetime.now()
-                    if time_left.total_seconds() > 0:
-                        hours_left = int(time_left.total_seconds() / 3600)
-                        embed.add_field(name="⏰ Time Left", value=f"{hours_left} hours", inline=True)
-                    else:
-                        embed.add_field(name="⏰ Status", value="**EXPIRED**", inline=True)
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error getting poll status: {e}")
-                await interaction.followup.send("Error retrieving poll status.", ephemeral=True)
-
-        @self.tree.command(name="activepolls", description="Show all active prediction polls")
-        async def active_polls_slash(interaction: discord.Interaction):
-            """Show active polls"""
-            try:
-                await interaction.response.defer()
-                
-                active_polls = self.prediction_manager.get_active_polls(interaction.guild.id)
-                
-                embed = discord.Embed(
-                    title="🗳️ Active Prediction Polls",
-                    description=f"**{len(active_polls)} active polls**",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                if not active_polls:
-                    embed.add_field(name="No Active Polls", value="No polls are currently open for voting.", inline=False)
-                else:
-                    for poll in active_polls[:10]:  # Limit to 10
-                        status_emoji = "⏰" if poll['is_expired'] else "🟢"
-                        time_info = "EXPIRED" if poll['is_expired'] else f"{poll['vote_count']} votes"
-                        
-                        embed.add_field(
-                            name=f"{status_emoji} Poll #{poll['poll_id']} - {poll['category']}",
-                            value=f"**{poll['title']}**\n{time_info}",
-                            inline=False
-                        )
-                
-                embed.set_footer(text="Use /pollstatus <id> for details • /vote <id> <option> to vote")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error getting active polls: {e}")
-                await interaction.followup.send("Error retrieving active polls.")
-
-        @self.tree.command(name="closepoll", description="Manually close a poll (Admin only)")
-        @discord.app_commands.describe(poll_id="Poll ID to close")
-        async def close_poll_slash(interaction: discord.Interaction, poll_id: int):
-            """Manually close a poll"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to close polls.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                self.prediction_manager.close_poll(poll_id, interaction.guild.id, interaction.user.id)
-                
-                embed = discord.Embed(
-                    title="🔒 Poll Closed",
-                    description=f"Poll #{poll_id} has been manually closed.",
-                    color=0xff9900,
-                    timestamp=datetime.now()
-                )
-                
-                embed.set_footer(text="Use /resolvepoll to declare the winner and award points")
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error closing poll: {e}")
-                await interaction.followup.send(f"Error closing poll: {str(e)}", ephemeral=True)
-
-        @self.tree.command(name="resolvepoll", description="Declare poll winner and award points (Admin only)")
-        @discord.app_commands.describe(
-            poll_id="Poll ID to resolve",
-            winning_option="The correct/winning option"
-        )
-        async def resolve_poll_slash(interaction: discord.Interaction, poll_id: int, winning_option: str):
-            """Resolve a poll and award points"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to resolve polls.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer()
-                
-                result = self.prediction_manager.resolve_poll(
-                    poll_id=poll_id,
-                    guild_id=interaction.guild.id,
-                    winning_option=winning_option,
-                    user_id=interaction.user.id
-                )
-                
-                embed = discord.Embed(
-                    title="🏆 Poll Resolved!",
-                    description=f"Poll #{poll_id} has been resolved",
-                    color=0x00ff00,
-                    timestamp=datetime.now()
-                )
-                
-                embed.add_field(name="🎯 Winning Option", value=winning_option, inline=True)
-                embed.add_field(name="🏆 Points Awarded", value=str(result['points_awarded']), inline=True)
-                embed.add_field(name="👥 Winners", value=str(result['total_winners']), inline=True)
-                
-                if result['winners']:
-                    # Get user mentions for winners (first 10)
-                    winner_mentions = []
-                    for user_id in result['winners'][:10]:
-                        try:
-                            user = interaction.guild.get_member(user_id) or await interaction.guild.fetch_member(user_id)
-                            winner_mentions.append(user.mention)
-                        except:
-                            winner_mentions.append(f"<@{user_id}>")
-                    
-                    if len(result['winners']) > 10:
-                        winner_mentions.append(f"...and {len(result['winners']) - 10} more")
-                    
-                    embed.add_field(
-                        name="🎉 Congratulations!",
-                        value=" ".join(winner_mentions),
-                        inline=False
-                    )
-                
-                embed.set_footer(text="Points have been added to the leaderboard!")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error resolving poll: {e}")
-                await interaction.followup.send(f"Error resolving poll: {str(e)}")
-
-        @self.tree.command(name="leaderboard", description="Show the prediction leaderboard")
-        @discord.app_commands.describe(limit="Number of top players to show (max 20)")
-        async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
-            """Show prediction leaderboard"""
-            try:
-                if limit < 1 or limit > 20:
-                    await interaction.response.send_message("Limit must be between 1 and 20.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer()
-                
-                leaderboard = self.prediction_manager.get_leaderboard(interaction.guild.id, limit)
-                
-                embed = discord.Embed(
-                    title="🏆 Prediction Leaderboard",
-                    description=f"Top {len(leaderboard)} predictors",
-                    color=0xffd700,
-                    timestamp=datetime.now()
-                )
-                
-                if not leaderboard:
-                    embed.add_field(name="No Data", value="No predictions have been made yet!", inline=False)
-                else:
-                    leaderboard_text = []
-                    
-                    for entry in leaderboard:
-                        rank_emoji = ["🥇", "🥈", "🥉"][entry['rank']-1] if entry['rank'] <= 3 else f"#{entry['rank']}"
-                        
-                        try:
-                            user = interaction.guild.get_member(entry['user_id']) or await interaction.guild.fetch_member(entry['user_id'])
-                            username = user.display_name
-                        except:
-                            username = f"User {entry['user_id']}"
-                        
-                        leaderboard_text.append(
-                            f"{rank_emoji} **{username}**\n"
-                            f"   {entry['total_points']} pts • {entry['correct_predictions']}/{entry['total_predictions']} correct ({entry['accuracy']}%)"
-                        )
-                    
-                    embed.add_field(
-                        name="🎯 Rankings",
-                        value="\n\n".join(leaderboard_text),
-                        inline=False
-                    )
-                
-                embed.set_footer(text="Points: Season Winner=100, Eviction=15, HOH=10, Veto=8, Jury=5, Special=20")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error getting leaderboard: {e}")
-                await interaction.followup.send("Error retrieving leaderboard.")
-
-        @self.tree.command(name="mypredictions", description="Show your prediction history")
-        async def my_predictions_slash(interaction: discord.Interaction):
-            """Show user's prediction history"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                predictions = self.prediction_manager.get_user_predictions(interaction.user.id, interaction.guild.id)
-                
-                embed = discord.Embed(
-                    title="📊 Your Predictions",
-                    description=f"**{len(predictions)} total predictions**",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                if not predictions:
-                    embed.add_field(name="No Predictions", value="You haven't made any predictions yet!", inline=False)
-                else:
-                    # Group by status
-                    open_preds = [p for p in predictions if p['status'] == 'open']
-                    resolved_preds = [p for p in predictions if p['status'] == 'resolved']
-                    
-                    if open_preds:
-                        open_text = []
-                        for pred in open_preds[:5]:  # Show first 5
-                            open_text.append(f"**Poll #{pred['poll_id']}**: {pred['prediction']}\n   *{pred['title']}*")
-                        
-                        if len(open_preds) > 5:
-                            open_text.append(f"...and {len(open_preds) - 5} more")
-                        
-                        embed.add_field(
-                            name="🟢 Active Predictions",
-                            value="\n\n".join(open_text),
-                            inline=False
-                        )
-                    
-                    if resolved_preds:
-                        resolved_text = []
-                        total_points = sum(p['points_earned'] for p in resolved_preds)
-                        correct_count = sum(1 for p in resolved_preds if p['points_earned'] > 0)
-                        
-                        for pred in resolved_preds[:3]:  # Show first 3
-                            status_emoji = "✅" if pred['points_earned'] > 0 else "❌"
-                            points_text = f"(+{pred['points_earned']} pts)" if pred['points_earned'] > 0 else ""
-                            resolved_text.append(f"{status_emoji} **{pred['prediction']}** {points_text}\n   *{pred['title']}*")
-                        
-                        if len(resolved_preds) > 3:
-                            resolved_text.append(f"...and {len(resolved_preds) - 3} more")
-                        
-                        embed.add_field(
-                            name=f"🏁 Recent Results ({correct_count}/{len(resolved_preds)} correct)",
-                            value="\n\n".join(resolved_text),
-                            inline=False
-                        )
-                        
-                        accuracy = (correct_count / len(resolved_preds) * 100) if resolved_preds else 0
-                        embed.add_field(name="📈 Total Points", value=str(total_points), inline=True)
-                        embed.add_field(name="🎯 Accuracy", value=f"{accuracy:.1f}%", inline=True)
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error getting user predictions: {e}")
-                await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -4332,3 +3221,89 @@ class BBDiscordBot(commands.Bot):
             return
         
         try:
+            feed = feedparser.parse(self.rss_url)
+            
+            if not feed.entries:
+                logger.warning("No entries returned from RSS feed")
+                return
+            
+            updates = self.process_rss_entries(feed.entries)
+            new_updates = await self.filter_duplicates(updates)  # Now async
+            
+            for update in new_updates:
+                try:
+                    categories = self.analyzer.categorize_update(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    
+                    self.db.store_update(update, importance, categories)
+                    await self.update_batcher.add_update(update)  # Now async
+                    
+                    # Check for alliance information
+                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    for event in alliance_events:
+                        alliance_id = self.alliance_tracker.process_alliance_event(event)
+                        if alliance_id:
+                            logger.info(f"Alliance event processed: {event['type'].value}")
+                    
+                    self.total_updates_processed += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+                    self.consecutive_errors += 1
+            
+            if self.update_batcher.should_send_batch():
+                await self.send_batch_update()
+            
+            self.last_successful_check = datetime.now()
+            self.consecutive_errors = 0
+            
+            if new_updates:
+                logger.info(f"Added {len(new_updates)} updates to batch queue")
+                
+        except Exception as e:
+            logger.error(f"Error in RSS check: {e}")
+            self.consecutive_errors += 1
+    
+    async def send_batch_update(self):
+        """Send intelligent batch summary to Discord"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                return
+            
+            embeds = await self.update_batcher.create_batch_summary()
+            
+            for embed in embeds[:10]:  # Discord limit
+                await channel.send(embed=embed)
+            
+            logger.info(f"Sent batch update with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending batch update: {e}")
+
+# Create bot instance
+bot = BBDiscordBot()
+
+def main():
+    """Main function to run the bot"""
+    try:
+        bot_token = bot.config.get('bot_token')
+        if not bot_token:
+            logger.error("No bot token found!")
+            return
+        
+        logger.info("Starting Big Brother Discord Bot...")
+        bot.run(bot_token, reconnect=True)
+        
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+        logger.critical(traceback.format_exc())
+
+if __name__ == "__main__":
+    main()
