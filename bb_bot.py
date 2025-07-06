@@ -1,4 +1,4 @@
-import discord
+import discord 
 from discord.ext import commands, tasks
 import feedparser
 import asyncio
@@ -1105,6 +1105,207 @@ class AllianceTracker:
         try:
             cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
             
+            cursor.execute("""
+                SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
+                       MAX(ae.timestamp) as broken_date,
+                       GROUP_CONCAT(DISTINCT am.houseguest_name) as members
+                FROM alliances a
+                JOIN alliance_members am ON a.alliance_id = am.alliance_id
+                JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
+                WHERE a.status IN (?, ?)
+                  AND ae.event_type = ? 
+                  AND datetime(ae.timestamp) > datetime(?)
+                  AND a.confidence_level >= 70
+                GROUP BY a.alliance_id
+                ORDER BY broken_date DESC
+            """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
+                  AllianceEventType.BETRAYAL.value, cutoff_date))
+            
+            broken_alliances = []
+            for row in cursor.fetchall():
+                alliance_id, name, formed_date, broken_date, members = row
+                
+                try:
+                    formed = datetime.fromisoformat(formed_date) if isinstance(formed_date, str) else formed_date
+                    broken = datetime.fromisoformat(broken_date) if isinstance(broken_date, str) else broken_date
+                    days_strong = (broken - formed).days
+                except:
+                    days_strong = 0
+                
+                broken_alliances.append({
+                    'alliance_id': alliance_id,
+                    'name': name,
+                    'members': members.split(',') if members else [],
+                    'formed_date': formed_date,
+                    'broken_date': broken_date,
+                    'days_strong': days_strong
+                })
+            
+            return broken_alliances
+            
+        except Exception as e:
+            logger.error(f"Error getting broken alliances: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def get_houseguest_loyalty_embed(self, houseguest: str) -> discord.Embed:
+        """Create an embed showing a houseguest's alliance history"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cursor.execute("""
+                SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
+                       GROUP_CONCAT(am2.houseguest_name) as all_members
+                FROM alliance_members am
+                JOIN alliances a ON am.alliance_id = a.alliance_id
+                JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
+                WHERE am.houseguest_name = ?
+                GROUP BY a.alliance_id
+                ORDER BY am.joined_date DESC
+            """, (houseguest,))
+            
+            alliances = cursor.fetchall()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM alliance_events
+                WHERE event_type = ? AND involved_houseguests LIKE ?
+            """, (AllianceEventType.BETRAYAL.value, f"%{houseguest}%"))
+            
+            betrayal_count = cursor.fetchone()[0]
+            
+            embed = discord.Embed(
+                title=f"🎭 {houseguest}'s Alliance History",
+                color=0xe74c3c if betrayal_count > 2 else 0x2ecc71,
+                timestamp=datetime.now()
+            )
+            
+            if not alliances:
+                embed.description = f"{houseguest} has not been detected in any alliances"
+                return embed
+            
+            active_alliances = sum(1 for a in alliances if a[1] == AllianceStatus.ACTIVE.value)
+            broken_alliances = sum(1 for a in alliances if a[1] in [AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value])
+            
+            loyalty_score = max(0, 100 - (betrayal_count * 20) - (broken_alliances * 10))
+            loyalty_emoji = "🏆" if loyalty_score >= 80 else "⚠️" if loyalty_score >= 50 else "🚨"
+            
+            embed.description = f"**Loyalty Score**: {loyalty_emoji} {loyalty_score}/100\n"
+            embed.description += f"**Betrayals**: {betrayal_count} | **Active Alliances**: {active_alliances}"
+            
+            alliance_text = []
+            for alliance in alliances[:6]:
+                name, status, joined, left, confidence, members = alliance
+                status_emoji = "✅" if status == AllianceStatus.ACTIVE.value else "❌"
+                
+                other_members = [m for m in members.split(',') if m != houseguest]
+                members_str = ", ".join(other_members[:3])
+                if len(other_members) > 3:
+                    members_str += f" +{len(other_members)-3}"
+                
+                alliance_text.append(f"{status_emoji} **{name}** (w/ {members_str})")
+            
+            embed.add_field(
+                name="📋 Alliance History",
+                value="\n".join(alliance_text) if alliance_text else "No alliances found",
+                inline=False
+            )
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Error in loyalty embed: {e}")
+            embed = discord.Embed(
+                title=f"🎭 {houseguest}'s Alliance History",
+                description="Error retrieving alliance data",
+                color=0xe74c3c
+            )
+            return embed
+        finally:
+            conn.close()
+    
+    def get_recent_betrayals(self, days: int = 7) -> List[Dict]:
+        """Get recent betrayal events"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+            
+            cursor.execute("""
+                SELECT description, timestamp, involved_houseguests
+                FROM alliance_events
+                WHERE event_type = ? AND datetime(timestamp) > datetime(?)
+                ORDER BY timestamp DESC
+            """, (AllianceEventType.BETRAYAL.value, cutoff_date))
+            
+            betrayals = []
+            for row in cursor.fetchall():
+                betrayals.append({
+                    'description': row[0],
+                    'timestamp': row[1],
+                    'involved': row[2].split(',') if row[2] else []
+                })
+            
+            return betrayals
+            
+        except Exception as e:
+            logger.error(f"Error getting betrayals: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def _find_existing_alliance(self, houseguests: List[str]) -> Optional[Dict]:
+        """Find if these houseguests already have an alliance"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get all active alliances for first houseguest
+            cursor.execute("""
+                SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
+                FROM alliance_members am
+                JOIN alliances a ON am.alliance_id = a.alliance_id
+                WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
+            """, (houseguests[0], AllianceStatus.ACTIVE.value))
+            
+            for row in cursor.fetchall():
+                alliance_id = row[0]
+                
+                # Check if all houseguests are in this alliance
+                all_in = True
+                for hg in houseguests[1:]:
+                    cursor.execute("""
+                        SELECT 1 FROM alliance_members
+                        WHERE alliance_id = ? AND houseguest_name = ? AND is_active = 1
+                    """, (alliance_id, hg))
+                    
+                    if not cursor.fetchone():
+                        all_in = False
+                        break
+                
+                if all_in:
+                    return {
+                        'alliance_id': alliance_id,
+                        'name': row[1],
+                        'confidence': row[2]
+                    }
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error finding existing alliance: {e}")
+            return None
+        finally:
+            conn.close()
+    
+    def _find_shared_alliances(self, hg1: str, hg2: str) -> List[Dict]:
+        """Find alliances containing both houseguests"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
             cursor.execute("""
                 SELECT DISTINCT a.alliance_id, a.name
                 FROM alliance_members am1
@@ -2490,7 +2691,7 @@ class BBDiscordBot(commands.Bot):
                 ("/betrayals", "Show recent alliance betrayals"),
                 ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
                 ("/clearalliances", "Clear all alliance data (Owner only)"),
-                ("/zing", "Deliver a BB-style zing!")
+                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)")
             ]
             
             for name, description in commands_list:
@@ -2752,83 +2953,83 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error clearing alliances: {e}")
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
 
-        @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
-        @discord.app_commands.describe(
-            mode="Choose how to deliver your zing"
+from discord import app_commands
+import random
+
+@self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
+@app_commands.describe(
+    zing_type="Choose who to zing: self, random, or a specific member",
+    target="Select a specific member (only needed if zing_type is 'targeted')"
+)
+@app_commands.choices(zing_type=[
+    app_commands.Choice(name="Self Zing", value="self"),
+    app_commands.Choice(name="Random Zing", value="random"),
+    app_commands.Choice(name="Targeted Zing", value="targeted"),
+])
+async def zing_slash(interaction: discord.Interaction, zing_type: app_commands.Choice[str], target: discord.Member = None):
+    try:
+        author = interaction.user
+        guild = interaction.guild
+        zing_target = None
+
+        if zing_type.value == "self":
+            zing_target = author
+        elif zing_type.value == "random":
+            eligible_members = [m for m in guild.members if not m.bot and m != author]
+            if not eligible_members:
+                await interaction.response.send_message("No one else to zing!", ephemeral=True)
+                return
+            zing_target = random.choice(eligible_members)
+        elif zing_type.value == "targeted":
+            if not target:
+                await interaction.response.send_message("You must specify a user to zing.", ephemeral=True)
+                return
+            zing_target = target
+        else:
+            await interaction.response.send_message("Invalid zing type.", ephemeral=True)
+            return
+
+        zing = random.choice(ALL_ZINGS)
+        zing_text = zing.replace("{target}", zing_target.mention)
+
+        # Handle [name] replacement
+        if "[name]" in zing_text:
+            other_members = [m for m in guild.members if not m.bot and m.id != zing_target.id]
+            name_replacement = random.choice(other_members).display_name if other_members else "someone"
+            zing_text = zing_text.replace("[name]", name_replacement)
+
+        embed = discord.Embed(
+            title="🎯 ZING!",
+            description=zing_text,
+            color=0xff1744 if zing_target == author else 0xff9800
         )
-        @discord.app_commands.choices(mode=[
-            discord.app_commands.Choice(name="🎲 Random - Zing a random member", value="random"),
-            discord.app_commands.Choice(name="🎯 Targeted - Choose your victim", value="targeted"),
-            discord.app_commands.Choice(name="😅 Self - Zing yourself!", value="self")
+
+        zingbot_footer = random.choice([
+            "ZING! That's what I'm programmed for!",
+            "Another successful zing delivered!",
+            "Zingbot 3000 strikes again!",
+            "I came, I saw, I ZINGED!",
+            "My circuits are buzzing with that zing!",
+            "Zing executed successfully!",
+            "Target acquired and zinged!",
+            "Maximum zing efficiency achieved!"
         ])
-        async def zing_slash(interaction: discord.Interaction, mode: str):
-         
-    
-        async def deliver_zing(self, interaction: discord.Interaction, target: discord.Member):
-        """Deliver a zing to the specified target"""
-        try:
-            import random
-            
-            # Select a random zing
-            zing = random.choice(ALL_ZINGS)
-            
-            # Replace {target} with the actual mention
-            zing_text = zing.replace("{target}", target.mention)
-            
-            # If the zing contains [name], replace it with a random other member's name
-            if "[name]" in zing_text:
-                other_members = [m for m in interaction.guild.members if not m.bot and m.id != target.id]
-                if other_members:
-                    other_member = random.choice(other_members)
-                    zing_text = zing_text.replace("[name]", other_member.display_name)
-                else:
-                    # Fallback if no other members
-                    zing_text = zing_text.replace("[name]", "someone")
-            
-            # Create the embed
-            embed = discord.Embed(
-                title="🎯 ZING!",
-                description=zing_text,
-                color=0xff1744 if target == interaction.user else 0xff9800
+        embed.set_footer(text=zingbot_footer)
+
+        if zing_target == author:
+            embed.add_field(
+                name="😅 Self-Zing Award",
+                value="You zinged yourself! That takes guts... or poor decision making!",
+                inline=False
             )
-            
-            # Add Zingbot style footer
-            zingbot_phrases = [
-                "ZING! That's what I'm programmed for!",
-                "Another successful zing delivered!",
-                "Zingbot 3000 strikes again!",
-                "I came, I saw, I ZINGED!",
-                "My circuits are buzzing with that zing!",
-                "Zing executed successfully!",
-                "Target acquired and zinged!",
-                "Maximum zing efficiency achieved!"
-            ]
-            
-            embed.set_footer(text=random.choice(zingbot_phrases))
-            
-            # Add special effects for self-zings
-            if target == interaction.user:
-                embed.add_field(
-                    name="😅 Self-Zing Award",
-                    value="You zinged yourself! That takes guts... or poor decision making!",
-                    inline=False
-                )
-            
-            # Check if this is a response to the view or the initial command
-            if interaction.response.is_done():
-                await interaction.followup.send(embed=embed)
-            else:
-                await interaction.response.send_message(embed=embed)
-            
-            # Log the zing
-            logger.info(f"Zing delivered: {interaction.user} zinged {target}")
-            
-        except Exception as e:
-            logger.error(f"Error delivering zing: {e}")
-            if interaction.response.is_done():
-                await interaction.followup.send("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
-            else:
-                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
+
+        await interaction.response.send_message(embed=embed)
+        logger.info(f"Zing delivered: {author} zinged {zing_target}")
+
+    except Exception as e:
+        logger.error(f"Error delivering zing: {e}")
+        await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
+
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
@@ -3065,43 +3266,6 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error sending batch update: {e}")
 
-# View classes for interactive zing selection
-class TargetSelectView(discord.ui.View):
-    """View for selecting a target member"""
-    def __init__(self, bot, original_interaction):
-        super().__init__(timeout=60)
-        self.bot = bot
-        self.original_interaction = original_interaction
-        
-        # Create member select
-        members = [m for m in original_interaction.guild.members if not m.bot]
-        
-        # Create select with up to 25 members (Discord limit)
-        self.member_select = discord.ui.Select(
-            placeholder="Choose your victim...",
-            options=[
-                discord.SelectOption(
-                    label=member.display_name[:100],  # Truncate long names
-                    value=str(member.id),
-                    description=f"@{member.name}"[:100]  # Show username in description
-                )
-                for member in members[:25]  # Discord limit is 25 options
-            ]
-        )
-        self.member_select.callback = self.member_callback
-        self.add_item(self.member_select)
-    
-    async def member_callback(self, interaction: discord.Interaction):
-        member_id = int(self.member_select.values[0])
-        target = interaction.guild.get_member(member_id)
-        
-        if target:
-            await self.bot.deliver_zing(interaction, target)
-        else:
-            await interaction.response.send_message("Member not found!", ephemeral=True)
-        
-        self.stop()
-
 # Create bot instance
 bot = BBDiscordBot()
 
@@ -3122,205 +3286,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-        name, a.formed_date, 
-                       MAX(ae.timestamp) as broken_date,
-                       GROUP_CONCAT(DISTINCT am.houseguest_name) as members
-                FROM alliances a
-                JOIN alliance_members am ON a.alliance_id = am.alliance_id
-                JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
-                WHERE a.status IN (?, ?)
-                  AND ae.event_type = ? 
-                  AND datetime(ae.timestamp) > datetime(?)
-                  AND a.confidence_level >= 70
-                GROUP BY a.alliance_id
-                ORDER BY broken_date DESC
-            """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
-                  AllianceEventType.BETRAYAL.value, cutoff_date))
-            
-            broken_alliances = []
-            for row in cursor.fetchall():
-                alliance_id, name, formed_date, broken_date, members = row
-                
-                try:
-                    formed = datetime.fromisoformat(formed_date) if isinstance(formed_date, str) else formed_date
-                    broken = datetime.fromisoformat(broken_date) if isinstance(broken_date, str) else broken_date
-                    days_strong = (broken - formed).days
-                except:
-                    days_strong = 0
-                
-                broken_alliances.append({
-                    'alliance_id': alliance_id,
-                    'name': name,
-                    'members': members.split(',') if members else [],
-                    'formed_date': formed_date,
-                    'broken_date': broken_date,
-                    'days_strong': days_strong
-                })
-            
-            return broken_alliances
-            
-        except Exception as e:
-            logger.error(f"Error getting broken alliances: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def get_houseguest_loyalty_embed(self, houseguest: str) -> discord.Embed:
-        """Create an embed showing a houseguest's alliance history"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
-                       GROUP_CONCAT(am2.houseguest_name) as all_members
-                FROM alliance_members am
-                JOIN alliances a ON am.alliance_id = a.alliance_id
-                JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
-                WHERE am.houseguest_name = ?
-                GROUP BY a.alliance_id
-                ORDER BY am.joined_date DESC
-            """, (houseguest,))
-            
-            alliances = cursor.fetchall()
-            
-            cursor.execute("""
-                SELECT COUNT(*) FROM alliance_events
-                WHERE event_type = ? AND involved_houseguests LIKE ?
-            """, (AllianceEventType.BETRAYAL.value, f"%{houseguest}%"))
-            
-            betrayal_count = cursor.fetchone()[0]
-            
-            embed = discord.Embed(
-                title=f"🎭 {houseguest}'s Alliance History",
-                color=0xe74c3c if betrayal_count > 2 else 0x2ecc71,
-                timestamp=datetime.now()
-            )
-            
-            if not alliances:
-                embed.description = f"{houseguest} has not been detected in any alliances"
-                return embed
-            
-            active_alliances = sum(1 for a in alliances if a[1] == AllianceStatus.ACTIVE.value)
-            broken_alliances = sum(1 for a in alliances if a[1] in [AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value])
-            
-            loyalty_score = max(0, 100 - (betrayal_count * 20) - (broken_alliances * 10))
-            loyalty_emoji = "🏆" if loyalty_score >= 80 else "⚠️" if loyalty_score >= 50 else "🚨"
-            
-            embed.description = f"**Loyalty Score**: {loyalty_emoji} {loyalty_score}/100\n"
-            embed.description += f"**Betrayals**: {betrayal_count} | **Active Alliances**: {active_alliances}"
-            
-            alliance_text = []
-            for alliance in alliances[:6]:
-                name, status, joined, left, confidence, members = alliance
-                status_emoji = "✅" if status == AllianceStatus.ACTIVE.value else "❌"
-                
-                other_members = [m for m in members.split(',') if m != houseguest]
-                members_str = ", ".join(other_members[:3])
-                if len(other_members) > 3:
-                    members_str += f" +{len(other_members)-3}"
-                
-                alliance_text.append(f"{status_emoji} **{name}** (w/ {members_str})")
-            
-            embed.add_field(
-                name="📋 Alliance History",
-                value="\n".join(alliance_text) if alliance_text else "No alliances found",
-                inline=False
-            )
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"Error in loyalty embed: {e}")
-            embed = discord.Embed(
-                title=f"🎭 {houseguest}'s Alliance History",
-                description="Error retrieving alliance data",
-                color=0xe74c3c
-            )
-            return embed
-        finally:
-            conn.close()
-    
-    def get_recent_betrayals(self, days: int = 7) -> List[Dict]:
-        """Get recent betrayal events"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
-            
-            cursor.execute("""
-                SELECT description, timestamp, involved_houseguests
-                FROM alliance_events
-                WHERE event_type = ? AND datetime(timestamp) > datetime(?)
-                ORDER BY timestamp DESC
-            """, (AllianceEventType.BETRAYAL.value, cutoff_date))
-            
-            betrayals = []
-            for row in cursor.fetchall():
-                betrayals.append({
-                    'description': row[0],
-                    'timestamp': row[1],
-                    'involved': row[2].split(',') if row[2] else []
-                })
-            
-            return betrayals
-            
-        except Exception as e:
-            logger.error(f"Error getting betrayals: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def _find_existing_alliance(self, houseguests: List[str]) -> Optional[Dict]:
-        """Find if these houseguests already have an alliance"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get all active alliances for first houseguest
-            cursor.execute("""
-                SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
-                FROM alliance_members am
-                JOIN alliances a ON am.alliance_id = a.alliance_id
-                WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
-            """, (houseguests[0], AllianceStatus.ACTIVE.value))
-            
-            for row in cursor.fetchall():
-                alliance_id = row[0]
-                
-                # Check if all houseguests are in this alliance
-                all_in = True
-                for hg in houseguests[1:]:
-                    cursor.execute("""
-                        SELECT 1 FROM alliance_members
-                        WHERE alliance_id = ? AND houseguest_name = ? AND is_active = 1
-                    """, (alliance_id, hg))
-                    
-                    if not cursor.fetchone():
-                        all_in = False
-                        break
-                
-                if all_in:
-                    return {
-                        'alliance_id': alliance_id,
-                        'name': row[1],
-                        'confidence': row[2]
-                    }
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error finding existing alliance: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    def _find_shared_alliances(self, hg1: str, hg2: str) -> List[Dict]:
-        """Find alliances containing both houseguests"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT DISTINCT a.alliance_id, a.
