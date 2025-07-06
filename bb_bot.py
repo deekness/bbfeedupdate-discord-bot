@@ -1,4 +1,29 @@
-import discord
+def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
+        """Create highlights embed using pattern matching when LLM unavailable"""
+        try:
+            # Sort updates by importance score
+            updates_with_importance = [
+                (update, self.analyzer.analyze_strategic_importance(update))
+                for update in self.update_queue
+            ]
+            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top 5-8 most important updates
+            selected_updates = updates_with_importance[:min(8, len(updates_with_importance))]
+            
+            if not selected_updates:
+                return None
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Mattered",
+                description=f"Key moments from this period ({len(selected_updates)} of {len(self.update_queue)} updates)",
+                color=0x95a5a6,
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, (update, importance) in enumerate(selected_updates, 1):
+                # Extract correct timeimport discord
 from discord.ext import commands, tasks
 import feedparser
 import asyncio
@@ -1628,7 +1653,7 @@ For each selected update, provide:
     "highlights": [
         {{
             "time": "exact time from update",
-            "title": "exact title from update",
+            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
             "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
             "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
         }}
@@ -1661,21 +1686,26 @@ Be selective - these should be the updates that a superfan would want to know ab
                 )
                 
                 for highlight in highlights_data['highlights'][:8]:  # Max 8
+                    # Clean the title - remove time if it appears at the beginning
+                    title = highlight.get('title', 'Update')
+                    # Remove time pattern from the beginning of the title
+                    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                    
                     # Only add reason if it exists and isn't empty
                     if highlight.get('reason') and highlight['reason'].strip():
                         embed.add_field(
                             name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                            value=f"{highlight.get('title', 'Update')}\n*{highlight['reason']}*",
+                            value=f"{title}\n*{highlight['reason']}*",
                             inline=False
                         )
                     else:
                         embed.add_field(
                             name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                            value=highlight.get('title', 'Update'),
+                            value=title,
                             inline=False
                         )
                 
-                embed.set_footer(text=f"Chen Bot Highlights • {game_phase.replace('_', ' ').title()}")
+                embed.set_footer(text=f"Chen Bot's Highlights • {game_phase.replace('_', ' ').title()}")
                 
                 return embed
                 
@@ -2321,8 +2351,11 @@ Focus on creating a cohesive daily story from these summaries."""
                 # Extract correct time from content rather than pub_date
                 time_str = self._extract_correct_time(update)
                 
-                # Show full update title for highlights (these are the key moments)
+                # Clean the title - remove time if it appears at the beginning
                 title = update.title
+                # Remove time pattern from the beginning of the title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                
                 # Only truncate if extremely long (Discord field limit is 1024 chars)
                 if len(title) > 1000:
                     title = title[:997] + "..."
@@ -2336,7 +2369,7 @@ Focus on creating a cohesive daily story from these summaries."""
                     inline=False
                 )
             
-            embed.set_footer(text=f"Pattern-based Analysis • {len(selected_updates)} key moments selected")
+            embed.set_footer(text=f"Chen Bot's Pattern Analysis • {len(selected_updates)} key moments selected")
             
             return embed
             
