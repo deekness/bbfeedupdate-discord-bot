@@ -3026,6 +3026,7 @@ async def zing_slash(interaction: discord.Interaction, zing_type: app_commands.C
         logger.error(f"Error delivering zing: {e}")
         await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
 
+
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
