@@ -69,18 +69,9 @@ ENV_MAPPINGS = {
     'OWNER_ID': 'owner_id'
 }
 
-# Prediction categories with point values
-PREDICTION_CATEGORIES = {
-    'season_winner': {'points': 100, 'name': 'Season Winner'},
-    'weekly_hoh': {'points': 10, 'name': 'Weekly HOH'},
-    'weekly_veto': {'points': 8, 'name': 'Weekly Veto'},
-    'weekly_eviction': {'points': 15, 'name': 'Weekly Eviction'},
-    'jury_vote': {'points': 5, 'name': 'Jury Vote'},
-    'special_event': {'points': 20, 'name': 'Special Event'}
-}
-
 # Zing constants
 PG_ZINGS = [
+    # 60 PG zings (30%)
     "{target}, you're so forgettable, production had to label your microphone twice!",
     "{target}, your diary room sessions are so boring, even the cameras fall asleep!",
     "{target}, you float so much, you should come with a pool noodle!",
@@ -110,10 +101,41 @@ PG_ZINGS = [
     "{target}, you're floating so much, NASA wants to study you!",
     "{target}, your competition performance is like dial-up internet - outdated and slow!",
     "{target}, you're playing Big Brother like it's a library - too quiet!",
-    "{target}, your strategic mind is like a maze with no exit!"
+    "{target}, your strategic mind is like a maze with no exit!",
+    "{target}, you're so passive, you make a sloth look hyperactive!",
+    "{target}, your game awareness is like a bat without sonar!",
+    "{target}, you're riding coattails so hard, you should be a fashion designer!",
+    "{target}, your threat level is lower than the basement!",
+    "{target}, you're playing 4D chess... badly... in a checkers game!",
+    "{target}, your social connections are like a phone on airplane mode!",
+    "{target}, you're so forgettable, your own alliance forgets you exist!",
+    "{target}, your competition skills need more training than a newborn giraffe!",
+    "{target}, you're playing Big Brother like it's Big Naptime!",
+    "{target}, your strategic planning is like a GPS going in circles!",
+    "{target}, you're so under the radar, submarines are jealous!",
+    "{target}, your game moves are like a snail racing a cheetah!",
+    "{target}, you're playing so safe, you should wear a helmet in the diary room!",
+    "{target}, your big brother game is more like little cousin energy!",
+    "{target}, you're coasting harder than a bike going downhill!",
+    "{target}, your competition record is like a broken scoreboard - all zeros!",
+    "{target}, you're so out of touch, you think the veto meeting is a coffee date!",
+    "{target}, your strategy is like a book with all blank pages!",
+    "{target}, you're playing Big Brother like it's Big Background Character!",
+    "{target}, your game influence is like a whisper in a hurricane!",
+    "{target}, you're so forgettable, the memory wall forgot to light up your picture!",
+    "{target}, your HOH letters are probably just participation certificates!",
+    "{target}, you're playing so quietly, closed captions can't even pick you up!",
+    "{target}, your competition training must have been watching paint dry!",
+    "{target}, you're floating so professionally, you should charge admission!",
+    "{target}, your strategic conversations are like silent movies without subtitles!",
+    "{target}, you're so far from winning, you need a telescope to see the prize!",
+    "{target}, your game awareness is like a security camera that's unplugged!",
+    "{target}, you're playing Big Brother like it's Big Spectator!",
+    "{target}, your influence in the house is like a fan with no blades!"
 ]
 
 PG13_ZINGS = [
+    # 140 PG-13 zings (70%)
     "{target}, you're so boring in bed, your showmance partner counts sheep... while awake!",
     "{target}, your kissing technique is like CPR - technically correct but nobody's enjoying it!",
     "{target}, you're so thirsty, the Have-Not cold showers are jealous!",
@@ -133,7 +155,126 @@ PG13_ZINGS = [
     "{target}, you're so fake, your tears come with a warranty!",
     "{target}, your loyalty flip-flops more than your shower shoes!",
     "{target}, you're riding [name] harder than a mechanical bull at a bar!",
-    "{target}, your competition performance is like your dating history - brief and embarrassing!"
+    "{target}, your competition performance is like your dating history - brief and embarrassing!",
+    "{target}, you're so delusional, you think your showmance actually likes you!",
+    "{target}, your strategic mind is like your love life - completely fictional!",
+    "{target}, you're trying to play puppet master but you can't even master basic hygiene!",
+    "{target}, your game is so messy, it needs a hazmat team!",
+    "{target}, you're so desperate for camera time, you'd streak through the backyard!",
+    "{target}, your HOH reign was shorter than your last relationship!",
+    "{target}, you kiss so much ass, you should carry mouthwash!",
+    "{target}, your game is like a bad hookup - regrettable and forgettable!",
+    "{target}, you're so paranoid, you check under the bed for hidden vetoes!",
+    "{target}, your showmance strategy is like your personality - shallow and transparent!",
+    "{target}, you're playing everyone like a fiddle... a broken fiddle... that nobody wants to hear!",
+    "{target}, your DR sessions are faker than your showmance feelings!",
+    "{target}, you're so obsessed with camera time, you'd make out with your own reflection!",
+    "{target}, your competition beast mode is more like competition deceased mode!",
+    "{target}, you're riding coattails so hard, you should be charged rent!",
+    "{target}, your flirting technique makes everyone want to self-evict!",
+    "{target}, you're so two-faced, you need two microphones!",
+    "{target}, your game is like your shower schedule - inconsistent and concerning!",
+    "{target}, you're playing so dirty, the backyard needs to be power-washed!",
+    "{target}, your strategic talks are like foreplay - awkward and nobody finishes satisfied!",
+    "{target}, you're so thirsty for attention, the pool is jealous!",
+    "{target}, your social game is like a bad date - everyone's looking for an exit!",
+    "{target}, you've been in more beds than a hotel maid!",
+    "{target}, your competition record is like your dating record - a lot of participation, no victories!",
+    "{target}, you're so desperate for allies, you'd align with the ants!",
+    "{target}, your game moves are like your dance moves - embarrassing and ineffective!",
+    "{target}, you're playing so sloppy, you need a bib!",
+    "{target}, your showmance is so forced, it needs a safe word!",
+    "{target}, you're backstabbing so much, you should be a chiropractor!",
+    "{target}, your HOH room saw less action than the storage room!",
+    "{target}, you're so fake, your diary room needs a fact-checker!",
+    "{target}, your strategy is like your skincare routine - non-existent!",
+    "{target}, you're trying to be a mastermind but you can't even master basic math!",
+    "{target}, your game is so weak, it needs Viagra!",
+    "{target}, you're so desperate for screen time, you'd shower with the door open!",
+    "{target}, your loyalty changes faster than your underwear... which isn't saying much!",
+    "{target}, you're playing Big Brother like it's The Bachelor - wrong show!",
+    "{target}, your competition performance is like your pickup lines - a total flop!",
+    "{target}, you're so clingy, your alliance needs therapy!",
+    "{target}, your game is dirtier than the kitchen after taco night!",
+    "{target}, you're trying to be a villain but you're more like a Disney Channel antagonist!",
+    "{target}, your strategic mind is like your dating standards - set way too low!",
+    "{target}, you're so thirsty, you make the Have-Nots look hydrated!",
+    "{target}, your DR sessions are more scripted than a soap opera!",
+    "{target}, you're playing everyone but the only thing you're playing is yourself!",
+    "{target}, your game is like a bad Tinder date - all swipe, no substance!",
+    "{target}, you're so desperate for attention, you'd cuddle with the cameras!",
+    "{target}, your competition skills are like your flirting skills - non-existent!",
+    "{target}, you're riding [name] so hard, you should pay for gas!",
+    "{target}, your game is messier than the bathroom after slop week!",
+    "{target}, you're so fake, your emotions come with a director's cut!",
+    "{target}, your strategic planning is like your shower planning - it doesn't happen!",
+    "{target}, you're playing so many sides, you're basically a geometry lesson!",
+    "{target}, your showmance is so awkward, it makes the feeds switch to fish!",
+    "{target}, you're so bad at comps, you'd lose strip poker fully clothed!",
+    "{target}, your social game is like a bad rash - irritating and spreading!",
+    "{target}, you're trying to be memorable but you're as forgettable as last night's slop!",
+    "{target}, your game is like your hygiene habits - everyone's talking about how bad it is!",
+    "{target}, you're so desperate for a showmance, you'd date a Have-Not restriction!",
+    "{target}, your competition record is like your love life - a series of unfortunate events!",
+    "{target}, you're playing puppet master but your strings are more tangled than earbuds!",
+    "{target}, your strategy sessions are like bad foreplay - confusing and unsatisfying!",
+    "{target}, you're so thirsty, you're dehydrating the other houseguests!",
+    "{target}, your game moves are like your bowel movements - irregular and concerning!",
+    "{target}, you're trying to be Brad Pitt but you're more like arm pit!",
+    "{target}, your alliance loyalty is like your deodorant - it doesn't last long!",
+    "{target}, you're so fake, your tears need a stunt double!",
+    "{target}, your HOH reign was like bad sex - over before anyone noticed it started!",
+    "{target}, you're playing so many people, you need a spreadsheet!",
+    "{target}, your social game is like your shower game - avoided by everyone!",
+    "{target}, you're so desperate for votes, you'd promise your firstborn!",
+    "{target}, your competition performance is like your personality - a total letdown!",
+    "{target}, you're clinging to [name] like a bad STD!",
+    "{target}, your game is dirtier than the hot tub after a showmance session!",
+    "{target}, you're so delusional, you think production likes you!",
+    "{target}, your strategic mind is like your sex appeal - imaginary!",
+    "{target}, you're backstabbing so much, you need a spinal surgeon!",
+    "{target}, your DR sessions are faker than your orgasms... I mean, emotions!",
+    "{target}, you're so bad at this game, you make first boots look like masterminds!",
+    "{target}, your showmance chemistry is like oil and water - it doesn't mix!",
+    "{target}, you're playing so sloppy, you need a mop and bucket!",
+    "{target}, your game is like a bad hookup - everyone regrets it happened!",
+    "{target}, you're so thirsty for attention, you'd streak through the diary room!",
+    "{target}, your competition skills are like your kissing skills - all teeth!",
+    "{target}, you're riding coattails harder than a rodeo champion!",
+    "{target}, your strategy is like your underwear - it needs to be changed!",
+    "{target}, you're so fake, your showmance thinks you're CGI!",
+    "{target}, your game moves are like your sexual moves - predictable and disappointing!",
+    "{target}, you're playing everyone but yourself - and badly!",
+    "{target}, your social game is like body odor - offensive and hard to ignore!",
+    "{target}, you're so desperate for allies, you'd align with production!",
+    "{target}, your HOH room saw less action than a nun's bedroom!",
+    "{target}, you're trying to be a mastermind but you can't even mind your own business!",
+    "{target}, your game is weaker than your bladder during a lockdown!",
+    "{target}, you're so clingy, your showmance filed for emotional support!",
+    "{target}, your competition record is like your hygiene record - needs improvement!",
+    "{target}, you're playing dirty but not in the fun way!",
+    "{target}, your strategic planning is like your family planning - accidental at best!",
+    "{target}, you're so thirsty, the pool lost water!",
+    "{target}, your game is messier than the sheets after your HOH reign!",
+    "{target}, you're so fake, your diary room needs subtitles for the truth!",
+    "{target}, your loyalty flip-flops more than a fish out of water!",
+    "{target}, you're riding [name] like it's your job - and you're working overtime!",
+    "{target}, your social game is like a communicable disease - everyone's trying to avoid it!",
+    "{target}, you're so bad at comps, you'd lose a sleeping contest to an insomniac!",
+    "{target}, your game moves are like your romantic moves - desperate and cringeworthy!",
+    "{target}, you're playing so many sides, you're basically a rubik's cube!",
+    "{target}, your showmance is so forced, it needs a lubricant!",
+    "{target}, you're so desperate for screen time, you'd do diary rooms naked!",
+    "{target}, your strategy is like your sex life - all in your head!",
+    "{target}, you're backstabbing so much, you should open a sushi restaurant!",
+    "{target}, your game is dirtier than the thoughts you have in the HOH shower!",
+    "{target}, you're so delusional, you think your edit is accurate!",
+    "{target}, your competition performance is like erectile dysfunction - a failure to rise to the occasion!",
+    "{target}, you're clinging to power like you cling to your showmance - desperately!",
+    "{target}, your DR sessions have more fiction than the Bible!",
+    "{target}, you're so thirsty, you're sponsored by Gatorade!",
+    "{target}, your game is like a wet dream - seemed good at the time but embarrassing in daylight!",
+    "{target}, you're playing everyone like a cheap kazoo - badly and annoying everyone!"
 ]
 
 # Combine all zings
@@ -391,176 +532,7 @@ class Config:
                         if key in config and not os.getenv(key.upper()):
                             config[key] = value
             except Exception as e:
-                logger.error(f"Error delivering zing: {e}")
-                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
-        
-    def signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully"""
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
-        self.is_shutting_down = True
-        asyncio.create_task(self.close())
-    
-    async def on_ready(self):
-        """Bot startup event"""
-        logger.info(f'{self.user} has connected to Discord!')
-        logger.info(f'Bot is in {len(self.guilds)} guilds')
-        
-        try:
-            synced = await self.tree.sync()
-            logger.info(f"Synced {len(synced)} slash command(s)")
-        except Exception as e:
-            logger.error(f"Failed to sync commands: {e}")
-        
-        try:
-            self.check_rss_feed.start()
-            logger.info("RSS feed monitoring started")
-        except Exception as e:
-            logger.error(f"Error starting background tasks: {e}")
-    
-    def create_content_hash(self, title: str, description: str) -> str:
-        """Create a unique hash for content deduplication"""
-        content = f"{title}|{description}".lower()
-        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
-        content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
-        return hashlib.md5(content.encode()).hexdigest()
-    
-    def process_rss_entries(self, entries) -> List[BBUpdate]:
-        """Process RSS entries into BBUpdate objects"""
-        updates = []
-        
-        for entry in entries:
-            try:
-                title = entry.get('title', 'No title')
-                description = entry.get('description', 'No description')
-                link = entry.get('link', '')
-                
-                pub_date = datetime.now()
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    pub_date = datetime(*entry.published_parsed[:6])
-                
-                content_hash = self.create_content_hash(title, description)
-                author = entry.get('author', '')
-                
-                updates.append(BBUpdate(
-                    title=title,
-                    description=description,
-                    link=link,
-                    pub_date=pub_date,
-                    content_hash=content_hash,
-                    author=author
-                ))
-                
-            except Exception as e:
-                logger.error(f"Error processing RSS entry: {e}")
-                continue
-        
-        return updates
-    
-    async def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
-        """Filter out duplicate updates"""
-        new_updates = []
-        
-        for update in updates:
-            # Check both database and cache
-            if not self.db.is_duplicate(update.content_hash):
-                if not await self.update_batcher.processed_hashes_cache.contains(update.content_hash):
-                    new_updates.append(update)
-        
-        return new_updates
-    
-    @tasks.loop(minutes=2)
-    async def check_rss_feed(self):
-        """Check RSS feed for new updates with intelligent batching"""
-        if self.is_shutting_down:
-            return
-        
-        try:
-            feed = feedparser.parse(self.rss_url)
-            
-            if not feed.entries:
-                logger.warning("No entries returned from RSS feed")
-                return
-            
-            updates = self.process_rss_entries(feed.entries)
-            new_updates = await self.filter_duplicates(updates)
-            
-            for update in new_updates:
-                try:
-                    categories = self.analyzer.categorize_update(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    
-                    self.db.store_update(update, importance, categories)
-                    await self.update_batcher.add_update(update)
-                    
-                    # Check for alliance information
-                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
-                    for event in alliance_events:
-                        alliance_id = self.alliance_tracker.process_alliance_event(event)
-                        if alliance_id:
-                            logger.info(f"Alliance event processed: {event['type'].value}")
-                    
-                    self.total_updates_processed += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error processing update: {e}")
-                    self.consecutive_errors += 1
-            
-            if self.update_batcher.should_send_batch():
-                await self.send_batch_update()
-            
-            self.last_successful_check = datetime.now()
-            self.consecutive_errors = 0
-            
-            if new_updates:
-                logger.info(f"Added {len(new_updates)} updates to batch queue")
-                
-        except Exception as e:
-            logger.error(f"Error in RSS check: {e}")
-            self.consecutive_errors += 1
-    
-    async def send_batch_update(self):
-        """Send intelligent batch summary to Discord"""
-        channel_id = self.config.get('update_channel_id')
-        if not channel_id:
-            logger.warning("Update channel not configured")
-            return
-        
-        try:
-            channel = self.get_channel(channel_id)
-            if not channel:
-                logger.error(f"Channel {channel_id} not found")
-                return
-            
-            embeds = await self.update_batcher.create_batch_summary()
-            
-            for embed in embeds[:10]:  # Discord limit
-                await channel.send(embed=embed)
-            
-            logger.info(f"Sent batch update with {len(embeds)} embeds")
-            
-        except Exception as e:
-            logger.error(f"Error sending batch update: {e}")
-
-# Create bot instance
-bot = BBDiscordBot()
-
-def main():
-    """Main function to run the bot"""
-    try:
-        bot_token = bot.config.get('bot_token')
-        if not bot_token:
-            logger.error("No bot token found!")
-            return
-        
-        logger.info("Starting Big Brother Discord Bot with Prediction Leaderboard...")
-        bot.run(bot_token, reconnect=True)
-        
-    except Exception as e:
-        logger.critical(f"Fatal error: {e}")
-        logger.critical(traceback.format_exc())
-
-if __name__ == "__main__":
-    main()"Error loading config file: {e}")
+                logger.error(f"Error loading config file: {e}")
         
         return config
     
@@ -1443,506 +1415,6 @@ class AllianceTracker:
         finally:
             conn.close()
 
-class PredictionSystem:
-    """Prediction Leaderboard System for Big Brother predictions"""
-    
-    def __init__(self, db_path: str = "bb_updates.db"):
-        self.db_path = db_path
-        self.init_prediction_tables()
-    
-    def get_connection(self):
-        """Get database connection with datetime support"""
-        conn = sqlite3.connect(
-            self.db_path,
-            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-        )
-        return conn
-    
-    def init_prediction_tables(self):
-        """Initialize prediction system tables"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        # Prediction categories with different point values
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_categories (
-                category_id TEXT PRIMARY KEY,
-                name TEXT UNIQUE,
-                points_value INTEGER,
-                description TEXT
-            )
-        """)
-        
-        # Individual prediction polls
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_polls (
-                poll_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category_id TEXT,
-                title TEXT,
-                description TEXT,
-                created_by INTEGER,
-                created_at TIMESTAMP,
-                closes_at TIMESTAMP,
-                status TEXT DEFAULT 'open',
-                correct_option_id INTEGER,
-                FOREIGN KEY (category_id) REFERENCES prediction_categories(category_id)
-            )
-        """)
-        
-        # Poll options
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS poll_options (
-                option_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                poll_id INTEGER,
-                option_text TEXT,
-                created_at TIMESTAMP,
-                FOREIGN KEY (poll_id) REFERENCES prediction_polls(poll_id)
-            )
-        """)
-        
-        # User predictions
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_predictions (
-                prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                poll_id INTEGER,
-                user_id INTEGER,
-                option_id INTEGER,
-                predicted_at TIMESTAMP,
-                points_earned INTEGER DEFAULT 0,
-                FOREIGN KEY (poll_id) REFERENCES prediction_polls(poll_id),
-                FOREIGN KEY (option_id) REFERENCES poll_options(option_id),
-                UNIQUE(poll_id, user_id)
-            )
-        """)
-        
-        # Leaderboard cache
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_leaderboard (
-                user_id INTEGER PRIMARY KEY,
-                total_points INTEGER DEFAULT 0,
-                correct_predictions INTEGER DEFAULT 0,
-                total_predictions INTEGER DEFAULT 0,
-                last_updated TIMESTAMP
-            )
-        """)
-        
-        # Create indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polls_status ON prediction_polls(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polls_closes ON prediction_polls(closes_at)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_user ON user_predictions(user_id)")
-        
-        # Insert default categories
-        for category_id, category_data in PREDICTION_CATEGORIES.items():
-            cursor.execute("""
-                INSERT OR IGNORE INTO prediction_categories (category_id, name, points_value, description)
-                VALUES (?, ?, ?, ?)
-            """, (category_id, category_data['name'], category_data['points'], 
-                  f"Predict the {category_data['name'].lower()}"))
-        
-        conn.commit()
-        conn.close()
-        
-        logger.info("Prediction system tables initialized")
-    
-    def create_poll(self, category_id: str, title: str, description: str, 
-                   created_by: int, hours_open: int, options: List[str]) -> Optional[int]:
-        """Create a new prediction poll"""
-        if category_id not in PREDICTION_CATEGORIES:
-            return None
-        
-        if len(options) < 2 or len(options) > 10:
-            return None
-        
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            closes_at = datetime.now() + timedelta(hours=hours_open)
-            
-            # Insert poll
-            cursor.execute("""
-                INSERT INTO prediction_polls (category_id, title, description, created_by, created_at, closes_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-            """, (category_id, title, description, created_by, datetime.now(), closes_at))
-            
-            poll_id = cursor.lastrowid
-            
-            # Insert options
-            for option_text in options:
-                cursor.execute("""
-                    INSERT INTO poll_options (poll_id, option_text, created_at)
-                    VALUES (?, ?, ?)
-                """, (poll_id, option_text.strip(), datetime.now()))
-            
-            conn.commit()
-            logger.info(f"Created poll {poll_id}: {title}")
-            return poll_id
-            
-        except Exception as e:
-            logger.error(f"Error creating poll: {e}")
-            conn.rollback()
-            return None
-        finally:
-            conn.close()
-    
-    def vote_on_poll(self, poll_id: int, user_id: int, option_text: str) -> Dict[str, any]:
-        """Vote on a prediction poll"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Check if poll exists and is open
-            cursor.execute("""
-                SELECT status, closes_at FROM prediction_polls WHERE poll_id = ?
-            """, (poll_id,))
-            
-            poll_info = cursor.fetchone()
-            if not poll_info:
-                return {'success': False, 'error': 'Poll not found'}
-            
-            status, closes_at = poll_info
-            if status != 'open':
-                return {'success': False, 'error': 'Poll is closed'}
-            
-            if datetime.now() > closes_at:
-                # Auto-close expired poll
-                cursor.execute("""
-                    UPDATE prediction_polls SET status = 'closed' WHERE poll_id = ?
-                """, (poll_id,))
-                conn.commit()
-                return {'success': False, 'error': 'Poll has expired'}
-            
-            # Find the option
-            cursor.execute("""
-                SELECT option_id FROM poll_options WHERE poll_id = ? AND option_text = ?
-            """, (poll_id, option_text))
-            
-            option_result = cursor.fetchone()
-            if not option_result:
-                return {'success': False, 'error': 'Option not found'}
-            
-            option_id = option_result[0]
-            
-            # Check if user already voted
-            cursor.execute("""
-                SELECT prediction_id FROM user_predictions WHERE poll_id = ? AND user_id = ?
-            """, (poll_id, user_id))
-            
-            if cursor.fetchone():
-                return {'success': False, 'error': 'You have already voted on this poll'}
-            
-            # Insert vote
-            cursor.execute("""
-                INSERT INTO user_predictions (poll_id, user_id, option_id, predicted_at)
-                VALUES (?, ?, ?, ?)
-            """, (poll_id, user_id, option_id, datetime.now()))
-            
-            conn.commit()
-            return {'success': True, 'message': f'Vote recorded for "{option_text}"'}
-            
-        except Exception as e:
-            logger.error(f"Error voting on poll: {e}")
-            conn.rollback()
-            return {'success': False, 'error': 'Database error'}
-        finally:
-            conn.close()
-    
-    def close_poll(self, poll_id: int) -> bool:
-        """Manually close a poll"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                UPDATE prediction_polls SET status = 'closed' WHERE poll_id = ? AND status = 'open'
-            """, (poll_id,))
-            
-            success = cursor.rowcount > 0
-            conn.commit()
-            
-            if success:
-                logger.info(f"Poll {poll_id} manually closed")
-            
-            return success
-            
-        except Exception as e:
-            logger.error(f"Error closing poll: {e}")
-            conn.rollback()
-            return False
-        finally:
-            conn.close()
-    
-    def resolve_poll(self, poll_id: int, winning_option: str) -> Dict[str, any]:
-        """Resolve a poll and award points"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get poll info
-            cursor.execute("""
-                SELECT category_id, status FROM prediction_polls WHERE poll_id = ?
-            """, (poll_id,))
-            
-            poll_info = cursor.fetchone()
-            if not poll_info:
-                return {'success': False, 'error': 'Poll not found'}
-            
-            category_id, status = poll_info
-            if status == 'resolved':
-                return {'success': False, 'error': 'Poll already resolved'}
-            
-            # Find winning option
-            cursor.execute("""
-                SELECT option_id FROM poll_options WHERE poll_id = ? AND option_text = ?
-            """, (poll_id, winning_option))
-            
-            option_result = cursor.fetchone()
-            if not option_result:
-                return {'success': False, 'error': 'Winning option not found'}
-            
-            winning_option_id = option_result[0]
-            points_value = PREDICTION_CATEGORIES[category_id]['points']
-            
-            # Update poll status and set correct option
-            cursor.execute("""
-                UPDATE prediction_polls SET status = 'resolved', correct_option_id = ? WHERE poll_id = ?
-            """, (winning_option_id, poll_id))
-            
-            # Award points to correct predictions
-            cursor.execute("""
-                UPDATE user_predictions SET points_earned = ? 
-                WHERE poll_id = ? AND option_id = ?
-            """, (points_value, poll_id, winning_option_id))
-            
-            # Get winners for response
-            cursor.execute("""
-                SELECT COUNT(*) FROM user_predictions WHERE poll_id = ? AND option_id = ?
-            """, (poll_id, winning_option_id))
-            
-            winner_count = cursor.fetchone()[0]
-            
-            # Update leaderboard
-            self._update_leaderboard_for_poll(cursor, poll_id)
-            
-            conn.commit()
-            
-            logger.info(f"Poll {poll_id} resolved: {winning_option} won, {winner_count} correct predictions")
-            
-            return {
-                'success': True, 
-                'message': f'Poll resolved! "{winning_option}" was correct.',
-                'winner_count': winner_count,
-                'points_awarded': points_value
-            }
-            
-        except Exception as e:
-            logger.error(f"Error resolving poll: {e}")
-            conn.rollback()
-            return {'success': False, 'error': 'Database error'}
-        finally:
-            conn.close()
-    
-    def _update_leaderboard_for_poll(self, cursor, poll_id: int):
-        """Update leaderboard entries for a resolved poll"""
-        # Get all predictions for this poll
-        cursor.execute("""
-            SELECT user_id, points_earned FROM user_predictions WHERE poll_id = ?
-        """, (poll_id,))
-        
-        predictions = cursor.fetchall()
-        
-        for user_id, points_earned in predictions:
-            # Update or insert leaderboard entry
-            cursor.execute("""
-                INSERT INTO prediction_leaderboard (user_id, total_points, correct_predictions, total_predictions, last_updated)
-                VALUES (?, ?, ?, 1, ?)
-                ON CONFLICT(user_id) DO UPDATE SET
-                    total_points = total_points + ?,
-                    correct_predictions = correct_predictions + ?,
-                    total_predictions = total_predictions + 1,
-                    last_updated = ?
-            """, (user_id, points_earned, 1 if points_earned > 0 else 0, datetime.now(),
-                  points_earned, 1 if points_earned > 0 else 0, datetime.now()))
-    
-    def get_active_polls(self) -> List[Dict]:
-        """Get all currently active polls"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Auto-close expired polls first
-            cursor.execute("""
-                UPDATE prediction_polls SET status = 'closed' 
-                WHERE status = 'open' AND closes_at < ?
-            """, (datetime.now(),))
-            
-            # Get active polls
-            cursor.execute("""
-                SELECT p.poll_id, p.title, p.description, pc.name as category_name, 
-                       pc.points_value, p.closes_at, p.created_at,
-                       COUNT(up.prediction_id) as vote_count
-                FROM prediction_polls p
-                JOIN prediction_categories pc ON p.category_id = pc.category_id
-                LEFT JOIN user_predictions up ON p.poll_id = up.poll_id
-                WHERE p.status = 'open'
-                GROUP BY p.poll_id
-                ORDER BY p.closes_at ASC
-            """)
-            
-            polls = []
-            for row in cursor.fetchall():
-                polls.append({
-                    'poll_id': row[0],
-                    'title': row[1],
-                    'description': row[2],
-                    'category': row[3],
-                    'points_value': row[4],
-                    'closes_at': row[5],
-                    'created_at': row[6],
-                    'vote_count': row[7]
-                })
-            
-            conn.commit()
-            return polls
-            
-        except Exception as e:
-            logger.error(f"Error getting active polls: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def get_poll_details(self, poll_id: int) -> Optional[Dict]:
-        """Get detailed information about a specific poll"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get poll info
-            cursor.execute("""
-                SELECT p.poll_id, p.title, p.description, pc.name as category_name,
-                       pc.points_value, p.status, p.closes_at, p.created_at
-                FROM prediction_polls p
-                JOIN prediction_categories pc ON p.category_id = pc.category_id
-                WHERE p.poll_id = ?
-            """, (poll_id,))
-            
-            poll_info = cursor.fetchone()
-            if not poll_info:
-                return None
-            
-            # Get options with vote counts
-            cursor.execute("""
-                SELECT po.option_text, COUNT(up.prediction_id) as vote_count
-                FROM poll_options po
-                LEFT JOIN user_predictions up ON po.option_id = up.option_id
-                WHERE po.poll_id = ?
-                GROUP BY po.option_id, po.option_text
-                ORDER BY vote_count DESC
-            """, (poll_id,))
-            
-            options = cursor.fetchall()
-            
-            return {
-                'poll_id': poll_info[0],
-                'title': poll_info[1],
-                'description': poll_info[2],
-                'category': poll_info[3],
-                'points_value': poll_info[4],
-                'status': poll_info[5],
-                'closes_at': poll_info[6],
-                'created_at': poll_info[7],
-                'options': [{'text': opt[0], 'votes': opt[1]} for opt in options]
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting poll details: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    def get_leaderboard(self, limit: int = 10) -> List[Dict]:
-        """Get prediction leaderboard"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT user_id, total_points, correct_predictions, total_predictions,
-                       CASE WHEN total_predictions > 0 
-                            THEN ROUND(CAST(correct_predictions AS FLOAT) / total_predictions * 100, 1)
-                            ELSE 0 END as accuracy
-                FROM prediction_leaderboard
-                ORDER BY total_points DESC, accuracy DESC
-                LIMIT ?
-            """, (limit,))
-            
-            leaderboard = []
-            for i, row in enumerate(cursor.fetchall(), 1):
-                leaderboard.append({
-                    'rank': i,
-                    'user_id': row[0],
-                    'total_points': row[1],
-                    'correct_predictions': row[2],
-                    'total_predictions': row[3],
-                    'accuracy': row[4]
-                })
-            
-            return leaderboard
-            
-        except Exception as e:
-            logger.error(f"Error getting leaderboard: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def get_user_predictions(self, user_id: int, category: str = None) -> List[Dict]:
-        """Get a user's prediction history"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            if category:
-                cursor.execute("""
-                    SELECT p.title, pc.name as category, po.option_text, 
-                           up.points_earned, p.status, up.predicted_at
-                    FROM user_predictions up
-                    JOIN prediction_polls p ON up.poll_id = p.poll_id
-                    JOIN prediction_categories pc ON p.category_id = pc.category_id
-                    JOIN poll_options po ON up.option_id = po.option_id
-                    WHERE up.user_id = ? AND p.category_id = ?
-                    ORDER BY up.predicted_at DESC
-                """, (user_id, category))
-            else:
-                cursor.execute("""
-                    SELECT p.title, pc.name as category, po.option_text, 
-                           up.points_earned, p.status, up.predicted_at
-                    FROM user_predictions up
-                    JOIN prediction_polls p ON up.poll_id = p.poll_id
-                    JOIN prediction_categories pc ON p.category_id = pc.category_id
-                    JOIN poll_options po ON up.option_id = po.option_id
-                    WHERE up.user_id = ?
-                    ORDER BY up.predicted_at DESC
-                """, (user_id,))
-            
-            predictions = []
-            for row in cursor.fetchall():
-                predictions.append({
-                    'title': row[0],
-                    'category': row[1],
-                    'prediction': row[2],
-                    'points_earned': row[3],
-                    'status': row[4],
-                    'predicted_at': row[5]
-                })
-            
-            return predictions
-            
-        except Exception as e:
-            logger.error(f"Error getting user predictions: {e}")
-            return []
-        finally:
-            conn.close()
-
 class UpdateBatcher:
     """Groups and analyzes updates like a BB superfan using LLM intelligence"""
     
@@ -2085,11 +1557,140 @@ class UpdateBatcher:
             # Create main embed
             embeds = self._create_embeds_from_analysis(analysis)
             
+            # Add highlights embed for batches with 7+ updates if rate limits allow
+            if len(self.update_queue) >= 7:
+                logger.info(f"Creating highlights embed for {len(self.update_queue)} updates")
+                try:
+                    # Check if we can make another LLM call
+                    if await self._can_make_llm_request():
+                        highlights_embed = await self._create_llm_highlights_embed(analysis.get('game_phase', 'current'))
+                        if highlights_embed:
+                            embeds.append(highlights_embed)
+                            logger.info("Added LLM-curated highlights embed")
+                        else:
+                            logger.warning("LLM highlights embed creation returned None")
+                    else:
+                        logger.warning("Rate limit reached - creating pattern-based highlights embed")
+                        highlights_embed = self._create_pattern_highlights_embed()
+                        if highlights_embed:
+                            embeds.append(highlights_embed)
+                            logger.info("Added pattern-based highlights embed")
+                except Exception as e:
+                    logger.error(f"Error creating highlights embed: {e}")
+                    # Fallback to pattern-based highlights
+                    highlights_embed = self._create_pattern_highlights_embed()
+                    if highlights_embed:
+                        embeds.append(highlights_embed)
+                        logger.info("Added fallback highlights embed")
+            
             return embeds
             
         except Exception as e:
             logger.error(f"LLM request failed: {e}")
             raise
+    
+    async def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
+        """Create a highlights embed using LLM to curate the most important moments"""
+        try:
+            # Wait for rate limit if needed
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare update data
+            updates_text = "\n".join([
+                f"{self._extract_correct_time(u)} - {u.title}"
+                for u in self.update_queue
+            ])
+            
+            prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.update_queue)} updates.
+
+{updates_text}
+
+Select 5-8 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing. 
+
+HIGHLIGHT-WORTHY updates include:
+- Competition wins (HOH, POV, etc.)
+- Major strategic moves or betrayals
+- Dramatic fights or confrontations  
+- Romantic moments (first kiss, breakup, etc.)
+- Hilarious or memorable incidents
+- Game-changing twists revealed
+- Eviction results or surprise votes
+- Alliance formations or breaks
+
+NOT highlights (unless part of something bigger):
+- Single jury votes (unless it's a crucial swing vote)
+- Routine conversations
+- Minor game talk
+- Regular daily activities
+
+For each selected update, provide:
+{{
+    "highlights": [
+        {{
+            "time": "exact time from update",
+            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
+            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+        }}
+    ]
+}}
+
+Be selective - these should be the updates that a superfan would want to know about if they could only see 5-8 things from this time period."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=800,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            try:
+                highlights_data = self._parse_llm_response(response.content[0].text)
+                
+                if not highlights_data.get('highlights'):
+                    logger.warning("No highlights in LLM response")
+                    return self._create_pattern_highlights_embed()
+                
+                embed = discord.Embed(
+                    title="🎯 Feed Highlights - What Mattered",
+                    description=f"Chen Bot's key moments ({len(highlights_data['highlights'])} of {len(self.update_queue)} updates)",
+                    color=0xe74c3c if game_phase == "final_weeks" else 0xf39c12 if game_phase == "jury_phase" else 0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for highlight in highlights_data['highlights'][:8]:  # Max 8
+                    # Clean the title - remove time if it appears at the beginning
+                    title = highlight.get('title', 'Update')
+                    # Remove time pattern from the beginning of the title
+                    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                    
+                    # Only add reason if it exists and isn't empty
+                    if highlight.get('reason') and highlight['reason'].strip():
+                        embed.add_field(
+                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                            value=f"{title}\n*{highlight['reason']}*",
+                            inline=False
+                        )
+                    else:
+                        embed.add_field(
+                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                            value=title,
+                            inline=False
+                        )
+                
+                embed.set_footer(text=f"Chen Bot's Highlights • {game_phase.replace('_', ' ').title()}")
+                
+                return embed
+                
+            except Exception as e:
+                logger.error(f"Failed to parse highlights response: {e}")
+                return self._create_pattern_highlights_embed()
+                
+        except Exception as e:
+            logger.error(f"LLM highlights creation failed: {e}")
+            return self._create_pattern_highlights_embed()
     
     def _create_llm_prompt(self, updates_data: List[Dict]) -> str:
         """Create LLM prompt for all scenarios"""
@@ -2098,24 +1699,35 @@ class UpdateBatcher:
             for u in updates_data
         ])
         
-        return f"""You are the ultimate Big Brother superfan analyzing these {len(updates_data)} live feed updates:
+        return f"""You are the ultimate Big Brother superfan - part Taran Armstrong's strategic genius, part live feed obsessive who loves ALL aspects of the BB experience.
+
+Analyze these {len(updates_data)} Big Brother live feed updates:
 
 {updates_text}
 
-Provide comprehensive analysis covering BOTH strategic gameplay AND social dynamics:
+As a complete Big Brother superfan, provide analysis covering BOTH strategic gameplay AND social dynamics:
 
 {{
-    "headline": "Compelling headline that captures the most significant development",
-    "summary": "3-4 sentence summary balancing strategic implications with social dynamics",
-    "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning",
-    "social_dynamics": "Alliance formations, trust levels, betrayals, strategic partnerships",
-    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes",
-    "key_players": ["houseguests", "involved", "in", "key", "moments"],
+    "headline": "Compelling headline that captures the most significant development (strategic OR social)",
+    "summary": "3-4 sentence summary balancing strategic implications with social dynamics and entertainment value",
+    "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning, voting plans",
+    "social_dynamics": "Alliance formations, alliance shifts, trust levels, betrayals, strategic partnerships",
+    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes, or unique interactions",
+    "key_players": ["houseguests", "involved", "in", "strategic", "and", "social", "moments"],
     "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
-    "strategic_importance": 7
+    "strategic_importance": 7,
+    "house_culture": "Inside jokes, daily routines, house traditions, or quirky moments that define this group",
+    "relationship_updates": "Showmance developments, romantic connections, dating situations, or relationship changes"
 }}
 
-Focus on both strategic depth and entertainment value for complete Big Brother coverage."""
+Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects. Include:
+- Strategic gameplay and voting plans
+- Alliance dynamics and strategic partnerships
+- Entertainment value and memorable moments
+- House culture and personality interactions
+- Showmance and romantic developments
+
+Focus Social Dynamics on ALLIANCES and strategic relationships, while Relationship Updates covers SHOWMANCES and romantic connections."""
     
     def _parse_llm_response(self, response_text: str) -> dict:
         """Parse LLM response with fallback handling"""
@@ -2181,10 +1793,10 @@ Focus on both strategic depth and entertainment value for complete Big Brother c
                 inline=False
             )
         
-        # Add social dynamics
+        # Add regular season fields
         if analysis.get('social_dynamics'):
             main_embed.add_field(
-                name="🤝 Social Dynamics",
+                name="🤝 Alliance Dynamics",
                 value=analysis['social_dynamics'],
                 inline=False
             )
@@ -2196,10 +1808,31 @@ Focus on both strategic depth and entertainment value for complete Big Brother c
                 inline=False
             )
         
-        # Add key players
+        if analysis.get('relationship_updates'):
+            main_embed.add_field(
+                name="💕 Showmance Updates",
+                value=analysis['relationship_updates'],
+                inline=False
+            )
+        
+        if analysis.get('house_culture'):
+            main_embed.add_field(
+                name="🏠 House Culture",
+                value=analysis['house_culture'],
+                inline=False
+            )
+        
+        # Add common fields
+        self._add_common_fields(main_embed, analysis)
+        
+        return [main_embed]
+    
+    def _add_common_fields(self, embed: discord.Embed, analysis: dict):
+        """Add common fields to embed"""
+        # Key players
         if analysis.get('key_players'):
             players = analysis['key_players'][:8]
-            main_embed.add_field(
+            embed.add_field(
                 name="⭐ Key Players",
                 value=" • ".join(players),
                 inline=False
@@ -2208,16 +1841,14 @@ Focus on both strategic depth and entertainment value for complete Big Brother c
         # Strategic importance
         importance = analysis.get('strategic_importance', 5)
         importance_bar = "🔥" * min(importance, 10)
-        main_embed.add_field(
+        embed.add_field(
             name="🎲 Overall Importance",
             value=f"{importance_bar} {importance}/10",
             inline=True
         )
         
         # Footer
-        main_embed.set_footer(text="Chen Bot's Observations")
-        
-        return [main_embed]
+        embed.set_footer(text="Chen Bot's Observations")
     
     def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
         """Enhanced pattern-based summary with explanation"""
@@ -2310,6 +1941,416 @@ Focus on both strategic depth and entertainment value for complete Big Brother c
             'drama': '💥'
         }
         return emoji_map.get(category, '📝')
+    
+    async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create a comprehensive daily recap from all updates"""
+        if not updates:
+            return []
+        
+        logger.info(f"Creating daily recap for {len(updates)} updates")
+        
+        # Check if we need to chunk the updates (too many for single LLM call)
+        if len(updates) > 50:
+            return await self._create_chunked_daily_recap(updates, day_number)
+        else:
+            return await self._create_single_daily_recap(updates, day_number)
+    
+    async def _create_single_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap from manageable number of updates"""
+        if not self.llm_client or not await self._can_make_llm_request():
+            return self._create_pattern_daily_recap(updates, day_number)
+        
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare chronological update data
+            updates_data = []
+            for update in updates:
+                time_str = self._extract_correct_time(update)
+                updates_data.append({
+                    'time': time_str,
+                    'title': update.title,
+                    'description': update.description[:150] if update.description != update.title else ""
+                })
+            
+            # Create daily recap prompt
+            prompt = f"""You are the ultimate Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
+
+Analyze these {len(updates)} updates from the entire day (chronological order):
+
+{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
+
+Create a comprehensive daily recap that tells the story of Day {day_number}:
+
+{{
+    "headline": "Day {day_number} headline capturing the most significant storyline",
+    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+    "strategic_analysis": "Strategic developments - key conversations, alliance shifts, target changes, power dynamics",
+    "social_dynamics": "Alliance formations, trust shifts, betrayals, strategic partnerships throughout the day",
+    "entertainment_highlights": "Memorable moments, drama, funny interactions, personality conflicts from the day",
+    "key_players": ["houseguests", "who", "were", "central", "to", "the", "day"],
+    "strategic_importance": 8,
+    "house_culture": "Daily routines, inside jokes, traditions, or cultural moments that defined the day",
+    "relationship_updates": "Showmance developments, romantic moments, or relationship changes",
+    "day_timeline": "Brief chronological overview of how the day unfolded from morning to night"
+}}
+
+Focus on creating a comprehensive daily story that captures the full arc of Day {day_number}. This should read like a daily diary entry for superfans."""
+
+            # Make LLM request
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1500,  # Longer for daily recap
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            analysis = self._parse_llm_response(response.content[0].text)
+            
+            # Create daily recap embed
+            return self._create_daily_recap_embed(analysis, day_number, len(updates))
+            
+        except Exception as e:
+            logger.error(f"Daily recap LLM failed: {e}")
+            return self._create_pattern_daily_recap(updates, day_number)
+    
+    async def _create_chunked_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap by summarizing in chunks first"""
+        chunk_size = 25
+        chunks = [updates[i:i + chunk_size] for i in range(0, len(updates), chunk_size)]
+        
+        logger.info(f"Creating chunked daily recap: {len(chunks)} chunks of ~{chunk_size} updates each")
+        
+        # First pass: summarize each chunk
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            if not await self._can_make_llm_request():
+                # Fall back to pattern analysis if rate limited
+                summary = self._summarize_chunk_pattern(chunk, i + 1)
+            else:
+                summary = await self._summarize_chunk_llm(chunk, i + 1)
+            
+            chunk_summaries.append(summary)
+        
+        # Second pass: create final daily recap from summaries
+        return await self._create_final_daily_recap(chunk_summaries, day_number, len(updates))
+    
+    async def _summarize_chunk_llm(self, chunk: List[BBUpdate], chunk_number: int) -> str:
+        """Summarize a chunk of updates using LLM"""
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            updates_text = "\n".join([
+                f"{self._extract_correct_time(u)} - {u.title}"
+                for u in chunk
+            ])
+            
+            prompt = f"""Summarize this chunk of Big Brother updates (Chunk {chunk_number}):
+
+{updates_text}
+
+Provide a 2-3 sentence summary capturing the key strategic and social developments in this time period. Focus on the most important events and conversations."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return f"**Chunk {chunk_number}**: {response.content[0].text}"
+            
+        except Exception as e:
+            logger.error(f"Chunk summarization failed: {e}")
+            return self._summarize_chunk_pattern(chunk, chunk_number)
+    
+    def _summarize_chunk_pattern(self, chunk: List[BBUpdate], chunk_number: int) -> str:
+        """Summarize a chunk using pattern matching"""
+        # Group by importance and pick top updates
+        important_updates = sorted(
+            chunk, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:3]
+        
+        titles = [u.title[:60] + "..." if len(u.title) > 60 else u.title for u in important_updates]
+        return f"**Chunk {chunk_number}**: {' • '.join(titles)}"
+    
+    async def _create_final_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create final daily recap from chunk summaries"""
+        if not self.llm_client or not await self._can_make_llm_request():
+            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+        
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            summaries_text = "\n\n".join(chunk_summaries)
+            
+            prompt = f"""Create a comprehensive Day {day_number} recap from these chunk summaries:
+
+{summaries_text}
+
+Create a daily recap that tells the story of Day {day_number} from these summaries:
+
+{{
+    "headline": "Day {day_number} headline capturing the most significant storyline",
+    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+    "strategic_analysis": "Strategic developments throughout the day",
+    "social_dynamics": "Alliance and relationship dynamics",
+    "entertainment_highlights": "Memorable moments and drama",
+    "key_players": ["main", "houseguests", "from", "the", "day"],
+    "strategic_importance": 8,
+    "house_culture": "Daily culture and routine moments",
+    "relationship_updates": "Showmance and relationship developments",
+    "day_timeline": "How the day unfolded chronologically"
+}}
+
+Focus on creating a cohesive daily story from these summaries."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            analysis = self._parse_llm_response(response.content[0].text)
+            return self._create_daily_recap_embed(analysis, day_number, total_updates)
+            
+        except Exception as e:
+            logger.error(f"Final daily recap failed: {e}")
+            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+    
+    def _create_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int) -> List[discord.Embed]:
+        """Create the daily recap embed"""
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('summary', 'Daily summary not available')}",
+            color=0x9b59b6,  # Purple for daily recaps
+            timestamp=datetime.now()
+        )
+        
+        # Add timeline if available
+        if analysis.get('day_timeline'):
+            embed.add_field(
+                name="📖 Day Timeline",
+                value=analysis['day_timeline'],
+                inline=False
+            )
+        
+        # Add strategic analysis
+        if analysis.get('strategic_analysis'):
+            embed.add_field(
+                name="🎯 Strategic Developments",
+                value=analysis['strategic_analysis'],
+                inline=False
+            )
+        
+        # Add other sections
+        if analysis.get('social_dynamics'):
+            embed.add_field(
+                name="🤝 Alliance Dynamics",
+                value=analysis['social_dynamics'],
+                inline=False
+            )
+        
+        if analysis.get('entertainment_highlights'):
+            embed.add_field(
+                name="🎬 Day Highlights",
+                value=analysis['entertainment_highlights'],
+                inline=False
+            )
+        
+        if analysis.get('relationship_updates'):
+            embed.add_field(
+                name="💕 Showmance Updates",
+                value=analysis['relationship_updates'],
+                inline=False
+            )
+        
+        if analysis.get('house_culture'):
+            embed.add_field(
+                name="🏠 House Culture",
+                value=analysis['house_culture'],
+                inline=False
+            )
+        
+        # Add key players
+        if analysis.get('key_players'):
+            players = analysis['key_players'][:8]
+            embed.add_field(
+                name="⭐ Key Players of the Day",
+                value=" • ".join(players),
+                inline=False
+            )
+        
+        # Add importance
+        importance = analysis.get('strategic_importance', 5)
+        importance_bar = "🔥" * min(importance, 10)
+        embed.add_field(
+            name="📊 Day Importance",
+            value=f"{importance_bar} {importance}/10",
+            inline=True
+        )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • BB Superfan AI")
+        
+        return [embed]
+    
+    def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap using pattern matching"""
+        # Analyze updates by importance
+        important_updates = sorted(
+            updates, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:10]  # Top 10 most important
+        
+        # Group by categories
+        categories = defaultdict(list)
+        for update in important_updates:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{len(updates)} updates** • Pattern-based daily summary",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Add top moments
+        top_moments = []
+        for update in important_updates[:5]:
+            time_str = self._extract_correct_time(update)
+            title = update.title[:80] + "..." if len(update.title) > 80 else update.title
+            top_moments.append(f"**{time_str}**: {title}")
+        
+        if top_moments:
+            embed.add_field(
+                name="🎯 Top Moments of the Day",
+                value="\n".join(top_moments),
+                inline=False
+            )
+        
+        # Add categories
+        for category, cat_updates in categories.items():
+            if cat_updates:
+                summary = f"{len(cat_updates)} updates in this category"
+                embed.add_field(
+                    name=f"{category}",
+                    value=summary,
+                    inline=True
+                )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
+        
+        return [embed]
+    
+    def _create_pattern_daily_recap_from_summaries(self, summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create pattern-based daily recap from summaries"""
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{total_updates} updates** • Chunked summary analysis",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Add chunk summaries
+        summary_text = "\n\n".join(summaries)
+        if len(summary_text) > 1000:
+            summary_text = summary_text[:997] + "..."
+        
+        embed.add_field(
+            name="📝 Daily Summary",
+            value=summary_text,
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
+        
+        return [embed]
+
+    def _extract_correct_time(self, update: BBUpdate) -> str:
+        """Extract the correct time from the update content rather than pub_date"""
+        # Look for time patterns in the title like "07:56 PM PST"
+        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
+        
+        # First try the title
+        match = re.search(time_pattern, update.title)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Then try the description
+        match = re.search(time_pattern, update.description)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Fallback to pub_date if no time found in content
+        return update.pub_date.strftime("%I:%M %p")
+
+    def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
+        """Create highlights embed using pattern matching when LLM unavailable"""
+        try:
+            # Sort updates by importance score
+            updates_with_importance = [
+                (update, self.analyzer.analyze_strategic_importance(update))
+                for update in self.update_queue
+            ]
+            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top 5-8 most important updates
+            selected_updates = updates_with_importance[:min(8, len(updates_with_importance))]
+            
+            if not selected_updates:
+                return None
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Mattered",
+                description=f"Key moments from this period ({len(selected_updates)} of {len(self.update_queue)} updates)",
+                color=0x95a5a6,
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, (update, importance) in enumerate(selected_updates, 1):
+                # Extract correct time from content rather than pub_date
+                time_str = self._extract_correct_time(update)
+                
+                # Clean the title - remove time if it appears at the beginning
+                title = update.title
+                # Remove time pattern from the beginning of the title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                
+                # Only truncate if extremely long (Discord field limit is 1024 chars)
+                if len(title) > 1000:
+                    title = title[:997] + "..."
+                
+                # Add importance indicators
+                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                
+                embed.add_field(
+                    name=f"{importance_emoji} {time_str}",
+                    value=title,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Chen Bot's Pattern Analysis • {len(selected_updates)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Pattern highlights creation failed: {e}")
+            return None
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
@@ -2405,6 +2446,33 @@ class BBDatabase:
             logger.error(f"Database store error: {e}")
             raise
     
+    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates from a specific 24-hour period"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author, importance_score
+                FROM updates 
+                WHERE pub_date >= ? AND pub_date < ?
+                ORDER BY pub_date ASC
+            """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database daily query error: {e}")
+            return []
+    
     def get_recent_updates(self, hours: int) -> List[BBUpdate]:
         """Get updates from the last N hours"""
         try:
@@ -2429,7 +2497,7 @@ class BBDatabase:
             return []
 
 class BBDiscordBot(commands.Bot):
-    """Main Discord bot class with 24/7 reliability features and Prediction System"""
+    """Main Discord bot class with 24/7 reliability features"""
     
     def __init__(self):
         self.config = Config()
@@ -2445,9 +2513,6 @@ class BBDiscordBot(commands.Bot):
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
         self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
         
-        # Initialize prediction system
-        self.prediction_system = PredictionSystem(self.config.get('database_path', 'bb_updates.db'))
-        
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
         self.total_updates_processed = 0
@@ -2460,7 +2525,7 @@ class BBDiscordBot(commands.Bot):
         self.setup_commands()
     
     def setup_commands(self):
-        """Setup all slash commands including prediction system"""
+        """Setup all slash commands"""
         
         @self.tree.command(name="status", description="Show bot status and statistics")
         async def status_slash(interaction: discord.Interaction):
@@ -2494,500 +2559,399 @@ class BBDiscordBot(commands.Bot):
                 llm_status = "✅ Enabled" if self.update_batcher.llm_client else "❌ Disabled"
                 embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
                 
+                # Add cache statistics
+                cache_stats = self.update_batcher.processed_hashes_cache.get_stats()
+                embed.add_field(
+                    name="Hash Cache",
+                    value=f"Size: {cache_stats['size']}/{cache_stats['capacity']}\n"
+                          f"Hit Rate: {cache_stats['hit_rate']}\n"
+                          f"Evictions: {cache_stats['evictions']}",
+                    inline=True
+                )
+                
+                # Add rate limiting stats
+                rate_stats = self.update_batcher.get_rate_limit_stats()
+                embed.add_field(
+                    name="Rate Limits",
+                    value=f"Minute: {rate_stats['requests_this_minute']}/{rate_stats['minute_limit']}\n"
+                          f"Hour: {rate_stats['requests_this_hour']}/{rate_stats['hour_limit']}\n"
+                          f"Total: {rate_stats['total_requests']}",
+                    inline=True
+                )
+                
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 
             except Exception as e:
                 logger.error(f"Error generating status: {e}")
                 await interaction.followup.send("Error generating status.", ephemeral=True)
 
-        @self.tree.command(name="commands", description="Show all available commands")
-        async def commands_slash(interaction: discord.Interaction):
-            """Show available commands"""
-            embed = discord.Embed(
-                title="Big Brother Bot Commands",
-                description="Monitor RSS feed with intelligent analysis and prediction leaderboards",
-                color=0x3498db
-            )
-            
-            commands_list = [
-                ("**CORE COMMANDS**", ""),
-                ("/status", "Show bot status (Admin only)"),
-                ("/setchannel", "Set update channel (Admin only)"),
-                ("/commands", "Show this help message"),
-                ("**ALLIANCES**", ""),
-                ("/alliances", "Show current Big Brother alliances"),
-                ("/loyalty", "Show a houseguest's alliance history"),
-                ("/betrayals", "Show recent alliance betrayals"),
-                ("**PREDICTIONS**", ""),
-                ("/create_poll", "Create prediction poll (Admin only)"),
-                ("/vote", "Vote on a prediction poll"),
-                ("/active_polls", "Show all active polls"),
-                ("/poll_status", "Show poll details with vote counts"),
-                ("/leaderboard", "Show prediction leaderboard"),
-                ("/my_predictions", "Show your prediction history"),
-                ("/resolve_poll", "Resolve poll and award points (Admin only)"),
-                ("**FUN**", ""),
-                ("/zing", "Deliver a BB-style zing!")
-            ]
-            
-            for name, description in commands_list:
-                if name.startswith("**"):
-                    embed.add_field(name=name, value=description or "\u200b", inline=False)
-                else:
-                    embed.add_field(name=name, value=description, inline=False)
-            
-            embed.set_footer(text="All commands are ephemeral (only you can see the response)")
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        # Prediction System Commands
-        @self.tree.command(name="create_poll", description="Create a new prediction poll (Admin only)")
-        @discord.app_commands.describe(
-            category="Poll category",
-            title="Poll title",
-            description="Poll description",
-            hours_open="Hours the poll stays open",
-            option1="First option",
-            option2="Second option",
-            option3="Third option (optional)",
-            option4="Fourth option (optional)",
-            option5="Fifth option (optional)"
-        )
-        @discord.app_commands.choices(category=[
-            discord.app_commands.Choice(name="Season Winner", value="season_winner"),
-            discord.app_commands.Choice(name="Weekly HOH", value="weekly_hoh"),
-            discord.app_commands.Choice(name="Weekly Veto", value="weekly_veto"),
-            discord.app_commands.Choice(name="Weekly Eviction", value="weekly_eviction"),
-            discord.app_commands.Choice(name="Jury Vote", value="jury_vote"),
-            discord.app_commands.Choice(name="Special Event", value="special_event")
-        ])
-        async def create_poll_slash(interaction: discord.Interaction, 
-                                   category: discord.app_commands.Choice[str],
-                                   title: str, description: str, hours_open: int,
-                                   option1: str, option2: str,
-                                   option3: str = None, option4: str = None, option5: str = None):
-            """Create a new prediction poll"""
+        @self.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
+        async def summary_slash(interaction: discord.Interaction, hours: int = 24):
+            """Generate a summary of updates"""
             try:
                 if not interaction.user.guild_permissions.administrator:
                     await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
                     return
                 
-                if hours_open < 1 or hours_open > 168:  # Max 1 week
-                    await interaction.response.send_message("Hours must be between 1 and 168 (1 week)", ephemeral=True)
+                if hours < 1 or hours > 168:
+                    await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
                     return
                 
-                # Collect options
-                options = [option1, option2]
-                if option3:
-                    options.append(option3)
-                if option4:
-                    options.append(option4)
-                if option5:
-                    options.append(option5)
-                
-                await interaction.response.defer()
-                
-                poll_id = self.prediction_system.create_poll(
-                    category_id=category.value,
-                    title=title,
-                    description=description,
-                    created_by=interaction.user.id,
-                    hours_open=hours_open,
-                    options=options
-                )
-                
-                if poll_id:
-                    category_info = PREDICTION_CATEGORIES[category.value]
-                    closes_at = datetime.now() + timedelta(hours=hours_open)
-                    
-                    embed = discord.Embed(
-                        title=f"🗳️ New Prediction Poll Created!",
-                        description=f"**{title}**\n{description}",
-                        color=0x3498db,
-                        timestamp=datetime.now()
-                    )
-                    
-                    embed.add_field(
-                        name="📊 Poll Details",
-                        value=f"**Category**: {category_info['name']}\n"
-                              f"**Points Value**: {category_info['points']}\n"
-                              f"**Poll ID**: {poll_id}\n"
-                              f"**Closes**: <t:{int(closes_at.timestamp())}:R>",
-                        inline=False
-                    )
-                    
-                    options_text = "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
-                    embed.add_field(
-                        name="🔹 Options",
-                        value=options_text,
-                        inline=False
-                    )
-                    
-                    embed.add_field(
-                        name="🗳️ How to Vote",
-                        value=f"Use `/vote {poll_id} <option>` to make your prediction!",
-                        inline=False
-                    )
-                    
-                    embed.set_footer(text=f"Created by {interaction.user.display_name}")
-                    
-                    await interaction.followup.send(embed=embed)
-                    logger.info(f"Poll created: {poll_id} - {title}")
-                    
-                else:
-                    await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
-                    
-            except Exception as e:
-                logger.error(f"Error creating poll: {e}")
-                await interaction.followup.send("Error creating poll.", ephemeral=True)
-
-        @self.tree.command(name="vote", description="Vote on a prediction poll")
-        @discord.app_commands.describe(
-            poll_id="Poll ID to vote on",
-            option="Your prediction choice"
-        )
-        async def vote_slash(interaction: discord.Interaction, poll_id: int, option: str):
-            """Vote on a prediction poll"""
-            try:
                 await interaction.response.defer(ephemeral=True)
                 
-                result = self.prediction_system.vote_on_poll(poll_id, interaction.user.id, option)
+                updates = self.db.get_recent_updates(hours)
                 
-                if result['success']:
-                    embed = discord.Embed(
-                        title="✅ Vote Recorded!",
-                        description=result['message'],
-                        color=0x2ecc71,
-                        timestamp=datetime.now()
-                    )
-                    
-                    # Get poll details for context
-                    poll_details = self.prediction_system.get_poll_details(poll_id)
-                    if poll_details:
-                        embed.add_field(
-                            name="📊 Poll Info",
-                            value=f"**{poll_details['title']}**\n"
-                                  f"Category: {poll_details['category']}\n"
-                                  f"Points: {poll_details['points_value']}",
-                            inline=False
-                        )
-                    
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    logger.info(f"Vote recorded: User {interaction.user.id} voted '{option}' on poll {poll_id}")
-                    
-                else:
-                    embed = discord.Embed(
-                        title="❌ Vote Failed",
-                        description=result['error'],
-                        color=0xe74c3c
-                    )
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    
-            except Exception as e:
-                logger.error(f"Error voting: {e}")
-                await interaction.followup.send("Error processing vote.", ephemeral=True)
-
-        @self.tree.command(name="resolve_poll", description="Resolve poll and award points (Admin only)")
-        async def resolve_poll_slash(interaction: discord.Interaction, poll_id: int, winning_option: str):
-            """Resolve a poll and award points"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                if not updates:
+                    await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
                     return
                 
-                await interaction.response.defer()
-                
-                result = self.prediction_system.resolve_poll(poll_id, winning_option)
-                
-                if result['success']:
-                    embed = discord.Embed(
-                        title="🏆 Poll Resolved!",
-                        description=result['message'],
-                        color=0xf39c12,
-                        timestamp=datetime.now()
-                    )
-                    
-                    embed.add_field(
-                        name="📊 Results",
-                        value=f"**Winners**: {result['winner_count']} users\n"
-                              f"**Points Awarded**: {result['points_awarded']} each",
-                        inline=False
-                    )
-                    
-                    embed.set_footer(text=f"Resolved by {interaction.user.display_name}")
-                    
-                    await interaction.followup.send(embed=embed)
-                    logger.info(f"Poll {poll_id} resolved: {winning_option} won, {result['winner_count']} winners")
-                    
-                else:
-                    embed = discord.Embed(
-                        title="❌ Resolution Failed",
-                        description=result['error'],
-                        color=0xe74c3c
-                    )
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    
-            except Exception as e:
-                logger.error(f"Error resolving poll: {e}")
-                await interaction.followup.send("Error resolving poll.", ephemeral=True)
-
-        @self.tree.command(name="active_polls", description="Show all active prediction polls")
-        async def active_polls_slash(interaction: discord.Interaction):
-            """Show all active polls"""
-            try:
-                await interaction.response.defer()
-                
-                polls = self.prediction_system.get_active_polls()
-                
-                if not polls:
-                    embed = discord.Embed(
-                        title="📊 Active Prediction Polls",
-                        description="No active polls at the moment.",
-                        color=0x95a5a6
-                    )
-                    await interaction.followup.send(embed=embed)
-                    return
+                categories = {}
+                for update in updates:
+                    update_categories = self.analyzer.categorize_update(update)
+                    for category in update_categories:
+                        if category not in categories:
+                            categories[category] = []
+                        categories[category].append(update)
                 
                 embed = discord.Embed(
-                    title="📊 Active Prediction Polls",
-                    description=f"**{len(polls)} active polls**",
+                    title=f"Big Brother Updates Summary ({hours}h)",
+                    description=f"**{len(updates)} total updates**",
                     color=0x3498db,
                     timestamp=datetime.now()
                 )
                 
-                for poll in polls[:10]:  # Limit to 10 polls
-                    closes_timestamp = int(poll['closes_at'].timestamp()) if isinstance(poll['closes_at'], datetime) else int(datetime.fromisoformat(poll['closes_at']).timestamp())
+                for category, cat_updates in categories.items():
+                    top_updates = sorted(cat_updates, 
+                                       key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                                       reverse=True)[:3]
+                    
+                    summary_text = "\n".join([f"• {update.title[:100]}..." 
+                                            if len(update.title) > 100 
+                                            else f"• {update.title}" 
+                                            for update in top_updates])
                     
                     embed.add_field(
-                        name=f"🗳️ Poll #{poll['poll_id']} - {poll['category']}",
-                        value=f"**{poll['title']}**\n"
-                              f"{poll['description'][:100]}{'...' if len(poll['description']) > 100 else ''}\n"
-                              f"Points: {poll['points_value']} | Votes: {poll['vote_count']}\n"
-                              f"Closes: <t:{closes_timestamp}:R>",
-                        inline=False
-                    )
-                
-                embed.set_footer(text="Use /vote <poll_id> <option> to make predictions!")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing active polls: {e}")
-                await interaction.followup.send("Error retrieving active polls.", ephemeral=True)
-
-        @self.tree.command(name="poll_status", description="Show details about a specific poll")
-        async def poll_status_slash(interaction: discord.Interaction, poll_id: int):
-            """Show detailed poll information"""
-            try:
-                await interaction.response.defer()
-                
-                poll_details = self.prediction_system.get_poll_details(poll_id)
-                
-                if not poll_details:
-                    await interaction.followup.send(f"Poll #{poll_id} not found.", ephemeral=True)
-                    return
-                
-                embed = discord.Embed(
-                    title=f"📊 Poll #{poll_id} Status",
-                    description=f"**{poll_details['title']}**\n{poll_details['description']}",
-                    color=0x3498db if poll_details['status'] == 'open' else 0x95a5a6,
-                    timestamp=datetime.now()
-                )
-                
-                # Poll info
-                status_emoji = "🟢" if poll_details['status'] == 'open' else "🔴" if poll_details['status'] == 'closed' else "✅"
-                embed.add_field(
-                    name="📋 Poll Info",
-                    value=f"**Category**: {poll_details['category']}\n"
-                          f"**Status**: {status_emoji} {poll_details['status'].title()}\n"
-                          f"**Points**: {poll_details['points_value']}",
-                    inline=True
-                )
-                
-                # Timing info
-                created_timestamp = int(poll_details['created_at'].timestamp()) if isinstance(poll_details['created_at'], datetime) else int(datetime.fromisoformat(poll_details['created_at']).timestamp())
-                closes_timestamp = int(poll_details['closes_at'].timestamp()) if isinstance(poll_details['closes_at'], datetime) else int(datetime.fromisoformat(poll_details['closes_at']).timestamp())
-                
-                embed.add_field(
-                    name="⏰ Timing",
-                    value=f"**Created**: <t:{created_timestamp}:R>\n"
-                          f"**Closes**: <t:{closes_timestamp}:R>",
-                    inline=True
-                )
-                
-                # Options with vote counts
-                options_text = []
-                total_votes = sum(opt['votes'] for opt in poll_details['options'])
-                
-                for opt in poll_details['options']:
-                    percentage = (opt['votes'] / total_votes * 100) if total_votes > 0 else 0
-                    bar_length = int(percentage / 10)  # 10% per bar segment
-                    bar = "█" * bar_length + "░" * (10 - bar_length)
-                    options_text.append(f"{opt['text']}: {opt['votes']} votes ({percentage:.1f}%)\n{bar}")
-                
-                embed.add_field(
-                    name=f"🔹 Options ({total_votes} total votes)",
-                    value="\n\n".join(options_text) if options_text else "No votes yet",
-                    inline=False
-                )
-                
-                if poll_details['status'] == 'open':
-                    embed.add_field(
-                        name="🗳️ How to Vote",
-                        value=f"Use `/vote {poll_id} <option>` to make your prediction!",
-                        inline=False
-                    )
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing poll status: {e}")
-                await interaction.followup.send("Error retrieving poll status.", ephemeral=True)
-
-        @self.tree.command(name="leaderboard", description="Show prediction leaderboard")
-        async def leaderboard_slash(interaction: discord.Interaction):
-            """Show the prediction leaderboard"""
-            try:
-                await interaction.response.defer()
-                
-                leaderboard = self.prediction_system.get_leaderboard(limit=15)
-                
-                if not leaderboard:
-                    embed = discord.Embed(
-                        title="🏆 Prediction Leaderboard",
-                        description="No predictions have been made yet!",
-                        color=0x95a5a6
-                    )
-                    await interaction.followup.send(embed=embed)
-                    return
-                
-                embed = discord.Embed(
-                    title="🏆 Big Brother Prediction Leaderboard",
-                    description="Top predictors in the server",
-                    color=0xf39c12,
-                    timestamp=datetime.now()
-                )
-                
-                # Top 3 get special treatment
-                medals = ["🥇", "🥈", "🥉"]
-                
-                for i, entry in enumerate(leaderboard):
-                    try:
-                        user = self.get_user(entry['user_id']) or await self.fetch_user(entry['user_id'])
-                        username = user.display_name if hasattr(user, 'display_name') else user.name
-                    except:
-                        username = f"User {entry['user_id']}"
-                    
-                    medal = medals[i] if i < 3 else f"{i+1}."
-                    
-                    embed.add_field(
-                        name=f"{medal} {username}",
-                        value=f"**{entry['total_points']}** points\n"
-                              f"{entry['correct_predictions']}/{entry['total_predictions']} correct ({entry['accuracy']}%)",
-                        inline=True if i >= 3 else False
-                    )
-                
-                # Add categories info
-                categories_text = []
-                for cat_id, cat_data in PREDICTION_CATEGORIES.items():
-                    categories_text.append(f"{cat_data['name']}: {cat_data['points']} pts")
-                
-                embed.add_field(
-                    name="📊 Point Values",
-                    value="\n".join(categories_text),
-                    inline=False
-                )
-                
-                embed.set_footer(text="Compete for the title of best BB predictor!")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing leaderboard: {e}")
-                await interaction.followup.send("Error retrieving leaderboard.", ephemeral=True)
-
-        @self.tree.command(name="my_predictions", description="Show your prediction history")
-        @discord.app_commands.describe(category="Filter by category (optional)")
-        @discord.app_commands.choices(category=[
-            discord.app_commands.Choice(name="All Categories", value="all"),
-            discord.app_commands.Choice(name="Season Winner", value="season_winner"),
-            discord.app_commands.Choice(name="Weekly HOH", value="weekly_hoh"),
-            discord.app_commands.Choice(name="Weekly Veto", value="weekly_veto"),
-            discord.app_commands.Choice(name="Weekly Eviction", value="weekly_eviction"),
-            discord.app_commands.Choice(name="Jury Vote", value="jury_vote"),
-            discord.app_commands.Choice(name="Special Event", value="special_event")
-        ])
-        async def my_predictions_slash(interaction: discord.Interaction, category: discord.app_commands.Choice[str] = None):
-            """Show user's prediction history"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                category_filter = None if not category or category.value == "all" else category.value
-                predictions = self.prediction_system.get_user_predictions(interaction.user.id, category_filter)
-                
-                if not predictions:
-                    embed = discord.Embed(
-                        title="📊 Your Predictions",
-                        description="You haven't made any predictions yet!" if not category_filter else f"No predictions in {category.name}",
-                        color=0x95a5a6
-                    )
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    return
-                
-                # Calculate stats
-                total_points = sum(p['points_earned'] for p in predictions)
-                correct_predictions = sum(1 for p in predictions if p['points_earned'] > 0 and p['status'] == 'resolved')
-                resolved_predictions = sum(1 for p in predictions if p['status'] == 'resolved')
-                accuracy = (correct_predictions / resolved_predictions * 100) if resolved_predictions > 0 else 0
-                
-                embed = discord.Embed(
-                    title=f"📊 Your Predictions{' - ' + category.name if category and category.value != 'all' else ''}",
-                    description=f"**{total_points}** total points | **{correct_predictions}/{resolved_predictions}** correct ({accuracy:.1f}%)",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                # Show recent predictions
-                for prediction in predictions[:10]:  # Limit to 10 most recent
-                    status_emoji = "✅" if prediction['points_earned'] > 0 else "❌" if prediction['status'] == 'resolved' else "⏳"
-                    
-                    predicted_timestamp = int(prediction['predicted_at'].timestamp()) if isinstance(prediction['predicted_at'], datetime) else int(datetime.fromisoformat(prediction['predicted_at']).timestamp())
-                    
-                    embed.add_field(
-                        name=f"{status_emoji} {prediction['category']}",
-                        value=f"**{prediction['title']}**\n"
-                              f"Predicted: {prediction['prediction']}\n"
-                              f"Points: {prediction['points_earned']}\n"
-                              f"<t:{predicted_timestamp}:R>",
-                        inline=True
-                    )
-                
-                if len(predictions) > 10:
-                    embed.add_field(
-                        name="📝 Note",
-                        value=f"Showing 10 most recent of {len(predictions)} total predictions",
+                        name=f"{category} ({len(cat_updates)} updates)",
+                        value=summary_text or "No updates",
                         inline=False
                     )
                 
                 await interaction.followup.send(embed=embed, ephemeral=True)
                 
             except Exception as e:
-                logger.error(f"Error showing user predictions: {e}")
-                await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
+                logger.error(f"Error generating summary: {e}")
+                await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
 
-        # Add other existing commands (alliances, zing, etc.) here...
+        @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
+        async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+            """Set the channel for RSS updates"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                if not channel.permissions_for(interaction.guild.me).send_messages:
+                    await interaction.response.send_message(
+                        f"I don't have permission to send messages in {channel.mention}", 
+                        ephemeral=True
+                    )
+                    return
+                
+                self.config.set('update_channel_id', channel.id)
+                
+                await interaction.response.send_message(
+                    f"Update channel set to {channel.mention}", 
+                    ephemeral=True
+                )
+                logger.info(f"Update channel set to {channel.id}")
+                
+            except Exception as e:
+                logger.error(f"Error setting channel: {e}")
+                await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
+
+        @self.tree.command(name="commands", description="Show all available commands")
+        async def commands_slash(interaction: discord.Interaction):
+            """Show available commands"""
+            embed = discord.Embed(
+                title="Big Brother Bot Commands",
+                description="Monitor Jokers Updates RSS feed with intelligent analysis",
+                color=0x3498db
+            )
+            
+            commands_list = [
+                ("/summary", "Get a summary of recent updates (Admin only)"),
+                ("/status", "Show bot status and statistics (Admin only)"),
+                ("/setchannel", "Set update channel (Admin only)"),
+                ("/commands", "Show this help message"),
+                ("/forcebatch", "Force send any queued updates (Admin only)"),
+                ("/testllm", "Test LLM connection (Admin only)"),
+                ("/sync", "Sync slash commands (Owner only)"),
+                ("/alliances", "Show current Big Brother alliances"),
+                ("/loyalty", "Show a houseguest's alliance history"),
+                ("/betrayals", "Show recent alliance betrayals"),
+                ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
+                ("/clearalliances", "Clear all alliance data (Owner only)"),
+                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)")
+            ]
+            
+            for name, description in commands_list:
+                embed.add_field(name=name, value=description, inline=False)
+            
+            embed.set_footer(text="All commands are ephemeral (only you can see the response)")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        @self.tree.command(name="forcebatch", description="Force send any queued updates")
+        async def forcebatch_slash(interaction: discord.Interaction):
+            """Force send batch update"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                queue_size = len(self.update_batcher.update_queue)
+                if queue_size == 0:
+                    await interaction.followup.send("No updates in queue to send.", ephemeral=True)
+                    return
+                
+                await self.send_batch_update()
+                
+                await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error forcing batch: {e}")
+                await interaction.followup.send("Error sending batch.", ephemeral=True)
+
+        @self.tree.command(name="testllm", description="Test LLM connection and functionality")
+        async def test_llm_slash(interaction: discord.Interaction):
+            """Test LLM integration"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                if not self.update_batcher.llm_client:
+                    await interaction.followup.send("❌ LLM client not initialized - check API key", ephemeral=True)
+                    return
+                
+                # Check rate limits
+                if not await self.update_batcher._can_make_llm_request():
+                    stats = self.update_batcher.get_rate_limit_stats()
+                    await interaction.followup.send(
+                        f"❌ Rate limit reached\n"
+                        f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
+                        f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}", 
+                        ephemeral=True
+                    )
+                    return
+                
+                # Test API call
+                await self.update_batcher.rate_limiter.wait_if_needed()
+                
+                test_response = await asyncio.to_thread(
+                    self.update_batcher.llm_client.messages.create,
+                    model=self.update_batcher.llm_model,
+                    max_tokens=100,
+                    messages=[{
+                        "role": "user", 
+                        "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love both strategic gameplay and social dynamics in Big Brother."
+                    }]
+                )
+                
+                response_text = test_response.content[0].text
+                
+                embed = discord.Embed(
+                    title="✅ LLM Connection Test",
+                    description=f"**Model**: {self.update_batcher.llm_model}\n**Response**: {response_text}",
+                    color=0x2ecc71,
+                    timestamp=datetime.now()
+                )
+                
+                # Add rate limit info
+                stats = self.update_batcher.get_rate_limit_stats()
+                embed.add_field(
+                    name="Rate Limits After Test",
+                    value=f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
+                          f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}",
+                    inline=False
+                )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error testing LLM: {e}")
+                await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
+
+        @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
+        async def sync_slash(interaction: discord.Interaction):
+            """Manually sync slash commands"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                try:
+                    synced = await self.tree.sync()
+                    await interaction.followup.send(f"✅ Synced {len(synced)} slash commands!", ephemeral=True)
+                    logger.info(f"Manually synced {len(synced)} commands")
+                except Exception as e:
+                    await interaction.followup.send(f"❌ Failed to sync commands: {e}", ephemeral=True)
+                    logger.error(f"Manual sync failed: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Error in sync command: {e}")
+                await interaction.followup.send("Error syncing commands.", ephemeral=True)
+
         @self.tree.command(name="alliances", description="Show current Big Brother alliances")
         async def alliances_slash(interaction: discord.Interaction):
             """Show current alliance map"""
             try:
-                await interaction.response.defer()
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
+                
+                logger.info(f"Alliance command called by {interaction.user}")
                 
                 embed = self.alliance_tracker.create_alliance_map_embed()
+                
+                logger.info(f"Alliance embed created with {len(embed.fields)} fields")
+                
                 await interaction.followup.send(embed=embed)
                 
             except Exception as e:
                 logger.error(f"Error showing alliances: {e}")
+                logger.error(traceback.format_exc())
                 await interaction.followup.send("Error generating alliance map.")
+
+        @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
+        async def loyalty_slash(interaction: discord.Interaction, houseguest: str):
+            """Show loyalty information for a houseguest"""
+            try:
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
+                
+                # Capitalize the name properly
+                houseguest = houseguest.strip().title()
+                
+                embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest)
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing loyalty: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating loyalty information.")
+
+        @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
+        async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
+            """Show recent betrayals"""
+            try:
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
+                
+                if days < 1 or days > 30:
+                    await interaction.followup.send("Days must be between 1 and 30")
+                    return
+                
+                betrayals = self.alliance_tracker.get_recent_betrayals(days)
+                
+                embed = discord.Embed(
+                    title="💔 Recent Alliance Betrayals",
+                    description=f"Betrayals in the last {days} days",
+                    color=0xe74c3c,
+                    timestamp=datetime.now()
+                )
+                
+                if not betrayals:
+                    embed.add_field(
+                        name="No Betrayals",
+                        value="No alliance betrayals detected in this time period",
+                        inline=False
+                    )
+                else:
+                    for i, betrayal in enumerate(betrayals[:10], 1):
+                        time_ago = datetime.now() - datetime.fromisoformat(betrayal['timestamp'])
+                        hours_ago = int(time_ago.total_seconds() / 3600)
+                        time_str = f"{hours_ago}h ago" if hours_ago < 24 else f"{hours_ago//24}d ago"
+                        
+                        embed.add_field(
+                            name=f"⚡ {time_str}",
+                            value=betrayal['description'],
+                            inline=False
+                        )
+                
+                embed.set_footer(text="Based on live feed updates")
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing betrayals: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating betrayal list.")
+
+        @self.tree.command(name="removebadalliance", description="Remove incorrectly detected alliance (Admin only)")
+        async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
+            """Remove a bad alliance"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                await interaction.response.defer(ephemeral=True)
+                
+                # Mark alliance as dissolved
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE alliances 
+                    SET status = 'dissolved', confidence_level = 0 
+                    WHERE name = ?
+                """, (alliance_name,))
+                
+                affected = cursor.rowcount
+                conn.commit()
+                conn.close()
+                
+                if affected > 0:
+                    await interaction.followup.send(f"✅ Removed alliance: **{alliance_name}**", ephemeral=True)
+                    logger.info(f"Removed bad alliance: {alliance_name}")
+                else:
+                    await interaction.followup.send(f"❌ Alliance '{alliance_name}' not found", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error removing alliance: {e}")
+                await interaction.followup.send("Error removing alliance", ephemeral=True)
+
+        @self.tree.command(name="clearalliances", description="Clear all alliance data (Owner only)")
+        async def clear_alliances(interaction: discord.Interaction):
+            """Clear all alliance data - owner only"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                # Clear all alliance data
+                cursor.execute("DELETE FROM alliance_events")
+                cursor.execute("DELETE FROM alliance_members")
+                cursor.execute("DELETE FROM alliances")
+                
+                conn.commit()
+                conn.close()
+                
+                await interaction.followup.send("✅ All alliance data has been cleared", ephemeral=True)
+                logger.info("Alliance data cleared by owner")
+                
+            except Exception as e:
+                logger.error(f"Error clearing alliances: {e}")
+                await interaction.followup.send("Error clearing alliance data", ephemeral=True)
 
         @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
         @discord.app_commands.describe(
@@ -3016,7 +2980,7 @@ class BBDiscordBot(commands.Bot):
                     if target:
                         await interaction.response.send_message("Random zing doesn't need a target - it will pick someone automatically!", ephemeral=True)
                         return
-                    # Get all members in the server (excluding bots)
+                    # Get all members in the server (excluding bots) - INCLUDE the command user
                     members = [m for m in interaction.guild.members if not m.bot]
                     if not members:
                         await interaction.response.send_message("No valid members to zing!", ephemeral=True)
@@ -3027,6 +2991,7 @@ class BBDiscordBot(commands.Bot):
                     if target:
                         await interaction.response.send_message("Self zing doesn't need a target - you're zinging yourself!", ephemeral=True)
                         return
+                    # Self-zing
                     final_target = interaction.user
                 else:
                     await interaction.response.send_message("Invalid zing type!", ephemeral=True)
@@ -3046,6 +3011,7 @@ class BBDiscordBot(commands.Bot):
                         other_member = rand_module.choice(other_members)
                         zing_text = zing_text.replace("[name]", other_member.display_name)
                     else:
+                        # Fallback if no other members
                         zing_text = zing_text.replace("[name]", "someone")
                 
                 # Create the embed
@@ -3060,12 +3026,284 @@ class BBDiscordBot(commands.Bot):
                     "ZING! That's what I'm programmed for!",
                     "Another successful zing delivered!",
                     "Zingbot 3000 strikes again!",
-                    "I came, I saw, I ZINGED!"
+                    "I came, I saw, I ZINGED!",
+                    "My circuits are buzzing with that zing!",
+                    "Zing executed successfully!",
+                    "Target acquired and zinged!",
+                    "Maximum zing efficiency achieved!"
                 ]
                 
                 embed.set_footer(text=rand_module.choice(zingbot_phrases))
                 
+                # Add special effects for self-zings
+                if final_target == interaction.user:
+                    embed.add_field(
+                        name="😅 Self-Zing Award",
+                        value="You zinged yourself! That takes guts... or poor decision making!",
+                        inline=False
+                    )
+                
                 await interaction.response.send_message(embed=embed)
                 
+                # Log the zing
+                logger.info(f"Zing delivered: {interaction.user} zinged {final_target}")
+                
             except Exception as e:
-                logger.error(f
+                logger.error(f"Error delivering zing: {e}")
+                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
+        
+    def signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        self.is_shutting_down = True
+        asyncio.create_task(self.close())
+    
+    async def on_ready(self):
+        """Bot startup event"""
+        logger.info(f'{self.user} has connected to Discord!')
+        logger.info(f'Bot is in {len(self.guilds)} guilds')
+        
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"Synced {len(synced)} slash command(s)")
+        except Exception as e:
+            logger.error(f"Failed to sync commands: {e}")
+        
+        try:
+            self.check_rss_feed.start()
+            self.daily_recap_task.start()  # Start daily recap task
+            logger.info("RSS feed monitoring and daily recap tasks started")
+        except Exception as e:
+            logger.error(f"Error starting background tasks: {e}")
+    
+    def create_content_hash(self, title: str, description: str) -> str:
+        """Create a unique hash for content deduplication"""
+        content = f"{title}|{description}".lower()
+        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
+        content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def process_rss_entries(self, entries) -> List[BBUpdate]:
+        """Process RSS entries into BBUpdate objects"""
+        updates = []
+        
+        for entry in entries:
+            try:
+                title = entry.get('title', 'No title')
+                description = entry.get('description', 'No description')
+                link = entry.get('link', '')
+                
+                pub_date = datetime.now()
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime(*entry.published_parsed[:6])
+                
+                content_hash = self.create_content_hash(title, description)
+                author = entry.get('author', '')
+                
+                updates.append(BBUpdate(
+                    title=title,
+                    description=description,
+                    link=link,
+                    pub_date=pub_date,
+                    content_hash=content_hash,
+                    author=author
+                ))
+                
+            except Exception as e:
+                logger.error(f"Error processing RSS entry: {e}")
+                continue
+        
+        return updates
+    
+    async def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
+        """Filter out duplicate updates"""
+        new_updates = []
+        
+        for update in updates:
+            # Check both database and cache
+            if not self.db.is_duplicate(update.content_hash):
+                if not await self.update_batcher.processed_hashes_cache.contains(update.content_hash):
+                    new_updates.append(update)
+        
+        return new_updates
+    
+    @tasks.loop(hours=24)
+    async def daily_recap_task(self):
+        """Daily recap task that runs at 8:01 AM Pacific Time"""
+        if self.is_shutting_down:
+            return
+        
+        try:
+            # Get current time in Pacific timezone
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Check if it's the right time (8:01 AM Pacific)
+            if now_pacific.hour != 8 or now_pacific.minute != 1:
+                return
+            
+            logger.info("Starting daily recap generation")
+            
+            # Calculate the day period (previous 8:01 AM to current 8:01 AM)
+            end_time = now_pacific.replace(tzinfo=None)  # Current time
+            start_time = end_time - timedelta(hours=24)  # 24 hours ago
+            
+            # Get all updates from the day
+            daily_updates = self.db.get_daily_updates(start_time, end_time)
+            
+            if not daily_updates:
+                logger.info("No updates found for daily recap")
+                return
+            
+            # Calculate day number (days since season start)
+            # For now, we'll use a simple calculation - you might want to adjust this
+            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
+            day_number = (end_time.date() - season_start.date()).days + 1
+            
+            # Create daily recap
+            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+            
+            # Send daily recap
+            await self.send_daily_recap(recap_embeds)
+            
+            logger.info(f"Daily recap sent for Day {day_number} with {len(daily_updates)} updates")
+            
+        except Exception as e:
+            logger.error(f"Error in daily recap task: {e}")
+            logger.error(traceback.format_exc())
+    
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready before starting daily recap task"""
+        await self.wait_until_ready()
+        
+        # Calculate time until next 8:01 AM Pacific
+        pacific_tz = pytz.timezone('US/Pacific')
+        now_pacific = datetime.now(pacific_tz)
+        
+        # Find next 8:01 AM Pacific
+        next_recap_time = now_pacific.replace(hour=8, minute=1, second=0, microsecond=0)
+        if now_pacific >= next_recap_time:
+            next_recap_time += timedelta(days=1)
+        
+        # Wait until that time
+        wait_seconds = (next_recap_time - now_pacific).total_seconds()
+        logger.info(f"Daily recap task will start in {wait_seconds/3600:.1f} hours at {next_recap_time.strftime('%I:%M %p PT')}")
+        
+        await asyncio.sleep(wait_seconds)
+    
+    async def send_daily_recap(self, embeds: List[discord.Embed]):
+        """Send daily recap to the configured channel"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured for daily recap")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found for daily recap")
+                return
+            
+            # Send all embeds
+            for embed in embeds[:5]:  # Limit to 5 embeds max
+                await channel.send(embed=embed)
+            
+            logger.info(f"Daily recap sent with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending daily recap: {e}")
+
+    @tasks.loop(minutes=2)
+    async def check_rss_feed(self):
+        """Check RSS feed for new updates with intelligent batching"""
+        if self.is_shutting_down:
+            return
+        
+        try:
+            feed = feedparser.parse(self.rss_url)
+            
+            if not feed.entries:
+                logger.warning("No entries returned from RSS feed")
+                return
+            
+            updates = self.process_rss_entries(feed.entries)
+            new_updates = await self.filter_duplicates(updates)  # Now async
+            
+            for update in new_updates:
+                try:
+                    categories = self.analyzer.categorize_update(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    
+                    self.db.store_update(update, importance, categories)
+                    await self.update_batcher.add_update(update)  # Now async
+                    
+                    # Check for alliance information
+                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    for event in alliance_events:
+                        alliance_id = self.alliance_tracker.process_alliance_event(event)
+                        if alliance_id:
+                            logger.info(f"Alliance event processed: {event['type'].value}")
+                    
+                    self.total_updates_processed += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+                    self.consecutive_errors += 1
+            
+            if self.update_batcher.should_send_batch():
+                await self.send_batch_update()
+            
+            self.last_successful_check = datetime.now()
+            self.consecutive_errors = 0
+            
+            if new_updates:
+                logger.info(f"Added {len(new_updates)} updates to batch queue")
+                
+        except Exception as e:
+            logger.error(f"Error in RSS check: {e}")
+            self.consecutive_errors += 1
+    
+    async def send_batch_update(self):
+        """Send intelligent batch summary to Discord"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                return
+            
+            embeds = await self.update_batcher.create_batch_summary()
+            
+            for embed in embeds[:10]:  # Discord limit
+                await channel.send(embed=embed)
+            
+            logger.info(f"Sent batch update with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending batch update: {e}")
+
+# Create bot instance
+bot = BBDiscordBot()
+
+def main():
+    """Main function to run the bot"""
+    try:
+        bot_token = bot.config.get('bot_token')
+        if not bot_token:
+            logger.error("No bot token found!")
+            return
+        
+        logger.info("Starting Big Brother Discord Bot...")
+        bot.run(bot_token, reconnect=True)
+        
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+        logger.critical(traceback.format_exc())
+
+if __name__ == "__main__":
+    main()
