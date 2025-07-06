@@ -2954,35 +2954,59 @@ class BBDiscordBot(commands.Bot):
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
 
         @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
-        async def zing_slash(interaction: discord.Interaction, target: discord.Member = None, random: bool = False):
+        @discord.app_commands.describe(
+            zing_type="Choose your zing type",
+            target="Only required for targeted zings"
+        )
+        @discord.app_commands.choices(zing_type=[
+            discord.app_commands.Choice(name="Targeted Zing", value="targeted"),
+            discord.app_commands.Choice(name="Random Zing", value="random"),
+            discord.app_commands.Choice(name="Self Zing", value="self")
+        ])
+        async def zing_slash(interaction: discord.Interaction, 
+                            zing_type: discord.app_commands.Choice[str],
+                            target: discord.Member = None):
             """Deliver a zing to someone"""
             try:
-                # Determine the target
-                if random and target:
-                    await interaction.response.send_message("Please choose either a specific target OR random, not both!", ephemeral=True)
-                    return
+                zing_choice = zing_type.value
                 
-                if random:
+                # Determine the actual target based on choice
+                if zing_choice == "targeted":
+                    if not target:
+                        await interaction.response.send_message("Please specify a target for a targeted zing!", ephemeral=True)
+                        return
+                    final_target = target
+                elif zing_choice == "random":
+                    if target:
+                        await interaction.response.send_message("Random zing doesn't need a target - it will pick someone automatically!", ephemeral=True)
+                        return
                     # Get all members in the server (excluding bots)
                     members = [m for m in interaction.guild.members if not m.bot]
                     if not members:
                         await interaction.response.send_message("No valid members to zing!", ephemeral=True)
                         return
-                    target = discord.utils.get(members, id=__import__('random').choice([m.id for m in members]))
-                elif not target:
+                    import random as rand_module
+                    final_target = rand_module.choice(members)
+                elif zing_choice == "self":
+                    if target:
+                        await interaction.response.send_message("Self zing doesn't need a target - you're zinging yourself!", ephemeral=True)
+                        return
                     # Self-zing
-                    target = interaction.user
+                    final_target = interaction.user
+                else:
+                    await interaction.response.send_message("Invalid zing type!", ephemeral=True)
+                    return
                 
                 # Select a random zing
                 import random as rand_module
                 zing = rand_module.choice(ALL_ZINGS)
                 
                 # Replace {target} with the actual mention
-                zing_text = zing.replace("{target}", target.mention)
+                zing_text = zing.replace("{target}", final_target.mention)
                 
                 # If the zing contains [name], replace it with a random other member's name
                 if "[name]" in zing_text:
-                    other_members = [m for m in interaction.guild.members if not m.bot and m.id != target.id]
+                    other_members = [m for m in interaction.guild.members if not m.bot and m.id != final_target.id]
                     if other_members:
                         other_member = rand_module.choice(other_members)
                         zing_text = zing_text.replace("[name]", other_member.display_name)
@@ -2994,7 +3018,7 @@ class BBDiscordBot(commands.Bot):
                 embed = discord.Embed(
                     title="🎯 ZING!",
                     description=zing_text,
-                    color=0xff1744 if target == interaction.user else 0xff9800
+                    color=0xff1744 if final_target == interaction.user else 0xff9800
                 )
                 
                 # Add Zingbot style footer
@@ -3012,7 +3036,7 @@ class BBDiscordBot(commands.Bot):
                 embed.set_footer(text=rand_module.choice(zingbot_phrases))
                 
                 # Add special effects for self-zings
-                if target == interaction.user:
+                if final_target == interaction.user:
                     embed.add_field(
                         name="😅 Self-Zing Award",
                         value="You zinged yourself! That takes guts... or poor decision making!",
@@ -3022,7 +3046,7 @@ class BBDiscordBot(commands.Bot):
                 await interaction.response.send_message(embed=embed)
                 
                 # Log the zing
-                logger.info(f"Zing delivered: {interaction.user} zinged {target}")
+                logger.info(f"Zing delivered: {interaction.user} zinged {final_target}")
                 
             except Exception as e:
                 logger.error(f"Error delivering zing: {e}")
