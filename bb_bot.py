@@ -2980,7 +2980,7 @@ class BBDiscordBot(commands.Bot):
                     if target:
                         await interaction.response.send_message("Random zing doesn't need a target - it will pick someone automatically!", ephemeral=True)
                         return
-                    # Get all members in the server (excluding bots)
+                    # Get all members in the server (excluding bots) - INCLUDE the command user
                     members = [m for m in interaction.guild.members if not m.bot]
                     if not members:
                         await interaction.response.send_message("No valid members to zing!", ephemeral=True)
