@@ -3542,6 +3542,8 @@ class BBDiscordBot(commands.Bot):
             logger.info("RSS feed monitoring, daily recap, and poll maintenance tasks started")
         except Exception as e:
             logger.error(f"Error starting background tasks: {e}")
+        
+        logger.info("Prediction leaderboard system ready")
     
     @tasks.loop(minutes=5)
     async def poll_maintenance_task(self):
