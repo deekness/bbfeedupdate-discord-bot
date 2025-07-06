@@ -1655,7 +1655,7 @@ Be selective - these should be the updates that a superfan would want to know ab
                 
                 embed = discord.Embed(
                     title="🎯 Feed Highlights - What Mattered",
-                    description=f"AI-curated key moments from this period ({len(highlights_data['highlights'])} of {len(self.update_queue)} updates)",
+                    description=f"Chen Bot's key moments ({len(highlights_data['highlights'])} of {len(self.update_queue)} updates)",
                     color=0xe74c3c if game_phase == "final_weeks" else 0xf39c12 if game_phase == "jury_phase" else 0x3498db,
                     timestamp=datetime.now()
                 )
