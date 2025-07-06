@@ -2583,7 +2583,7 @@ class PredictionSystem:
         if not duration_str:
             return None
             
-        match = re.match(r'^(\d+)([mhdw])
+        match = re.match(r'^(\d+)([mhdw])', duration_str.lower())
     """Main Discord bot class with 24/7 reliability features"""
     
     def __init__(self):
