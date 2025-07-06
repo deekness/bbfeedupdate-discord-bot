@@ -3091,8 +3091,7 @@ def main():
         logger.critical(traceback.format_exc())
 
 if __name__ == "__main__":
-    main()embed, ephemeral=True)
-                
+
             except Exception as e:
                 logger.error(f"Error generating status: {e}")
                 await interaction.followup.send("Error generating status.", ephemeral=True)
