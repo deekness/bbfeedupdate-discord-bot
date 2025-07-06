@@ -1848,7 +1848,7 @@ Focus Social Dynamics on ALLIANCES and strategic relationships, while Relationsh
         )
         
         # Footer
-        embed.set_footer(text="Strategic Analysis + Social Dynamics • BB Superfan AI")
+        embed.set_footer(text="Chen Bot's Observations")
     
     def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
         """Enhanced pattern-based summary with explanation"""
