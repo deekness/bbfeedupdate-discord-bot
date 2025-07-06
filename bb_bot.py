@@ -1,29 +1,4 @@
-def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
-        """Create highlights embed using pattern matching when LLM unavailable"""
-        try:
-            # Sort updates by importance score
-            updates_with_importance = [
-                (update, self.analyzer.analyze_strategic_importance(update))
-                for update in self.update_queue
-            ]
-            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-            
-            # Select top 5-8 most important updates
-            selected_updates = updates_with_importance[:min(8, len(updates_with_importance))]
-            
-            if not selected_updates:
-                return None
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Mattered",
-                description=f"Key moments from this period ({len(selected_updates)} of {len(self.update_queue)} updates)",
-                color=0x95a5a6,
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights
-            for i, (update, importance) in enumerate(selected_updates, 1):
-                # Extract correct timeimport discord
+import discord
 from discord.ext import commands, tasks
 import feedparser
 import asyncio
