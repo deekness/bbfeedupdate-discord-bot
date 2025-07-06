@@ -2953,9 +2953,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error clearing alliances: {e}")
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
 
-from discord import app_commands
-import random
-
 @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
 @app_commands.describe(
     zing_type="Choose who to zing: self, random, or a specific member",
@@ -2992,11 +2989,10 @@ async def zing_slash(interaction: discord.Interaction, zing_type: app_commands.C
         zing = random.choice(ALL_ZINGS)
         zing_text = zing.replace("{target}", zing_target.mention)
 
-        # Handle [name] replacement
         if "[name]" in zing_text:
             other_members = [m for m in guild.members if not m.bot and m.id != zing_target.id]
-            name_replacement = random.choice(other_members).display_name if other_members else "someone"
-            zing_text = zing_text.replace("[name]", name_replacement)
+            replacement = random.choice(other_members).display_name if other_members else "someone"
+            zing_text = zing_text.replace("[name]", replacement)
 
         embed = discord.Embed(
             title="🎯 ZING!",
@@ -3004,7 +3000,7 @@ async def zing_slash(interaction: discord.Interaction, zing_type: app_commands.C
             color=0xff1744 if zing_target == author else 0xff9800
         )
 
-        zingbot_footer = random.choice([
+        footer = random.choice([
             "ZING! That's what I'm programmed for!",
             "Another successful zing delivered!",
             "Zingbot 3000 strikes again!",
@@ -3014,7 +3010,7 @@ async def zing_slash(interaction: discord.Interaction, zing_type: app_commands.C
             "Target acquired and zinged!",
             "Maximum zing efficiency achieved!"
         ])
-        embed.set_footer(text=zingbot_footer)
+        embed.set_footer(text=footer)
 
         if zing_target == author:
             embed.add_field(
