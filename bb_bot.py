@@ -69,6 +69,217 @@ ENV_MAPPINGS = {
     'OWNER_ID': 'owner_id'
 }
 
+# Zing constants
+PG_ZINGS = [
+    # 60 PG zings (30%)
+    "{target}, you're so forgettable, production had to label your microphone twice!",
+    "{target}, your diary room sessions are so boring, even the cameras fall asleep!",
+    "{target}, you float so much, you should come with a pool noodle!",
+    "{target}, your game moves are like a sloth doing yoga - slow and pointless!",
+    "{target}, you're playing Big Brother like it's Big Sleeper!",
+    "{target}, your strategy is so invisible, it should come with a magnifying glass!",
+    "{target}, you're about as threatening as a rubber duck in the HOH competition!",
+    "{target}, your alliance building skills are like a house of cards in a tornado!",
+    "{target}, you blend into the background so well, you should be wallpaper!",
+    "{target}, your competition record is like a phone with no signal - zero bars!",
+    "{target}, you're playing chess while everyone else is playing... well, chess. You're just bad at it!",
+    "{target}, your social game is like Wi-Fi in the basement - barely connected!",
+    "{target}, you're so out of the loop, you think POV stands for 'Point of Vanilla'!",
+    "{target}, your jury management is like a GPS with no satellites - completely lost!",
+    "{target}, you're coasting so hard, you should be wearing roller skates!",
+    "{target}, your HOH reign was shorter than a commercial break!",
+    "{target}, you're playing Big Brother like it's Little Sister!",
+    "{target}, your competition wins are rarer than a unicorn sighting!",
+    "{target}, you're so predictable, we could replace you with a magic 8-ball!",
+    "{target}, your strategy talks are like bedtime stories - they put everyone to sleep!",
+    "{target}, you're about as intimidating as a kitten in mittens!",
+    "{target}, your game resume is shorter than a haiku!",
+    "{target}, you're playing hide and seek while everyone else plays Big Brother!",
+    "{target}, your big moves are smaller than a Tic Tac!",
+    "{target}, you're so far behind in the game, you're still in sequester!",
+    "{target}, your diary room confessions are like reading a blank book!",
+    "{target}, you're floating so much, NASA wants to study you!",
+    "{target}, your competition performance is like dial-up internet - outdated and slow!",
+    "{target}, you're playing Big Brother like it's a library - too quiet!",
+    "{target}, your strategic mind is like a maze with no exit!",
+    "{target}, you're so passive, you make a sloth look hyperactive!",
+    "{target}, your game awareness is like a bat without sonar!",
+    "{target}, you're riding coattails so hard, you should be a fashion designer!",
+    "{target}, your threat level is lower than the basement!",
+    "{target}, you're playing 4D chess... badly... in a checkers game!",
+    "{target}, your social connections are like a phone on airplane mode!",
+    "{target}, you're so forgettable, your own alliance forgets you exist!",
+    "{target}, your competition skills need more training than a newborn giraffe!",
+    "{target}, you're playing Big Brother like it's Big Naptime!",
+    "{target}, your strategic planning is like a GPS going in circles!",
+    "{target}, you're so under the radar, submarines are jealous!",
+    "{target}, your game moves are like a snail racing a cheetah!",
+    "{target}, you're playing so safe, you should wear a helmet in the diary room!",
+    "{target}, your big brother game is more like little cousin energy!",
+    "{target}, you're coasting harder than a bike going downhill!",
+    "{target}, your competition record is like a broken scoreboard - all zeros!",
+    "{target}, you're so out of touch, you think the veto meeting is a coffee date!",
+    "{target}, your strategy is like a book with all blank pages!",
+    "{target}, you're playing Big Brother like it's Big Background Character!",
+    "{target}, your game influence is like a whisper in a hurricane!",
+    "{target}, you're so forgettable, the memory wall forgot to light up your picture!",
+    "{target}, your HOH letters are probably just participation certificates!",
+    "{target}, you're playing so quietly, closed captions can't even pick you up!",
+    "{target}, your competition training must have been watching paint dry!",
+    "{target}, you're floating so professionally, you should charge admission!",
+    "{target}, your strategic conversations are like silent movies without subtitles!",
+    "{target}, you're so far from winning, you need a telescope to see the prize!",
+    "{target}, your game awareness is like a security camera that's unplugged!",
+    "{target}, you're playing Big Brother like it's Big Spectator!",
+    "{target}, your influence in the house is like a fan with no blades!"
+]
+
+PG13_ZINGS = [
+    # 140 PG-13 zings (70%)
+    "{target}, you're so boring in bed, your showmance partner counts sheep... while awake!",
+    "{target}, your kissing technique is like CPR - technically correct but nobody's enjoying it!",
+    "{target}, you're so thirsty, the Have-Not cold showers are jealous!",
+    "{target}, your flirting is so bad, even the cameras switch to fish!",
+    "{target}, you shower so rarely, Febreze is considering you for a sponsorship!",
+    "{target}, your game is like your love life - all talk, no action!",
+    "{target}, you're so desperate for attention, you'd showmance with a mannequin!",
+    "{target}, your HOH room action is like a nature documentary - rare and disappointing!",
+    "{target}, you're trying so hard to be America's Favorite, you'd kiss a cactus for votes!",
+    "{target}, your strategy is like your hygiene - questionable at best!",
+    "{target}, you're so clingy, your showmance needs a restraining order!",
+    "{target}, your diary room sessions are like your dating profile - full of lies!",
+    "{target}, you're so bad at comps, you'd lose a staring contest to a blind person!",
+    "{target}, your social game is like your personal hygiene - it stinks!",
+    "{target}, you're showmancing so hard, production needs a cold shower!",
+    "{target}, your game is weaker than your pull-out game... from competitions!",
+    "{target}, you're so fake, your tears come with a warranty!",
+    "{target}, your loyalty flip-flops more than your shower shoes!",
+    "{target}, you're riding [name] harder than a mechanical bull at a bar!",
+    "{target}, your competition performance is like your dating history - brief and embarrassing!",
+    "{target}, you're so delusional, you think your showmance actually likes you!",
+    "{target}, your strategic mind is like your love life - completely fictional!",
+    "{target}, you're trying to play puppet master but you can't even master basic hygiene!",
+    "{target}, your game is so messy, it needs a hazmat team!",
+    "{target}, you're so desperate for camera time, you'd streak through the backyard!",
+    "{target}, your HOH reign was shorter than your last relationship!",
+    "{target}, you kiss so much ass, you should carry mouthwash!",
+    "{target}, your game is like a bad hookup - regrettable and forgettable!",
+    "{target}, you're so paranoid, you check under the bed for hidden vetoes!",
+    "{target}, your showmance strategy is like your personality - shallow and transparent!",
+    "{target}, you're playing everyone like a fiddle... a broken fiddle... that nobody wants to hear!",
+    "{target}, your DR sessions are faker than your showmance feelings!",
+    "{target}, you're so obsessed with camera time, you'd make out with your own reflection!",
+    "{target}, your competition beast mode is more like competition deceased mode!",
+    "{target}, you're riding coattails so hard, you should be charged rent!",
+    "{target}, your flirting technique makes everyone want to self-evict!",
+    "{target}, you're so two-faced, you need two microphones!",
+    "{target}, your game is like your shower schedule - inconsistent and concerning!",
+    "{target}, you're playing so dirty, the backyard needs to be power-washed!",
+    "{target}, your strategic talks are like foreplay - awkward and nobody finishes satisfied!",
+    "{target}, you're so thirsty for attention, the pool is jealous!",
+    "{target}, your social game is like a bad date - everyone's looking for an exit!",
+    "{target}, you've been in more beds than a hotel maid!",
+    "{target}, your competition record is like your dating record - a lot of participation, no victories!",
+    "{target}, you're so desperate for allies, you'd align with the ants!",
+    "{target}, your game moves are like your dance moves - embarrassing and ineffective!",
+    "{target}, you're playing so sloppy, you need a bib!",
+    "{target}, your showmance is so forced, it needs a safe word!",
+    "{target}, you're backstabbing so much, you should be a chiropractor!",
+    "{target}, your HOH room saw less action than the storage room!",
+    "{target}, you're so fake, your diary room needs a fact-checker!",
+    "{target}, your strategy is like your skincare routine - non-existent!",
+    "{target}, you're trying to be a mastermind but you can't even master basic math!",
+    "{target}, your game is so weak, it needs Viagra!",
+    "{target}, you're so desperate for screen time, you'd shower with the door open!",
+    "{target}, your loyalty changes faster than your underwear... which isn't saying much!",
+    "{target}, you're playing Big Brother like it's The Bachelor - wrong show!",
+    "{target}, your competition performance is like your pickup lines - a total flop!",
+    "{target}, you're so clingy, your alliance needs therapy!",
+    "{target}, your game is dirtier than the kitchen after taco night!",
+    "{target}, you're trying to be a villain but you're more like a Disney Channel antagonist!",
+    "{target}, your strategic mind is like your dating standards - set way too low!",
+    "{target}, you're so thirsty, you make the Have-Nots look hydrated!",
+    "{target}, your DR sessions are more scripted than a soap opera!",
+    "{target}, you're playing everyone but the only thing you're playing is yourself!",
+    "{target}, your game is like a bad Tinder date - all swipe, no substance!",
+    "{target}, you're so desperate for attention, you'd cuddle with the cameras!",
+    "{target}, your competition skills are like your flirting skills - non-existent!",
+    "{target}, you're riding [name] so hard, you should pay for gas!",
+    "{target}, your game is messier than the bathroom after slop week!",
+    "{target}, you're so fake, your emotions come with a director's cut!",
+    "{target}, your strategic planning is like your shower planning - it doesn't happen!",
+    "{target}, you're playing so many sides, you're basically a geometry lesson!",
+    "{target}, your showmance is so awkward, it makes the feeds switch to fish!",
+    "{target}, you're so bad at comps, you'd lose strip poker fully clothed!",
+    "{target}, your social game is like a bad rash - irritating and spreading!",
+    "{target}, you're trying to be memorable but you're as forgettable as last night's slop!",
+    "{target}, your game is like your hygiene habits - everyone's talking about how bad it is!",
+    "{target}, you're so desperate for a showmance, you'd date a Have-Not restriction!",
+    "{target}, your competition record is like your love life - a series of unfortunate events!",
+    "{target}, you're playing puppet master but your strings are more tangled than earbuds!",
+    "{target}, your strategy sessions are like bad foreplay - confusing and unsatisfying!",
+    "{target}, you're so thirsty, you're dehydrating the other houseguests!",
+    "{target}, your game moves are like your bowel movements - irregular and concerning!",
+    "{target}, you're trying to be Brad Pitt but you're more like arm pit!",
+    "{target}, your alliance loyalty is like your deodorant - it doesn't last long!",
+    "{target}, you're so fake, your tears need a stunt double!",
+    "{target}, your HOH reign was like bad sex - over before anyone noticed it started!",
+    "{target}, you're playing so many people, you need a spreadsheet!",
+    "{target}, your social game is like your shower game - avoided by everyone!",
+    "{target}, you're so desperate for votes, you'd promise your firstborn!",
+    "{target}, your competition performance is like your personality - a total letdown!",
+    "{target}, you're clinging to [name] like a bad STD!",
+    "{target}, your game is dirtier than the hot tub after a showmance session!",
+    "{target}, you're so delusional, you think production likes you!",
+    "{target}, your strategic mind is like your sex appeal - imaginary!",
+    "{target}, you're backstabbing so much, you need a spinal surgeon!",
+    "{target}, your DR sessions are faker than your orgasms... I mean, emotions!",
+    "{target}, you're so bad at this game, you make first boots look like masterminds!",
+    "{target}, your showmance chemistry is like oil and water - it doesn't mix!",
+    "{target}, you're playing so sloppy, you need a mop and bucket!",
+    "{target}, your game is like a bad hookup - everyone regrets it happened!",
+    "{target}, you're so thirsty for attention, you'd streak through the diary room!",
+    "{target}, your competition skills are like your kissing skills - all teeth!",
+    "{target}, you're riding coattails harder than a rodeo champion!",
+    "{target}, your strategy is like your underwear - it needs to be changed!",
+    "{target}, you're so fake, your showmance thinks you're CGI!",
+    "{target}, your game moves are like your sexual moves - predictable and disappointing!",
+    "{target}, you're playing everyone but yourself - and badly!",
+    "{target}, your social game is like body odor - offensive and hard to ignore!",
+    "{target}, you're so desperate for allies, you'd align with production!",
+    "{target}, your HOH room saw less action than a nun's bedroom!",
+    "{target}, you're trying to be a mastermind but you can't even mind your own business!",
+    "{target}, your game is weaker than your bladder during a lockdown!",
+    "{target}, you're so clingy, your showmance filed for emotional support!",
+    "{target}, your competition record is like your hygiene record - needs improvement!",
+    "{target}, you're playing dirty but not in the fun way!",
+    "{target}, your strategic planning is like your family planning - accidental at best!",
+    "{target}, you're so thirsty, the pool lost water!",
+    "{target}, your game is messier than the sheets after your HOH reign!",
+    "{target}, you're so fake, your diary room needs subtitles for the truth!",
+    "{target}, your loyalty flip-flops more than a fish out of water!",
+    "{target}, you're riding [name] like it's your job - and you're working overtime!",
+    "{target}, your social game is like a communicable disease - everyone's trying to avoid it!",
+    "{target}, you're so bad at comps, you'd lose a sleeping contest to an insomniac!",
+    "{target}, your game moves are like your romantic moves - desperate and cringeworthy!",
+    "{target}, you're playing so many sides, you're basically a rubik's cube!",
+    "{target}, your showmance is so forced, it needs a lubricant!",
+    "{target}, you're so desperate for screen time, you'd do diary rooms naked!",
+    "{target}, your strategy is like your sex life - all in your head!",
+    "{target}, you're backstabbing so much, you should open a sushi restaurant!",
+    "{target}, your game is dirtier than the thoughts you have in the HOH shower!",
+    "{target}, you're so delusional, you think your edit is accurate!",
+    "{target}, your competition performance is like erectile dysfunction - a failure to rise to the occasion!",
+    "{target}, you're clinging to power like you cling to your showmance - desperately!",
+    "{target}, your DR sessions have more fiction than the Bible!",
+    "{target}, you're so thirsty, you're sponsored by Gatorade!",
+    "{target}, your game is like a wet dream - seemed good at the time but embarrassing in daylight!",
+    "{target}, you're playing everyone like a cheap kazoo - badly and annoying everyone!"
+]
+
+# Combine all zings
+ALL_ZINGS = PG_ZINGS + PG13_ZINGS
+
 # Game-specific constants
 COMPETITION_KEYWORDS = [
     'hoh', 'head of household', 'power of veto', 'pov', 'nomination', 
@@ -2471,7 +2682,8 @@ class BBDiscordBot(commands.Bot):
                 ("/loyalty", "Show a houseguest's alliance history"),
                 ("/betrayals", "Show recent alliance betrayals"),
                 ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
-                ("/clearalliances", "Clear all alliance data (Owner only)")
+                ("/clearalliances", "Clear all alliance data (Owner only)"),
+                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)")
             ]
             
             for name, description in commands_list:
@@ -2732,6 +2944,81 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error clearing alliances: {e}")
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
+
+        @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
+        async def zing_slash(interaction: discord.Interaction, target: discord.Member = None, random: bool = False):
+            """Deliver a zing to someone"""
+            try:
+                # Determine the target
+                if random and target:
+                    await interaction.response.send_message("Please choose either a specific target OR random, not both!", ephemeral=True)
+                    return
+                
+                if random:
+                    # Get all members in the server (excluding bots)
+                    members = [m for m in interaction.guild.members if not m.bot]
+                    if not members:
+                        await interaction.response.send_message("No valid members to zing!", ephemeral=True)
+                        return
+                    target = discord.utils.get(members, id=__import__('random').choice([m.id for m in members]))
+                elif not target:
+                    # Self-zing
+                    target = interaction.user
+                
+                # Select a random zing
+                import random as rand_module
+                zing = rand_module.choice(ALL_ZINGS)
+                
+                # Replace {target} with the actual mention
+                zing_text = zing.replace("{target}", target.mention)
+                
+                # If the zing contains [name], replace it with a random other member's name
+                if "[name]" in zing_text:
+                    other_members = [m for m in interaction.guild.members if not m.bot and m.id != target.id]
+                    if other_members:
+                        other_member = rand_module.choice(other_members)
+                        zing_text = zing_text.replace("[name]", other_member.display_name)
+                    else:
+                        # Fallback if no other members
+                        zing_text = zing_text.replace("[name]", "someone")
+                
+                # Create the embed
+                embed = discord.Embed(
+                    title="🎯 ZING!",
+                    description=zing_text,
+                    color=0xff1744 if target == interaction.user else 0xff9800
+                )
+                
+                # Add Zingbot style footer
+                zingbot_phrases = [
+                    "ZING! That's what I'm programmed for!",
+                    "Another successful zing delivered!",
+                    "Zingbot 3000 strikes again!",
+                    "I came, I saw, I ZINGED!",
+                    "My circuits are buzzing with that zing!",
+                    "Zing executed successfully!",
+                    "Target acquired and zinged!",
+                    "Maximum zing efficiency achieved!"
+                ]
+                
+                embed.set_footer(text=rand_module.choice(zingbot_phrases))
+                
+                # Add special effects for self-zings
+                if target == interaction.user:
+                    embed.add_field(
+                        name="😅 Self-Zing Award",
+                        value="You zinged yourself! That takes guts... or poor decision making!",
+                        inline=False
+                    )
+                
+                await interaction.response.send_message(embed=embed)
+                
+                # Log the zing
+                logger.info(f"Zing delivered: {interaction.user} zinged {target}")
+                
+            except Exception as e:
+                logger.error(f"Error delivering zing: {e}")
+                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
         
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
