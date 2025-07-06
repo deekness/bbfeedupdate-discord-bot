@@ -525,10 +525,16 @@ class Config:
         # Config file (priority 2)
         if self.config_file.exists():
             try:
-                with open(self.config_file, 'r') as f:
-                    file_config = json.load(f)
-                    # Only use file config for missing env vars
-                    for update in new_updates:
+            feed = feedparser.parse(self.rss_url)
+            
+            if not feed.entries:
+                logger.warning("No entries returned from RSS feed")
+                return
+            
+            updates = self.process_rss_entries(feed.entries)
+            new_updates = await self.filter_duplicates(updates)  # Now async
+            
+            for update in new_updates:
                 try:
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
@@ -604,7 +610,11 @@ def main():
         logger.critical(traceback.format_exc())
 
 if __name__ == "__main__":
-    main() key, value in file_config.items():
+    main()
+                with open(self.config_file, 'r') as f:
+                    file_config = json.load(f)
+                    # Only use file config for missing env vars
+                    for key, value in file_config.items():
                         if key in config and not os.getenv(key.upper()):
                             config[key] = value
             except Exception as e:
@@ -4322,13 +4332,3 @@ class BBDiscordBot(commands.Bot):
             return
         
         try:
-            feed = feedparser.parse(self.rss_url)
-            
-            if not feed.entries:
-                logger.warning("No entries returned from RSS feed")
-                return
-            
-            updates = self.process_rss_entries(feed.entries)
-            new_updates = await self.filter_duplicates(updates)  # Now async
-            
-            for
