@@ -2813,7 +2813,7 @@ class BBDiscordBot(commands.Bot):
         async def alliances_slash(interaction: discord.Interaction):
             """Show current alliance map"""
             try:
-                await interaction.response.defer(ephemeral=True)
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
                 
                 logger.info(f"Alliance command called by {interaction.user}")
                 
@@ -2821,38 +2821,38 @@ class BBDiscordBot(commands.Bot):
                 
                 logger.info(f"Alliance embed created with {len(embed.fields)} fields")
                 
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(embed=embed)
                 
             except Exception as e:
                 logger.error(f"Error showing alliances: {e}")
                 logger.error(traceback.format_exc())
-                await interaction.followup.send("Error generating alliance map.", ephemeral=True)
+                await interaction.followup.send("Error generating alliance map.")
 
         @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
         async def loyalty_slash(interaction: discord.Interaction, houseguest: str):
             """Show loyalty information for a houseguest"""
             try:
-                await interaction.response.defer(ephemeral=True)
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
                 
                 # Capitalize the name properly
                 houseguest = houseguest.strip().title()
                 
                 embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest)
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(embed=embed)
                 
             except Exception as e:
                 logger.error(f"Error showing loyalty: {e}")
                 logger.error(traceback.format_exc())
-                await interaction.followup.send("Error generating loyalty information.", ephemeral=True)
+                await interaction.followup.send("Error generating loyalty information.")
 
         @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
         async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
             """Show recent betrayals"""
             try:
-                await interaction.response.defer(ephemeral=True)
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
                 
                 if days < 1 or days > 30:
-                    await interaction.followup.send("Days must be between 1 and 30", ephemeral=True)
+                    await interaction.followup.send("Days must be between 1 and 30")
                     return
                 
                 betrayals = self.alliance_tracker.get_recent_betrayals(days)
@@ -2883,12 +2883,12 @@ class BBDiscordBot(commands.Bot):
                         )
                 
                 embed.set_footer(text="Based on live feed updates")
-                await interaction.followup.send(embed=embed, ephemeral=True)
+                await interaction.followup.send(embed=embed)
                 
             except Exception as e:
                 logger.error(f"Error showing betrayals: {e}")
                 logger.error(traceback.format_exc())
-                await interaction.followup.send("Error generating betrayal list.", ephemeral=True)
+                await interaction.followup.send("Error generating betrayal list.")
 
         @self.tree.command(name="removebadalliance", description="Remove incorrectly detected alliance (Admin only)")
         async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
