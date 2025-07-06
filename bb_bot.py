@@ -2953,7 +2953,7 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error clearing alliances: {e}")
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
 
-@self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
+@tree.command(name="zing", description="Deliver a Big Brother style zing!")
 @app_commands.describe(
     zing_type="Choose who to zing: self, random, or a specific member",
     target="Select a specific member (only needed if zing_type is 'targeted')"
