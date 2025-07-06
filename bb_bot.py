@@ -3292,4 +3292,4 @@ if __name__ == "__main__":
                     inline=False
                 )
                 
-                await interaction.followup.send(embed=
+                await interaction.followup.send(embed=embed, ephemeral=True)
