@@ -209,7 +209,7 @@ PG13_ZINGS = [
     "{target}, you're trying to be a villain but you're more like a Disney Channel antagonist!",
     "{target}, your strategic mind is like your dating standards - set way too low!",
     "{target}, you're so thirsty, you make the Have-Nots look hydrated!",
-    "{target}, your DR sessions have more fiction than the Bible!",
+    "{target}, your DR sessions are more scripted than a soap opera!",
     "{target}, you're playing everyone but the only thing you're playing is yourself!",
     "{target}, your game is like a bad Tinder date - all swipe, no substance!",
     "{target}, you're so desperate for attention, you'd cuddle with the cameras!",
@@ -1425,8 +1425,8 @@ class AllianceTracker:
         finally:
             conn.close()
 
-class PredictionLeaderboard:
-    """Handles the prediction leaderboard system"""
+class PredictionSystem:
+    """NEW: Prediction Leaderboard System for Big Brother predictions"""
     
     def __init__(self, db_path: str = "bb_updates.db"):
         self.db_path = db_path
@@ -1441,14 +1441,14 @@ class PredictionLeaderboard:
         return conn
     
     def init_prediction_tables(self):
-        """Initialize prediction leaderboard tables"""
+        """Initialize prediction system tables"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         # Prediction categories with different point values
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS prediction_categories (
-                category_id INTEGER PRIMARY KEY,
+                category_id TEXT PRIMARY KEY,
                 name TEXT UNIQUE,
                 points_value INTEGER,
                 description TEXT
@@ -1458,8 +1458,8 @@ class PredictionLeaderboard:
         # Individual prediction polls
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS prediction_polls (
-                poll_id INTEGER PRIMARY KEY,
-                category_id INTEGER,
+                poll_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                category_id TEXT,
                 title TEXT,
                 description TEXT,
                 created_by INTEGER,
@@ -1474,7 +1474,7 @@ class PredictionLeaderboard:
         # Poll options
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS poll_options (
-                option_id INTEGER PRIMARY KEY,
+                option_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 poll_id INTEGER,
                 option_text TEXT,
                 created_at TIMESTAMP,
@@ -1485,7 +1485,7 @@ class PredictionLeaderboard:
         # User predictions
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS user_predictions (
-                prediction_id INTEGER PRIMARY KEY,
+                prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
                 poll_id INTEGER,
                 user_id INTEGER,
                 option_id INTEGER,
@@ -1509,38 +1509,36 @@ class PredictionLeaderboard:
         """)
         
         # Create indexes
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_poll_status ON prediction_polls(status)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_predictions ON user_predictions(user_id)")
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_poll_closes ON prediction_polls(closes_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polls_status ON prediction_polls(status)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_polls_closes ON prediction_polls(closes_at)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_user ON user_predictions(user_id)")
         
         # Insert default categories
-        for category_key, category_data in PREDICTION_CATEGORIES.items():
+        for category_id, category_data in PREDICTION_CATEGORIES.items():
             cursor.execute("""
-                INSERT OR IGNORE INTO prediction_categories (name, points_value, description)
-                VALUES (?, ?, ?)
-            """, (category_data['name'], category_data['points'], category_key))
+                INSERT OR IGNORE INTO prediction_categories (category_id, name, points_value, description)
+                VALUES (?, ?, ?, ?)
+            """, (category_id, category_data['name'], category_data['points'], 
+                  f"Predict the {category_data['name'].lower()}"))
         
         conn.commit()
         conn.close()
         
-        logger.info("Prediction leaderboard tables initialized")
+        logger.info("Prediction system tables initialized")
     
-    def create_poll(self, category_name: str, title: str, description: str, 
-                   hours_open: int, options: List[str], created_by: int) -> Optional[int]:
+    def create_poll(self, category_id: str, title: str, description: str, 
+                   created_by: int, hours_open: int, options: List[str]) -> Optional[int]:
         """Create a new prediction poll"""
+        if category_id not in PREDICTION_CATEGORIES:
+            return None
+        
+        if len(options) < 2 or len(options) > 10:
+            return None
+        
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Get category ID
-            cursor.execute("SELECT category_id FROM prediction_categories WHERE name = ?", (category_name,))
-            category_result = cursor.fetchone()
-            if not category_result:
-                return None
-            
-            category_id = category_result[0]
-            
-            # Calculate close time
             closes_at = datetime.now() + timedelta(hours=hours_open)
             
             # Insert poll
@@ -1556,7 +1554,7 @@ class PredictionLeaderboard:
                 cursor.execute("""
                     INSERT INTO poll_options (poll_id, option_text, created_at)
                     VALUES (?, ?, ?)
-                """, (poll_id, option_text, datetime.now()))
+                """, (poll_id, option_text.strip(), datetime.now()))
             
             conn.commit()
             logger.info(f"Created poll {poll_id}: {title}")
@@ -1569,50 +1567,65 @@ class PredictionLeaderboard:
         finally:
             conn.close()
     
-    def vote_on_poll(self, poll_id: int, user_id: int, option_text: str) -> bool:
-        """Submit a vote for a poll"""
+    def vote_on_poll(self, poll_id: int, user_id: int, option_text: str) -> Dict[str, any]:
+        """Vote on a prediction poll"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Check if poll is open
+            # Check if poll exists and is open
             cursor.execute("""
                 SELECT status, closes_at FROM prediction_polls WHERE poll_id = ?
             """, (poll_id,))
             
-            poll_result = cursor.fetchone()
-            if not poll_result:
-                return False
+            poll_info = cursor.fetchone()
+            if not poll_info:
+                return {'success': False, 'error': 'Poll not found'}
             
-            status, closes_at = poll_result
-            if status != 'open' or datetime.now() > closes_at:
-                return False
+            status, closes_at = poll_info
+            if status != 'open':
+                return {'success': False, 'error': 'Poll is closed'}
             
-            # Get option ID
+            if datetime.now() > closes_at:
+                # Auto-close expired poll
+                cursor.execute("""
+                    UPDATE prediction_polls SET status = 'closed' WHERE poll_id = ?
+                """, (poll_id,))
+                conn.commit()
+                return {'success': False, 'error': 'Poll has expired'}
+            
+            # Find the option
             cursor.execute("""
                 SELECT option_id FROM poll_options WHERE poll_id = ? AND option_text = ?
             """, (poll_id, option_text))
             
             option_result = cursor.fetchone()
             if not option_result:
-                return False
+                return {'success': False, 'error': 'Option not found'}
             
             option_id = option_result[0]
             
-            # Insert or update prediction
+            # Check if user already voted
             cursor.execute("""
-                INSERT OR REPLACE INTO user_predictions (poll_id, user_id, option_id, predicted_at)
+                SELECT prediction_id FROM user_predictions WHERE poll_id = ? AND user_id = ?
+            """, (poll_id, user_id))
+            
+            if cursor.fetchone():
+                return {'success': False, 'error': 'You have already voted on this poll'}
+            
+            # Insert vote
+            cursor.execute("""
+                INSERT INTO user_predictions (poll_id, user_id, option_id, predicted_at)
                 VALUES (?, ?, ?, ?)
             """, (poll_id, user_id, option_id, datetime.now()))
             
             conn.commit()
-            logger.info(f"User {user_id} voted {option_text} on poll {poll_id}")
-            return True
+            return {'success': True, 'message': f'Vote recorded for "{option_text}"'}
             
         except Exception as e:
             logger.error(f"Error voting on poll: {e}")
             conn.rollback()
-            return False
+            return {'success': False, 'error': 'Database error'}
         finally:
             conn.close()
     
@@ -1623,16 +1636,16 @@ class PredictionLeaderboard:
         
         try:
             cursor.execute("""
-                UPDATE prediction_polls SET status = 'closed' WHERE poll_id = ?
+                UPDATE prediction_polls SET status = 'closed' WHERE poll_id = ? AND status = 'open'
             """, (poll_id,))
             
-            affected = cursor.rowcount
+            success = cursor.rowcount > 0
             conn.commit()
             
-            if affected > 0:
+            if success:
                 logger.info(f"Poll {poll_id} manually closed")
-                return True
-            return False
+            
+            return success
             
         except Exception as e:
             logger.error(f"Error closing poll: {e}")
@@ -1641,127 +1654,219 @@ class PredictionLeaderboard:
         finally:
             conn.close()
     
-    def resolve_poll(self, poll_id: int, winning_option: str) -> bool:
+    def resolve_poll(self, poll_id: int, winning_option: str) -> Dict[str, any]:
         """Resolve a poll and award points"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Get poll info and category points
+            # Get poll info
             cursor.execute("""
-                SELECT pp.category_id, pc.points_value 
-                FROM prediction_polls pp
-                JOIN prediction_categories pc ON pp.category_id = pc.category_id
-                WHERE pp.poll_id = ?
+                SELECT category_id, status FROM prediction_polls WHERE poll_id = ?
             """, (poll_id,))
             
-            poll_result = cursor.fetchone()
-            if not poll_result:
-                return False
+            poll_info = cursor.fetchone()
+            if not poll_info:
+                return {'success': False, 'error': 'Poll not found'}
             
-            category_id, points_value = poll_result
+            category_id, status = poll_info
+            if status == 'resolved':
+                return {'success': False, 'error': 'Poll already resolved'}
             
-            # Get winning option ID
+            # Find winning option
             cursor.execute("""
                 SELECT option_id FROM poll_options WHERE poll_id = ? AND option_text = ?
             """, (poll_id, winning_option))
             
             option_result = cursor.fetchone()
             if not option_result:
-                return False
+                return {'success': False, 'error': 'Winning option not found'}
             
-            correct_option_id = option_result[0]
+            winning_option_id = option_result[0]
+            points_value = PREDICTION_CATEGORIES[category_id]['points']
             
-            # Update poll status and correct option
+            # Update poll status and set correct option
             cursor.execute("""
-                UPDATE prediction_polls 
-                SET status = 'resolved', correct_option_id = ? 
-                WHERE poll_id = ?
-            """, (correct_option_id, poll_id))
+                UPDATE prediction_polls SET status = 'resolved', correct_option_id = ? WHERE poll_id = ?
+            """, (winning_option_id, poll_id))
             
             # Award points to correct predictions
             cursor.execute("""
-                UPDATE user_predictions 
-                SET points_earned = ? 
+                UPDATE user_predictions SET points_earned = ? 
                 WHERE poll_id = ? AND option_id = ?
-            """, (points_value, poll_id, correct_option_id))
+            """, (points_value, poll_id, winning_option_id))
+            
+            # Get winners for response
+            cursor.execute("""
+                SELECT COUNT(*) FROM user_predictions WHERE poll_id = ? AND option_id = ?
+            """, (poll_id, winning_option_id))
+            
+            winner_count = cursor.fetchone()[0]
             
             # Update leaderboard
-            self._update_leaderboard()
+            self._update_leaderboard_for_poll(cursor, poll_id)
             
             conn.commit()
             
-            # Get number of correct predictions
-            cursor.execute("""
-                SELECT COUNT(*) FROM user_predictions 
-                WHERE poll_id = ? AND option_id = ?
-            """, (poll_id, correct_option_id))
+            logger.info(f"Poll {poll_id} resolved: {winning_option} won, {winner_count} correct predictions")
             
-            correct_count = cursor.fetchone()[0]
-            
-            logger.info(f"Poll {poll_id} resolved: {winning_option} won, {correct_count} correct predictions")
-            return True
+            return {
+                'success': True, 
+                'message': f'Poll resolved! "{winning_option}" was correct.',
+                'winner_count': winner_count,
+                'points_awarded': points_value
+            }
             
         except Exception as e:
             logger.error(f"Error resolving poll: {e}")
             conn.rollback()
-            return False
+            return {'success': False, 'error': 'Database error'}
         finally:
             conn.close()
     
-    def _update_leaderboard(self):
-        """Update the leaderboard cache"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
+    def _update_leaderboard_for_poll(self, cursor, poll_id: int):
+        """Update leaderboard entries for a resolved poll"""
+        # Get all predictions for this poll
+        cursor.execute("""
+            SELECT user_id, points_earned FROM user_predictions WHERE poll_id = ?
+        """, (poll_id,))
         
-        try:
-            # Clear existing leaderboard
-            cursor.execute("DELETE FROM prediction_leaderboard")
-            
-            # Calculate new leaderboard
+        predictions = cursor.fetchall()
+        
+        for user_id, points_earned in predictions:
+            # Update or insert leaderboard entry
             cursor.execute("""
                 INSERT INTO prediction_leaderboard (user_id, total_points, correct_predictions, total_predictions, last_updated)
-                SELECT 
-                    user_id,
-                    COALESCE(SUM(points_earned), 0) as total_points,
-                    COUNT(CASE WHEN points_earned > 0 THEN 1 END) as correct_predictions,
-                    COUNT(*) as total_predictions,
-                    ? as last_updated
-                FROM user_predictions
-                GROUP BY user_id
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    total_points = total_points + ?,
+                    correct_predictions = correct_predictions + ?,
+                    total_predictions = total_predictions + 1,
+                    last_updated = ?
+            """, (user_id, points_earned, 1 if points_earned > 0 else 0, datetime.now(),
+                  points_earned, 1 if points_earned > 0 else 0, datetime.now()))
+    
+    def get_active_polls(self) -> List[Dict]:
+        """Get all currently active polls"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Auto-close expired polls first
+            cursor.execute("""
+                UPDATE prediction_polls SET status = 'closed' 
+                WHERE status = 'open' AND closes_at < ?
             """, (datetime.now(),))
             
+            # Get active polls
+            cursor.execute("""
+                SELECT p.poll_id, p.title, p.description, pc.name as category_name, 
+                       pc.points_value, p.closes_at, p.created_at,
+                       COUNT(up.prediction_id) as vote_count
+                FROM prediction_polls p
+                JOIN prediction_categories pc ON p.category_id = pc.category_id
+                LEFT JOIN user_predictions up ON p.poll_id = up.poll_id
+                WHERE p.status = 'open'
+                GROUP BY p.poll_id
+                ORDER BY p.closes_at ASC
+            """, )
+            
+            polls = []
+            for row in cursor.fetchall():
+                polls.append({
+                    'poll_id': row[0],
+                    'title': row[1],
+                    'description': row[2],
+                    'category': row[3],
+                    'points_value': row[4],
+                    'closes_at': row[5],
+                    'created_at': row[6],
+                    'vote_count': row[7]
+                })
+            
             conn.commit()
+            return polls
             
         except Exception as e:
-            logger.error(f"Error updating leaderboard: {e}")
-            conn.rollback()
+            logger.error(f"Error getting active polls: {e}")
+            return []
+        finally:
+            conn.close()
+    
+    def get_poll_details(self, poll_id: int) -> Optional[Dict]:
+        """Get detailed information about a specific poll"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get poll info
+            cursor.execute("""
+                SELECT p.poll_id, p.title, p.description, pc.name as category_name,
+                       pc.points_value, p.status, p.closes_at, p.created_at
+                FROM prediction_polls p
+                JOIN prediction_categories pc ON p.category_id = pc.category_id
+                WHERE p.poll_id = ?
+            """, (poll_id,))
+            
+            poll_info = cursor.fetchone()
+            if not poll_info:
+                return None
+            
+            # Get options with vote counts
+            cursor.execute("""
+                SELECT po.option_text, COUNT(up.prediction_id) as vote_count
+                FROM poll_options po
+                LEFT JOIN user_predictions up ON po.option_id = up.option_id
+                WHERE po.poll_id = ?
+                GROUP BY po.option_id, po.option_text
+                ORDER BY vote_count DESC
+            """, (poll_id,))
+            
+            options = cursor.fetchall()
+            
+            return {
+                'poll_id': poll_info[0],
+                'title': poll_info[1],
+                'description': poll_info[2],
+                'category': poll_info[3],
+                'points_value': poll_info[4],
+                'status': poll_info[5],
+                'closes_at': poll_info[6],
+                'created_at': poll_info[7],
+                'options': [{'text': opt[0], 'votes': opt[1]} for opt in options]
+            }
+            
+        except Exception as e:
+            logger.error(f"Error getting poll details: {e}")
+            return None
+        finally:
+            conn.close()
     
     def get_leaderboard(self, limit: int = 10) -> List[Dict]:
-        """Get current leaderboard"""
+        """Get prediction leaderboard"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
             cursor.execute("""
-                SELECT user_id, total_points, correct_predictions, total_predictions
+                SELECT user_id, total_points, correct_predictions, total_predictions,
+                       CASE WHEN total_predictions > 0 
+                            THEN ROUND(CAST(correct_predictions AS FLOAT) / total_predictions * 100, 1)
+                            ELSE 0 END as accuracy
                 FROM prediction_leaderboard
-                ORDER BY total_points DESC, correct_predictions DESC
+                ORDER BY total_points DESC, accuracy DESC
                 LIMIT ?
             """, (limit,))
             
             leaderboard = []
             for i, row in enumerate(cursor.fetchall(), 1):
-                user_id, total_points, correct_predictions, total_predictions = row
-                accuracy = (correct_predictions / total_predictions * 100) if total_predictions > 0 else 0
-                
                 leaderboard.append({
                     'rank': i,
-                    'user_id': user_id,
-                    'total_points': total_points,
-                    'correct_predictions': correct_predictions,
-                    'total_predictions': total_predictions,
-                    'accuracy': accuracy
+                    'user_id': row[0],
+                    'total_points': row[1],
+                    'correct_predictions': row[2],
+                    'total_predictions': row[3],
+                    'accuracy': row[4]
                 })
             
             return leaderboard
@@ -1772,42 +1877,44 @@ class PredictionLeaderboard:
         finally:
             conn.close()
     
-    def get_user_predictions(self, user_id: int, category_name: str = None) -> List[Dict]:
+    def get_user_predictions(self, user_id: int, category: str = None) -> List[Dict]:
         """Get a user's prediction history"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            if category_name:
+            if category:
                 cursor.execute("""
-                    SELECT pp.title, po.option_text, up.points_earned, pp.status, pc.name
+                    SELECT p.title, pc.name as category, po.option_text, 
+                           up.points_earned, p.status, up.predicted_at
                     FROM user_predictions up
-                    JOIN prediction_polls pp ON up.poll_id = pp.poll_id
+                    JOIN prediction_polls p ON up.poll_id = p.poll_id
+                    JOIN prediction_categories pc ON p.category_id = pc.category_id
                     JOIN poll_options po ON up.option_id = po.option_id
-                    JOIN prediction_categories pc ON pp.category_id = pc.category_id
-                    WHERE up.user_id = ? AND pc.name = ?
+                    WHERE up.user_id = ? AND p.category_id = ?
                     ORDER BY up.predicted_at DESC
-                """, (user_id, category_name))
+                """, (user_id, category))
             else:
                 cursor.execute("""
-                    SELECT pp.title, po.option_text, up.points_earned, pp.status, pc.name
+                    SELECT p.title, pc.name as category, po.option_text, 
+                           up.points_earned, p.status, up.predicted_at
                     FROM user_predictions up
-                    JOIN prediction_polls pp ON up.poll_id = pp.poll_id
+                    JOIN prediction_polls p ON up.poll_id = p.poll_id
+                    JOIN prediction_categories pc ON p.category_id = pc.category_id
                     JOIN poll_options po ON up.option_id = po.option_id
-                    JOIN prediction_categories pc ON pp.category_id = pc.category_id
                     WHERE up.user_id = ?
                     ORDER BY up.predicted_at DESC
                 """, (user_id,))
             
             predictions = []
             for row in cursor.fetchall():
-                title, option_text, points_earned, status, category = row
                 predictions.append({
-                    'title': title,
-                    'prediction': option_text,
-                    'points_earned': points_earned,
-                    'status': status,
-                    'category': category
+                    'title': row[0],
+                    'category': row[1],
+                    'prediction': row[2],
+                    'points_earned': row[3],
+                    'status': row[4],
+                    'predicted_at': row[5]
                 })
             
             return predictions
@@ -1815,128 +1922,6 @@ class PredictionLeaderboard:
         except Exception as e:
             logger.error(f"Error getting user predictions: {e}")
             return []
-        finally:
-            conn.close()
-    
-    def get_active_polls(self) -> List[Dict]:
-        """Get all currently active polls"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                SELECT pp.poll_id, pp.title, pp.description, pp.closes_at, pc.name as category
-                FROM prediction_polls pp
-                JOIN prediction_categories pc ON pp.category_id = pc.category_id
-                WHERE pp.status = 'open' AND pp.closes_at > ?
-                ORDER BY pp.closes_at ASC
-            """, (datetime.now(),))
-            
-            polls = []
-            for row in cursor.fetchall():
-                poll_id, title, description, closes_at, category = row
-                
-                # Get options
-                cursor.execute("""
-                    SELECT option_text FROM poll_options WHERE poll_id = ?
-                """, (poll_id,))
-                
-                options = [opt[0] for opt in cursor.fetchall()]
-                
-                polls.append({
-                    'poll_id': poll_id,
-                    'title': title,
-                    'description': description,
-                    'closes_at': closes_at,
-                    'category': category,
-                    'options': options
-                })
-            
-            return polls
-            
-        except Exception as e:
-            logger.error(f"Error getting active polls: {e}")
-            return []
-        finally:
-            conn.close()
-    
-    def get_poll_status(self, poll_id: int) -> Optional[Dict]:
-        """Get status and voting breakdown for a poll"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            # Get poll info
-            cursor.execute("""
-                SELECT pp.title, pp.description, pp.status, pp.closes_at, pc.name as category
-                FROM prediction_polls pp
-                JOIN prediction_categories pc ON pp.category_id = pc.category_id
-                WHERE pp.poll_id = ?
-            """, (poll_id,))
-            
-            poll_result = cursor.fetchone()
-            if not poll_result:
-                return None
-            
-            title, description, status, closes_at, category = poll_result
-            
-            # Get vote breakdown
-            cursor.execute("""
-                SELECT po.option_text, COUNT(up.user_id) as vote_count
-                FROM poll_options po
-                LEFT JOIN user_predictions up ON po.option_id = up.option_id
-                WHERE po.poll_id = ?
-                GROUP BY po.option_id, po.option_text
-                ORDER BY vote_count DESC
-            """, (poll_id,))
-            
-            vote_breakdown = {}
-            total_votes = 0
-            for option_text, vote_count in cursor.fetchall():
-                vote_breakdown[option_text] = vote_count
-                total_votes += vote_count
-            
-            return {
-                'poll_id': poll_id,
-                'title': title,
-                'description': description,
-                'status': status,
-                'closes_at': closes_at,
-                'category': category,
-                'vote_breakdown': vote_breakdown,
-                'total_votes': total_votes
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting poll status: {e}")
-            return None
-        finally:
-            conn.close()
-    
-    def auto_close_expired_polls(self):
-        """Automatically close polls that have passed their close time"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
-        try:
-            cursor.execute("""
-                UPDATE prediction_polls 
-                SET status = 'closed' 
-                WHERE status = 'open' AND closes_at <= ?
-            """, (datetime.now(),))
-            
-            closed_count = cursor.rowcount
-            conn.commit()
-            
-            if closed_count > 0:
-                logger.info(f"Auto-closed {closed_count} expired polls")
-            
-            return closed_count
-            
-        except Exception as e:
-            logger.error(f"Error auto-closing polls: {e}")
-            conn.rollback()
-            return 0
         finally:
             conn.close()
 
@@ -2205,1402 +2190,7 @@ Be selective - these should be the updates that a superfan would want to know ab
                             inline=False
                         )
                 
-                embed.set_footer(text=f"Chen Bot's Pattern Analysis • {len(selected_updates)} key moments selected")
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"Pattern highlights creation failed: {e}")
-            return None
-
-class BBDatabase:
-    """Handles database operations with connection pooling and error recovery"""
-    
-    def __init__(self, db_path: str = "bb_updates.db"):
-        self.db_path = db_path
-        self.connection_timeout = 30
-        self.init_database()
-    
-    def get_connection(self):
-        """Get database connection with proper error handling"""
-        try:
-            conn = sqlite3.connect(
-                self.db_path, 
-                timeout=self.connection_timeout,
-                check_same_thread=False,
-                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-            )
-            conn.execute("PRAGMA journal_mode=WAL")
-            conn.execute("PRAGMA synchronous=NORMAL")
-            return conn
-        except Exception as e:
-            logger.error(f"Database connection error: {e}")
-            raise
-    
-    def init_database(self):
-        """Initialize the database schema with proper indexing"""
-        conn = self.get_connection()
-        try:
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS updates (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    content_hash TEXT UNIQUE,
-                    title TEXT,
-                    description TEXT,
-                    link TEXT,
-                    pub_date TIMESTAMP,
-                    author TEXT,
-                    importance_score INTEGER DEFAULT 1,
-                    categories TEXT,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
-            
-            conn.commit()
-            logger.info("Database initialized successfully")
-            
-        except Exception as e:
-            logger.error(f"Database initialization error: {e}")
-            raise
-        finally:
-            conn.close()
-    
-    def is_duplicate(self, content_hash: str) -> bool:
-        """Check if update already exists"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            return result is not None
-            
-        except Exception as e:
-            logger.error(f"Database duplicate check error: {e}")
-            return False
-    
-    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
-        """Store a new update"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            categories_str = ",".join(categories) if categories else ""
-            
-            cursor.execute("""
-                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (update.content_hash, update.title, update.description, 
-                  update.link, update.pub_date, update.author, importance_score, categories_str))
-            
-            conn.commit()
-            conn.close()
-            
-        except Exception as e:
-            logger.error(f"Database store error: {e}")
-            raise
-    
-    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
-        """Get all updates from a specific 24-hour period"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author, importance_score
-                FROM updates 
-                WHERE pub_date >= ? AND pub_date < ?
-                ORDER BY pub_date ASC
-            """, (start_time, end_time))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            updates = []
-            for row in results:
-                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
-                updates.append(update)
-            
-            return updates
-            
-        except Exception as e:
-            logger.error(f"Database daily query error: {e}")
-            return []
-    
-    def get_recent_updates(self, hours: int) -> List[BBUpdate]:
-        """Get updates from the last N hours"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author
-                FROM updates 
-                WHERE pub_date > ?
-                ORDER BY pub_date DESC
-            """, (cutoff_time,))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            return [BBUpdate(*row) for row in results]
-            
-        except Exception as e:
-            logger.error(f"Database query error: {e}")
-            return []
-
-class BBDiscordBot(commands.Bot):
-    """Main Discord bot class with 24/7 reliability features"""
-    
-    def __init__(self):
-        self.config = Config()
-        
-        intents = discord.Intents.default()
-        intents.message_content = True
-        intents.guilds = True
-        super().__init__(command_prefix='!bb', intents=intents)
-        
-        self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
-        self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
-        self.analyzer = BBAnalyzer()
-        self.update_batcher = UpdateBatcher(self.analyzer, self.config)
-        self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
-        self.prediction_leaderboard = PredictionLeaderboard(self.config.get('database_path', 'bb_updates.db'))
-        
-        self.is_shutting_down = False
-        self.last_successful_check = datetime.now()
-        self.total_updates_processed = 0
-        self.consecutive_errors = 0
-        
-        signal.signal(signal.SIGTERM, self.signal_handler)
-        signal.signal(signal.SIGINT, self.signal_handler)
-        
-        self.remove_command('help')
-        self.setup_commands()
-    
-    def setup_commands(self):
-        """Setup all slash commands"""
-        
-        @self.tree.command(name="status", description="Show bot status and statistics")
-        async def status_slash(interaction: discord.Interaction):
-            """Show bot status"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                embed = discord.Embed(
-                    title="Big Brother Bot Status",
-                    color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
-                    timestamp=datetime.now()
-                )
-                
-                embed.add_field(name="RSS Feed", value=self.rss_url, inline=False)
-                embed.add_field(name="Update Channel", 
-                               value=f"<#{self.config.get('update_channel_id')}>" if self.config.get('update_channel_id') else "Not set", 
-                               inline=True)
-                embed.add_field(name="Updates Processed", value=str(self.total_updates_processed), inline=True)
-                embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
-                
-                time_since_check = datetime.now() - self.last_successful_check
-                embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
-                
-                queue_size = len(self.update_batcher.update_queue)
-                embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
-                
-                llm_status = "✅ Enabled" if self.update_batcher.llm_client else "❌ Disabled"
-                embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
-                
-                # Add cache statistics
-                cache_stats = self.update_batcher.processed_hashes_cache.get_stats()
-                embed.add_field(
-                    name="Hash Cache",
-                    value=f"Size: {cache_stats['size']}/{cache_stats['capacity']}\n"
-                          f"Hit Rate: {cache_stats['hit_rate']}\n"
-                          f"Evictions: {cache_stats['evictions']}",
-                    inline=True
-                )
-                
-                # Add rate limiting stats
-                rate_stats = self.update_batcher.get_rate_limit_stats()
-                embed.add_field(
-                    name="Rate Limits",
-                    value=f"Minute: {rate_stats['requests_this_minute']}/{rate_stats['minute_limit']}\n"
-                          f"Hour: {rate_stats['requests_this_hour']}/{rate_stats['hour_limit']}\n"
-                          f"Total: {rate_stats['total_requests']}",
-                    inline=True
-                )
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error generating status: {e}")
-                await interaction.followup.send("Error generating status.", ephemeral=True)
-
-        @self.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
-        async def summary_slash(interaction: discord.Interaction, hours: int = 24):
-            """Generate a summary of updates"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                if hours < 1 or hours > 168:
-                    await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                updates = self.db.get_recent_updates(hours)
-                
-                if not updates:
-                    await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
-                    return
-                
-                categories = {}
-                for update in updates:
-                    update_categories = self.analyzer.categorize_update(update)
-                    for category in update_categories:
-                        if category not in categories:
-                            categories[category] = []
-                        categories[category].append(update)
-                
-                embed = discord.Embed(
-                    title=f"Big Brother Updates Summary ({hours}h)",
-                    description=f"**{len(updates)} total updates**",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                for category, cat_updates in categories.items():
-                    top_updates = sorted(cat_updates, 
-                                       key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-                                       reverse=True)[:3]
-                    
-                    summary_text = "\n".join([f"• {update.title[:100]}..." 
-                                            if len(update.title) > 100 
-                                            else f"• {update.title}" 
-                                            for update in top_updates])
-                    
-                    embed.add_field(
-                        name=f"{category} ({len(cat_updates)} updates)",
-                        value=summary_text or "No updates",
-                        inline=False
-                    )
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error generating summary: {e}")
-                await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
-
-        @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
-        async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
-            """Set the channel for RSS updates"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                    
-                if not channel.permissions_for(interaction.guild.me).send_messages:
-                    await interaction.response.send_message(
-                        f"I don't have permission to send messages in {channel.mention}", 
-                        ephemeral=True
-                    )
-                    return
-                
-                self.config.set('update_channel_id', channel.id)
-                
-                await interaction.response.send_message(
-                    f"Update channel set to {channel.mention}", 
-                    ephemeral=True
-                )
-                logger.info(f"Update channel set to {channel.id}")
-                
-            except Exception as e:
-                logger.error(f"Error setting channel: {e}")
-                await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
-
-        @self.tree.command(name="commands", description="Show all available commands")
-        async def commands_slash(interaction: discord.Interaction):
-            """Show available commands"""
-            embed = discord.Embed(
-                title="Big Brother Bot Commands",
-                description="Monitor Jokers Updates RSS feed with intelligent analysis",
-                color=0x3498db
-            )
-            
-            commands_list = [
-                ("/summary", "Get a summary of recent updates (Admin only)"),
-                ("/status", "Show bot status and statistics (Admin only)"),
-                ("/setchannel", "Set update channel (Admin only)"),
-                ("/commands", "Show this help message"),
-                ("/forcebatch", "Force send any queued updates (Admin only)"),
-                ("/testllm", "Test LLM connection (Admin only)"),
-                ("/sync", "Sync slash commands (Owner only)"),
-                ("/alliances", "Show current Big Brother alliances"),
-                ("/loyalty", "Show a houseguest's alliance history"),
-                ("/betrayals", "Show recent alliance betrayals"),
-                ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
-                ("/clearalliances", "Clear all alliance data (Owner only)"),
-                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
-                ("**PREDICTION COMMANDS**", ""),
-                ("/create_poll", "Create a new prediction poll (Admin only)"),
-                ("/vote", "Vote on an active prediction poll"),
-                ("/close_poll", "Manually close a poll (Admin only)"),
-                ("/resolve_poll", "Resolve a poll and award points (Admin only)"),
-                ("/my_predictions", "View your prediction history"),
-                ("/leaderboard", "View the prediction leaderboard"),
-                ("/active_polls", "Show all active prediction polls"),
-                ("/poll_status", "Check voting status of a specific poll")
-            ]
-            
-            for name, description in commands_list:
-                if name.startswith("**"):
-                    embed.add_field(name=name, value=description, inline=False)
-                else:
-                    embed.add_field(name=name, value=description, inline=False)
-            
-            embed.set_footer(text="All commands are ephemeral (only you can see the response)")
-            
-            await interaction.response.send_message(embed=embed, ephemeral=True)
-
-        @self.tree.command(name="forcebatch", description="Force send any queued updates")
-        async def forcebatch_slash(interaction: discord.Interaction):
-            """Force send batch update"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                queue_size = len(self.update_batcher.update_queue)
-                if queue_size == 0:
-                    await interaction.followup.send("No updates in queue to send.", ephemeral=True)
-                    return
-                
-                await self.send_batch_update()
-                
-                await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error forcing batch: {e}")
-                await interaction.followup.send("Error sending batch.", ephemeral=True)
-
-        @self.tree.command(name="testllm", description="Test LLM connection and functionality")
-        async def test_llm_slash(interaction: discord.Interaction):
-            """Test LLM integration"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                if not self.update_batcher.llm_client:
-                    await interaction.followup.send("❌ LLM client not initialized - check API key", ephemeral=True)
-                    return
-                
-                # Check rate limits
-                if not await self.update_batcher._can_make_llm_request():
-                    stats = self.update_batcher.get_rate_limit_stats()
-                    await interaction.followup.send(
-                        f"❌ Rate limit reached\n"
-                        f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
-                        f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}", 
-                        ephemeral=True
-                    )
-                    return
-                
-                # Test API call
-                await self.update_batcher.rate_limiter.wait_if_needed()
-                
-                test_response = await asyncio.to_thread(
-                    self.update_batcher.llm_client.messages.create,
-                    model=self.update_batcher.llm_model,
-                    max_tokens=100,
-                    messages=[{
-                        "role": "user", 
-                        "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love both strategic gameplay and social dynamics in Big Brother."
-                    }]
-                )
-                
-                response_text = test_response.content[0].text
-                
-                embed = discord.Embed(
-                    title="✅ LLM Connection Test",
-                    description=f"**Model**: {self.update_batcher.llm_model}\n**Response**: {response_text}",
-                    color=0x2ecc71,
-                    timestamp=datetime.now()
-                )
-                
-                # Add rate limit info
-                stats = self.update_batcher.get_rate_limit_stats()
-                embed.add_field(
-                    name="Rate Limits After Test",
-                    value=f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
-                          f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}",
-                    inline=False
-                )
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error testing LLM: {e}")
-                await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
-
-        @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
-        async def sync_slash(interaction: discord.Interaction):
-            """Manually sync slash commands"""
-            try:
-                owner_id = self.config.get('owner_id')
-                if not owner_id or interaction.user.id != owner_id:
-                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                try:
-                    synced = await self.tree.sync()
-                    await interaction.followup.send(f"✅ Synced {len(synced)} slash commands!", ephemeral=True)
-                    logger.info(f"Manually synced {len(synced)} commands")
-                except Exception as e:
-                    await interaction.followup.send(f"❌ Failed to sync commands: {e}", ephemeral=True)
-                    logger.error(f"Manual sync failed: {e}")
-                    
-            except Exception as e:
-                logger.error(f"Error in sync command: {e}")
-                await interaction.followup.send("Error syncing commands.", ephemeral=True)
-
-        @self.tree.command(name="alliances", description="Show current Big Brother alliances")
-        async def alliances_slash(interaction: discord.Interaction):
-            """Show current alliance map"""
-            try:
-                await interaction.response.defer()  # Removed ephemeral=True to make it public
-                
-                logger.info(f"Alliance command called by {interaction.user}")
-                
-                embed = self.alliance_tracker.create_alliance_map_embed()
-                
-                logger.info(f"Alliance embed created with {len(embed.fields)} fields")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing alliances: {e}")
-                logger.error(traceback.format_exc())
-                await interaction.followup.send("Error generating alliance map.")
-
-        @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
-        async def loyalty_slash(interaction: discord.Interaction, houseguest: str):
-            """Show loyalty information for a houseguest"""
-            try:
-                await interaction.response.defer()  # Removed ephemeral=True to make it public
-                
-                # Capitalize the name properly
-                houseguest = houseguest.strip().title()
-                
-                embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest)
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing loyalty: {e}")
-                logger.error(traceback.format_exc())
-                await interaction.followup.send("Error generating loyalty information.")
-
-        @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
-        async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
-            """Show recent betrayals"""
-            try:
-                await interaction.response.defer()  # Removed ephemeral=True to make it public
-                
-                if days < 1 or days > 30:
-                    await interaction.followup.send("Days must be between 1 and 30")
-                    return
-                
-                betrayals = self.alliance_tracker.get_recent_betrayals(days)
-                
-                embed = discord.Embed(
-                    title="💔 Recent Alliance Betrayals",
-                    description=f"Betrayals in the last {days} days",
-                    color=0xe74c3c,
-                    timestamp=datetime.now()
-                )
-                
-                if not betrayals:
-                    embed.add_field(
-                        name="No Betrayals",
-                        value="No alliance betrayals detected in this time period",
-                        inline=False
-                    )
-                else:
-                    for i, betrayal in enumerate(betrayals[:10], 1):
-                        time_ago = datetime.now() - datetime.fromisoformat(betrayal['timestamp'])
-                        hours_ago = int(time_ago.total_seconds() / 3600)
-                        time_str = f"{hours_ago}h ago" if hours_ago < 24 else f"{hours_ago//24}d ago"
-                        
-                        embed.add_field(
-                            name=f"⚡ {time_str}",
-                            value=betrayal['description'],
-                            inline=False
-                        )
-                
-                embed.set_footer(text="Based on live feed updates")
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing betrayals: {e}")
-                logger.error(traceback.format_exc())
-                await interaction.followup.send("Error generating betrayal list.")
-
-        @self.tree.command(name="removebadalliance", description="Remove incorrectly detected alliance (Admin only)")
-        async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
-            """Remove a bad alliance"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                    
-                await interaction.response.defer(ephemeral=True)
-                
-                # Mark alliance as dissolved
-                conn = self.alliance_tracker.get_connection()
-                cursor = conn.cursor()
-                
-                cursor.execute("""
-                    UPDATE alliances 
-                    SET status = 'dissolved', confidence_level = 0 
-                    WHERE name = ?
-                """, (alliance_name,))
-                
-                affected = cursor.rowcount
-                conn.commit()
-                conn.close()
-                
-                if affected > 0:
-                    await interaction.followup.send(f"✅ Removed alliance: **{alliance_name}**", ephemeral=True)
-                    logger.info(f"Removed bad alliance: {alliance_name}")
-                else:
-                    await interaction.followup.send(f"❌ Alliance '{alliance_name}' not found", ephemeral=True)
-                    
-            except Exception as e:
-                logger.error(f"Error removing alliance: {e}")
-                await interaction.followup.send("Error removing alliance", ephemeral=True)
-
-        @self.tree.command(name="clearalliances", description="Clear all alliance data (Owner only)")
-        async def clear_alliances(interaction: discord.Interaction):
-            """Clear all alliance data - owner only"""
-            try:
-                owner_id = self.config.get('owner_id')
-                if not owner_id or interaction.user.id != owner_id:
-                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                conn = self.alliance_tracker.get_connection()
-                cursor = conn.cursor()
-                
-                # Clear all alliance data
-                cursor.execute("DELETE FROM alliance_events")
-                cursor.execute("DELETE FROM alliance_members")
-                cursor.execute("DELETE FROM alliances")
-                
-                conn.commit()
-                conn.close()
-                
-                await interaction.followup.send("✅ All alliance data has been cleared", ephemeral=True)
-                logger.info("Alliance data cleared by owner")
-                
-            except Exception as e:
-                logger.error(f"Error clearing alliances: {e}")
-                await interaction.followup.send("Error clearing alliance data", ephemeral=True)
-
-        @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
-        @discord.app_commands.describe(
-            zing_type="Choose your zing type",
-            target="Only required for targeted zings (leave blank for random/self)"
-        )
-        @discord.app_commands.choices(zing_type=[
-            discord.app_commands.Choice(name="Targeted Zing", value="targeted"),
-            discord.app_commands.Choice(name="Random Zing", value="random"),
-            discord.app_commands.Choice(name="Self Zing", value="self")
-        ])
-        async def zing_slash(interaction: discord.Interaction, 
-                            zing_type: discord.app_commands.Choice[str],
-                            target: discord.Member = None):
-            """Deliver a zing to someone"""
-            try:
-                zing_choice = zing_type.value
-                
-                # Determine the actual target based on choice
-                if zing_choice == "targeted":
-                    if not target:
-                        await interaction.response.send_message("Please specify a target for a targeted zing!", ephemeral=True)
-                        return
-                    final_target = target
-                elif zing_choice == "random":
-                    if target:
-                        await interaction.response.send_message("Random zing doesn't need a target - it will pick someone automatically!", ephemeral=True)
-                        return
-                    # Get all members in the server (excluding bots) - INCLUDE the command user
-                    members = [m for m in interaction.guild.members if not m.bot]
-                    if not members:
-                        await interaction.response.send_message("No valid members to zing!", ephemeral=True)
-                        return
-                    import random as rand_module
-                    final_target = rand_module.choice(members)
-                elif zing_choice == "self":
-                    if target:
-                        await interaction.response.send_message("Self zing doesn't need a target - you're zinging yourself!", ephemeral=True)
-                        return
-                    # Self-zing
-                    final_target = interaction.user
-                else:
-                    await interaction.response.send_message("Invalid zing type!", ephemeral=True)
-                    return
-                
-                # Select a random zing
-                import random as rand_module
-                zing = rand_module.choice(ALL_ZINGS)
-                
-                # Replace {target} with the actual mention
-                zing_text = zing.replace("{target}", final_target.mention)
-                
-                # If the zing contains [name], replace it with a random other member's name
-                if "[name]" in zing_text:
-                    other_members = [m for m in interaction.guild.members if not m.bot and m.id != final_target.id]
-                    if other_members:
-                        other_member = rand_module.choice(other_members)
-                        zing_text = zing_text.replace("[name]", other_member.display_name)
-                    else:
-                        # Fallback if no other members
-                        zing_text = zing_text.replace("[name]", "someone")
-                
-                # Create the embed
-                embed = discord.Embed(
-                    title="🎯 ZING!",
-                    description=zing_text,
-                    color=0xff1744 if final_target == interaction.user else 0xff9800
-                )
-                
-                # Add Zingbot style footer
-                zingbot_phrases = [
-                    "ZING! That's what I'm programmed for!",
-                    "Another successful zing delivered!",
-                    "Zingbot 3000 strikes again!",
-                    "I came, I saw, I ZINGED!",
-                    "My circuits are buzzing with that zing!",
-                    "Zing executed successfully!",
-                    "Target acquired and zinged!",
-                    "Maximum zing efficiency achieved!"
-                ]
-                
-                embed.set_footer(text=rand_module.choice(zingbot_phrases))
-                
-                # Add special effects for self-zings
-                if final_target == interaction.user:
-                    embed.add_field(
-                        name="😅 Self-Zing Award",
-                        value="You zinged yourself! That takes guts... or poor decision making!",
-                        inline=False
-                    )
-                
-                await interaction.response.send_message(embed=embed)
-                
-                # Log the zing
-                logger.info(f"Zing delivered: {interaction.user} zinged {final_target}")
-                
-            except Exception as e:
-                logger.error(f"Error delivering zing: {e}")
-                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
-
-        # PREDICTION LEADERBOARD COMMANDS
-        @self.tree.command(name="create_poll", description="Create a new prediction poll (Admin only)")
-        @discord.app_commands.describe(
-            category="The prediction category",
-            title="Poll title/question",
-            description="Poll description",
-            hours_open="How many hours the poll stays open",
-            option1="First option",
-            option2="Second option",
-            option3="Third option (optional)",
-            option4="Fourth option (optional)"
-        )
-        @discord.app_commands.choices(category=[
-            discord.app_commands.Choice(name="Season Winner", value="Season Winner"),
-            discord.app_commands.Choice(name="Weekly HOH", value="Weekly HOH"),
-            discord.app_commands.Choice(name="Weekly Veto", value="Weekly Veto"),
-            discord.app_commands.Choice(name="Weekly Eviction", value="Weekly Eviction"),
-            discord.app_commands.Choice(name="Jury Vote", value="Jury Vote"),
-            discord.app_commands.Choice(name="Special Event", value="Special Event")
-        ])
-        async def create_poll_slash(interaction: discord.Interaction, category: discord.app_commands.Choice[str],
-                                  title: str, description: str, hours_open: int,
-                                  option1: str, option2: str, option3: str = None, option4: str = None):
-            """Create a new prediction poll"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                if hours_open < 1 or hours_open > 168:  # Max 1 week
-                    await interaction.response.send_message("Hours must be between 1 and 168 (1 week)", ephemeral=True)
-                    return
-                
-                # Prepare options list
-                options = [option1, option2]
-                if option3:
-                    options.append(option3)
-                if option4:
-                    options.append(option4)
-                
-                if len(options) < 2:
-                    await interaction.response.send_message("At least 2 options are required", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                # Create the poll
-                poll_id = self.prediction_leaderboard.create_poll(
-                    category_name=category.value,
-                    title=title,
-                    description=description,
-                    hours_open=hours_open,
-                    options=options,
-                    created_by=interaction.user.id
-                )
-                
-                if poll_id:
-                    # Get category points
-                    category_key = category.value.lower().replace(' ', '_')
-                    points = PREDICTION_CATEGORIES.get(category_key, {}).get('points', 0)
-                    
-                    embed = discord.Embed(
-                        title="🗳️ New Prediction Poll Created!",
-                        description=f"**{title}**\n{description}",
-                        color=0x3498db,
-                        timestamp=datetime.now()
-                    )
-                    
-                    embed.add_field(name="Category", value=f"{category.value} ({points} points)", inline=True)
-                    embed.add_field(name="Poll ID", value=str(poll_id), inline=True)
-                    embed.add_field(name="Open For", value=f"{hours_open} hours", inline=True)
-                    
-                    options_text = "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
-                    embed.add_field(name="Options", value=options_text, inline=False)
-                    
-                    embed.add_field(name="How to Vote", value=f"Use `/vote {poll_id} <option>`", inline=False)
-                    
-                    embed.set_footer(text=f"Created by {interaction.user.display_name}")
-                    
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    
-                    # Also send to the update channel if configured
-                    channel_id = self.config.get('update_channel_id')
-                    if channel_id:
-                        channel = self.get_channel(channel_id)
-                        if channel:
-                            await channel.send(embed=embed)
-                    
-                    logger.info(f"Poll created: {poll_id} - {title}")
-                else:
-                    await interaction.followup.send("❌ Failed to create poll. Check category name.", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error creating poll: {e}")
-                await interaction.followup.send("Error creating poll", ephemeral=True)
-
-        @self.tree.command(name="vote", description="Vote on an active prediction poll")
-        @discord.app_commands.describe(
-            poll_id="The ID of the poll to vote on",
-            option="Your vote choice (must match exactly)"
-        )
-        async def vote_slash(interaction: discord.Interaction, poll_id: int, option: str):
-            """Vote on a prediction poll"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                # Check if poll exists and is open
-                poll_info = self.prediction_leaderboard.get_poll_status(poll_id)
-                if not poll_info:
-                    await interaction.followup.send("❌ Poll not found", ephemeral=True)
-                    return
-                
-                if poll_info['status'] != 'open':
-                    await interaction.followup.send("❌ This poll is no longer open for voting", ephemeral=True)
-                    return
-                
-                if datetime.now() > poll_info['closes_at']:
-                    await interaction.followup.send("❌ This poll has expired", ephemeral=True)
-                    return
-                
-                # Validate option exists
-                valid_options = list(poll_info['vote_breakdown'].keys())
-                if option not in valid_options:
-                    options_text = "\n".join([f"• {opt}" for opt in valid_options])
-                    await interaction.followup.send(
-                        f"❌ Invalid option. Valid options are:\n{options_text}", 
-                        ephemeral=True
-                    )
-                    return
-                
-                # Submit vote
-                success = self.prediction_leaderboard.vote_on_poll(poll_id, interaction.user.id, option)
-                
-                if success:
-                    embed = discord.Embed(
-                        title="✅ Vote Recorded!",
-                        description=f"**Poll**: {poll_info['title']}\n**Your Vote**: {option}",
-                        color=0x2ecc71,
-                        timestamp=datetime.now()
-                    )
-                    
-                    # Calculate time remaining
-                    time_left = poll_info['closes_at'] - datetime.now()
-                    hours_left = int(time_left.total_seconds() / 3600)
-                    minutes_left = int((time_left.total_seconds() % 3600) / 60)
-                    
-                    if hours_left > 0:
-                        time_text = f"{hours_left}h {minutes_left}m"
-                    else:
-                        time_text = f"{minutes_left}m"
-                    
-                    embed.add_field(name="Time Remaining", value=time_text, inline=True)
-                    embed.add_field(name="Category", value=poll_info['category'], inline=True)
-                    
-                    embed.set_footer(text="You can change your vote by voting again")
-                    
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    logger.info(f"Vote recorded: User {interaction.user.id} voted {option} on poll {poll_id}")
-                else:
-                    await interaction.followup.send("❌ Failed to record vote", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error voting on poll: {e}")
-                await interaction.followup.send("Error recording vote", ephemeral=True)
-
-        @self.tree.command(name="close_poll", description="Manually close a poll (Admin only)")
-        @discord.app_commands.describe(poll_id="The ID of the poll to close")
-        async def close_poll_slash(interaction: discord.Interaction, poll_id: int):
-            """Manually close a poll"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                success = self.prediction_leaderboard.close_poll(poll_id)
-                
-                if success:
-                    await interaction.followup.send(f"✅ Poll {poll_id} has been closed", ephemeral=True)
-                    logger.info(f"Poll {poll_id} manually closed by {interaction.user}")
-                else:
-                    await interaction.followup.send(f"❌ Failed to close poll {poll_id}", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error closing poll: {e}")
-                await interaction.followup.send("Error closing poll", ephemeral=True)
-
-        @self.tree.command(name="resolve_poll", description="Resolve a poll and award points (Admin only)")
-        @discord.app_commands.describe(
-            poll_id="The ID of the poll to resolve",
-            winning_option="The winning option (must match exactly)"
-        )
-        async def resolve_poll_slash(interaction: discord.Interaction, poll_id: int, winning_option: str):
-            """Resolve a poll and award points"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                # Get poll info before resolving
-                poll_info = self.prediction_leaderboard.get_poll_status(poll_id)
-                if not poll_info:
-                    await interaction.followup.send("❌ Poll not found", ephemeral=True)
-                    return
-                
-                # Validate winning option
-                valid_options = list(poll_info['vote_breakdown'].keys())
-                if winning_option not in valid_options:
-                    options_text = "\n".join([f"• {opt}" for opt in valid_options])
-                    await interaction.followup.send(
-                        f"❌ Invalid option. Valid options are:\n{options_text}", 
-                        ephemeral=True
-                    )
-                    return
-                
-                # Resolve the poll
-                success = self.prediction_leaderboard.resolve_poll(poll_id, winning_option)
-                
-                if success:
-                    # Get updated poll info
-                    correct_votes = poll_info['vote_breakdown'].get(winning_option, 0)
-                    total_votes = poll_info['total_votes']
-                    
-                    # Get category points
-                    category_key = poll_info['category'].lower().replace(' ', '_')
-                    points = PREDICTION_CATEGORIES.get(category_key, {}).get('points', 0)
-                    
-                    embed = discord.Embed(
-                        title="🏆 Poll Resolved!",
-                        description=f"**{poll_info['title']}**\n\n**Winner**: {winning_option}",
-                        color=0xffd700,
-                        timestamp=datetime.now()
-                    )
-                    
-                    embed.add_field(name="Correct Predictions", value=f"{correct_votes}/{total_votes}", inline=True)
-                    embed.add_field(name="Points Awarded", value=f"{points} each", inline=True)
-                    embed.add_field(name="Total Points Distributed", value=f"{correct_votes * points}", inline=True)
-                    
-                    embed.set_footer(text=f"Resolved by {interaction.user.display_name}")
-                    
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    
-                    # Also send to the update channel if configured
-                    channel_id = self.config.get('update_channel_id')
-                    if channel_id:
-                        channel = self.get_channel(channel_id)
-                        if channel:
-                            await channel.send(embed=embed)
-                    
-                    logger.info(f"Poll {poll_id} resolved: {winning_option} won, {correct_votes} correct predictions")
-                else:
-                    await interaction.followup.send(f"❌ Failed to resolve poll {poll_id}", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error resolving poll: {e}")
-                await interaction.followup.send("Error resolving poll", ephemeral=True)
-
-        @self.tree.command(name="my_predictions", description="View your prediction history")
-        @discord.app_commands.describe(category="Filter by category (optional)")
-        @discord.app_commands.choices(category=[
-            discord.app_commands.Choice(name="Season Winner", value="Season Winner"),
-            discord.app_commands.Choice(name="Weekly HOH", value="Weekly HOH"),
-            discord.app_commands.Choice(name="Weekly Veto", value="Weekly Veto"),
-            discord.app_commands.Choice(name="Weekly Eviction", value="Weekly Eviction"),
-            discord.app_commands.Choice(name="Jury Vote", value="Jury Vote"),
-            discord.app_commands.Choice(name="Special Event", value="Special Event")
-        ])
-        async def my_predictions_slash(interaction: discord.Interaction, category: discord.app_commands.Choice[str] = None):
-            """View your prediction history"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                category_name = category.value if category else None
-                predictions = self.prediction_leaderboard.get_user_predictions(interaction.user.id, category_name)
-                
-                if not predictions:
-                    filter_text = f" in {category_name}" if category_name else ""
-                    await interaction.followup.send(f"You have no predictions{filter_text}", ephemeral=True)
-                    return
-                
-                # Calculate stats
-                total_predictions = len(predictions)
-                correct_predictions = len([p for p in predictions if p['points_earned'] > 0])
-                total_points = sum(p['points_earned'] for p in predictions)
-                accuracy = (correct_predictions / total_predictions * 100) if total_predictions > 0 else 0
-                
-                title_suffix = f" - {category_name}" if category_name else ""
-                embed = discord.Embed(
-                    title=f"🎯 Your Predictions{title_suffix}",
-                    description=f"**Total Points**: {total_points}\n**Accuracy**: {accuracy:.1f}% ({correct_predictions}/{total_predictions})",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                # Group by status
-                resolved_correct = [p for p in predictions if p['status'] == 'resolved' and p['points_earned'] > 0]
-                resolved_incorrect = [p for p in predictions if p['status'] == 'resolved' and p['points_earned'] == 0]
-                pending = [p for p in predictions if p['status'] in ['open', 'closed']]
-                
-                # Show recent correct predictions
-                if resolved_correct:
-                    correct_text = []
-                    for pred in resolved_correct[:5]:  # Show top 5
-                        correct_text.append(f"✅ **{pred['title']}**: {pred['prediction']} (+{pred['points_earned']} pts)")
-                    
-                    embed.add_field(
-                        name="🏆 Recent Correct Predictions",
-                        value="\n".join(correct_text),
-                        inline=False
-                    )
-                
-                # Show pending predictions
-                if pending:
-                    pending_text = []
-                    for pred in pending[:5]:  # Show top 5
-                        status_emoji = "🔄" if pred['status'] == 'open' else "⏸️"
-                        pending_text.append(f"{status_emoji} **{pred['title']}**: {pred['prediction']}")
-                    
-                    embed.add_field(
-                        name="⏳ Pending Predictions",
-                        value="\n".join(pending_text),
-                        inline=False
-                    )
-                
-                # Show recent incorrect if any
-                if resolved_incorrect:
-                    incorrect_text = []
-                    for pred in resolved_incorrect[:3]:  # Show top 3
-                        incorrect_text.append(f"❌ **{pred['title']}**: {pred['prediction']}")
-                    
-                    embed.add_field(
-                        name="😬 Recent Misses",
-                        value="\n".join(incorrect_text),
-                        inline=False
-                    )
-                
-                embed.set_footer(text=f"Showing recent predictions • Total: {total_predictions}")
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error getting user predictions: {e}")
-                await interaction.followup.send("Error retrieving your predictions", ephemeral=True)
-
-        @self.tree.command(name="leaderboard", description="View the prediction leaderboard")
-        @discord.app_commands.describe(limit="Number of top players to show (default: 10)")
-        async def leaderboard_slash(interaction: discord.Interaction, limit: int = 10):
-            """View the prediction leaderboard"""
-            try:
-                await interaction.response.defer()  # Public response
-                
-                if limit < 1 or limit > 25:
-                    await interaction.followup.send("Limit must be between 1 and 25")
-                    return
-                
-                leaderboard = self.prediction_leaderboard.get_leaderboard(limit)
-                
-                if not leaderboard:
-                    await interaction.followup.send("No predictions have been made yet!")
-                    return
-                
-                embed = discord.Embed(
-                    title="🏆 Prediction Leaderboard",
-                    description="Top predictors in the house!",
-                    color=0xffd700,
-                    timestamp=datetime.now()
-                )
-                
-                # Create leaderboard text
-                leaderboard_text = []
-                for entry in leaderboard:
-                    rank = entry['rank']
-                    user = self.get_user(entry['user_id'])
-                    username = user.display_name if user else f"User {entry['user_id']}"
-                    
-                    # Rank emojis
-                    if rank == 1:
-                        rank_emoji = "🥇"
-                    elif rank == 2:
-                        rank_emoji = "🥈"
-                    elif rank == 3:
-                        rank_emoji = "🥉"
-                    else:
-                        rank_emoji = f"{rank}."
-                    
-                    points = entry['total_points']
-                    accuracy = entry['accuracy']
-                    correct = entry['correct_predictions']
-                    total = entry['total_predictions']
-                    
-                    leaderboard_text.append(
-                        f"{rank_emoji} **{username}**\n"
-                        f"     {points} pts • {accuracy:.1f}% ({correct}/{total})"
-                    )
-                
-                embed.add_field(
-                    name="📊 Rankings",
-                    value="\n\n".join(leaderboard_text),
-                    inline=False
-                )
-                
-                # Add user's position if they're not in top list
-                user_in_top = any(entry['user_id'] == interaction.user.id for entry in leaderboard)
-                if not user_in_top:
-                    all_leaderboard = self.prediction_leaderboard.get_leaderboard(1000)  # Get all
-                    user_entry = next((entry for entry in all_leaderboard if entry['user_id'] == interaction.user.id), None)
-                    
-                    if user_entry:
-                        embed.add_field(
-                            name="📍 Your Position",
-                            value=f"**#{user_entry['rank']}** - {user_entry['total_points']} pts • {user_entry['accuracy']:.1f}%",
-                            inline=False
-                        )
-                
-                embed.set_footer(text="Prediction Leaderboard • Updated after each resolved poll")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error getting leaderboard: {e}")
-                await interaction.followup.send("Error retrieving leaderboard")
-
-        @self.tree.command(name="active_polls", description="Show all active prediction polls")
-        async def active_polls_slash(interaction: discord.Interaction):
-            """Show all active prediction polls"""
-            try:
-                await interaction.response.defer()  # Public response
-                
-                active_polls = self.prediction_leaderboard.get_active_polls()
-                
-                if not active_polls:
-                    await interaction.followup.send("No active polls right now!")
-                    return
-                
-                embed = discord.Embed(
-                    title="🗳️ Active Prediction Polls",
-                    description=f"{len(active_polls)} poll(s) currently open for voting",
-                    color=0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                for poll in active_polls[:5]:  # Show max 5 polls
-                    poll_id = poll['poll_id']
-                    title = poll['title']
-                    category = poll['category']
-                    closes_at = poll['closes_at']
-                    options = poll['options']
-                    
-                    # Calculate time remaining
-                    time_left = closes_at - datetime.now()
-                    hours_left = int(time_left.total_seconds() / 3600)
-                    minutes_left = int((time_left.total_seconds() % 3600) / 60)
-                    
-                    if hours_left > 0:
-                        time_text = f"{hours_left}h {minutes_left}m"
-                    elif minutes_left > 0:
-                        time_text = f"{minutes_left}m"
-                    else:
-                        time_text = "Closing soon!"
-                    
-                    # Get category points
-                    category_key = category.lower().replace(' ', '_')
-                    points = PREDICTION_CATEGORIES.get(category_key, {}).get('points', 0)
-                    
-                    options_text = "\n".join([f"• {opt}" for opt in options])
-                    
-                    embed.add_field(
-                        name=f"Poll #{poll_id} - {category} ({points} pts)",
-                        value=f"**{title}**\n{options_text}\n⏰ Closes in {time_text}\n📝 `/vote {poll_id} <option>`",
-                        inline=False
-                    )
-                
-                if len(active_polls) > 5:
-                    embed.set_footer(text=f"Showing 5 of {len(active_polls)} active polls")
-                else:
-                    embed.set_footer(text="Use /vote <poll_id> <option> to make your prediction!")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error getting active polls: {e}")
-                await interaction.followup.send("Error retrieving active polls")
-
-        @self.tree.command(name="poll_status", description="Check voting status of a specific poll")
-        @discord.app_commands.describe(poll_id="The ID of the poll to check")
-        async def poll_status_slash(interaction: discord.Interaction, poll_id: int):
-            """Check voting status of a specific poll"""
-            try:
-                await interaction.response.defer()  # Public response
-                
-                poll_info = self.prediction_leaderboard.get_poll_status(poll_id)
-                
-                if not poll_info:
-                    await interaction.followup.send(f"Poll {poll_id} not found")
-                    return
-                
-                title = poll_info['title']
-                description = poll_info['description']
-                status = poll_info['status']
-                category = poll_info['category']
-                closes_at = poll_info['closes_at']
-                vote_breakdown = poll_info['vote_breakdown']
-                total_votes = poll_info['total_votes']
-                
-                # Status color
-                status_colors = {
-                    'open': 0x2ecc71,
-                    'closed': 0xf39c12,
-                    'resolved': 0x9b59b6
-                }
-                color = status_colors.get(status, 0x95a5a6)
-                
-                # Status emoji
-                status_emojis = {
-                    'open': '🟢',
-                    'closed': '🟡',
-                    'resolved': '🏆'
-                }
-                status_emoji = status_emojis.get(status, '⚫')
-                
-                embed = discord.Embed(
-                    title=f"📊 Poll #{poll_id} Status",
-                    description=f"{status_emoji} **{status.upper()}**\n\n**{title}**\n{description}",
-                    color=color,
-                    timestamp=datetime.now()
-                )
-                
-                # Get category points
-                category_key = category.lower().replace(' ', '_')
-                points = PREDICTION_CATEGORIES.get(category_key, {}).get('points', 0)
-                
-                embed.add_field(name="Category", value=f"{category} ({points} points)", inline=True)
-                embed.add_field(name="Total Votes", value=str(total_votes), inline=True)
-                
-                # Time info
-                if status == 'open':
-                    time_left = closes_at - datetime.now()
-                    hours_left = int(time_left.total_seconds() / 3600)
-                    minutes_left = int((time_left.total_seconds() % 3600) / 60)
-                    
-                    if time_left.total_seconds() > 0:
-                        if hours_left > 0:
-                            time_text = f"{hours_left}h {minutes_left}m remaining"
-                        else:
-                            time_text = f"{minutes_left}m remaining"
-                    else:
-                        time_text = "Expired"
-                    
-                    embed.add_field(name="Time", value=time_text, inline=True)
-                else:
-                    embed.add_field(name="Closed", value=closes_at.strftime("%m/%d %I:%M %p"), inline=True)
-                
-                # Vote breakdown
-                if total_votes > 0:
-                    breakdown_text = []
-                    for option, votes in sorted(vote_breakdown.items(), key=lambda x: x[1], reverse=True):
-                        percentage = (votes / total_votes * 100) if total_votes > 0 else 0
-                        bar_length = int(percentage / 10)  # 10% per bar segment
-                        bar = "█" * bar_length + "░" * (10 - bar_length)
-                        breakdown_text.append(f"**{option}**: {votes} votes ({percentage:.1f}%)\n{bar}")
-                    
-                    embed.add_field(
-                        name="📈 Vote Breakdown",
-                        value="\n\n".join(breakdown_text),
-                        inline=False
-                    )
-                else:
-                    embed.add_field(
-                        name="📈 Vote Breakdown",
-                        value="No votes yet",
-                        inline=False
-                    )
-                
-                # Show how to vote if still open
-                if status == 'open' and datetime.now() < closes_at:
-                    embed.add_field(
-                        name="How to Vote",
-                        value=f"`/vote {poll_id} <option>`",
-                        inline=False
-                    )
-                
-                embed.set_footer(text=f"Poll #{poll_id}")
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error getting poll status: {e}")
-                await interaction.followup.send("Error retrieving poll status")
-        
-    def signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully"""
-        logger.info(f"Received signal {signum}, shutting down gracefully...")
-        self.is_shutting_down = True
-        asyncio.create_task(self.close())
-    
-    async def on_ready(self):
-        """Bot startup event"""
-        logger.info(f'{self.user} has connected to Discord!')
-        logger.info(f'Bot is in {len(self.guilds)} guilds')
-        
-        try:
-            synced = await self.tree.sync()
-            logger.info(f"Synced {len(synced)} slash command(s)")
-        except Exception as e:
-            logger.error(f"Failed to sync commands: {e}")
-        
-        try:
-            self.check_rss_feed.start()
-            self.daily_recap_task.start()  # Start daily recap task
-            self.poll_maintenance_task.start()  # Start poll maintenance task
-            logger.info("RSS feed monitoring, daily recap, and poll maintenance tasks started")
-        except Exception as e:
-            logger.error(f"Error starting background tasks: {e}")
-        
-        logger.info("Prediction leaderboard system ready")
-    
-    @tasks.loop(minutes=5)
-    async def poll_maintenance_task(self):
-        """Background task to maintain prediction polls"""
-        if self.is_shutting_down:
-            return
-        
-        try:
-            # Auto-close expired polls
-            closed_count = self.prediction_leaderboard.auto_close_expired_polls()
-            if closed_count > 0:
-                logger.info(f"Auto-closed {closed_count} expired polls")
-                
-        except Exception as e:
-            logger.error(f"Error in poll maintenance: {e}")
-    
-    @poll_maintenance_task.before_loop
-    async def before_poll_maintenance_task(self):
-        """Wait for bot to be ready before starting poll maintenance"""
-        await self.wait_until_ready()
-    
-    def create_content_hash(self, title: str, description: str) -> str:
-        """Create a unique hash for content deduplication"""
-        content = f"{title}|{description}".lower()
-        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
-        content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
-        return hashlib.md5(content.encode()).hexdigest()
-    
-    def process_rss_entries(self, entries) -> List[BBUpdate]:
-        """Process RSS entries into BBUpdate objects"""
-        updates = []
-        
-        for entry in entries:
-            try:
-                title = entry.get('title', 'No title')
-                description = entry.get('description', 'No description')
-                link = entry.get('link', '')
-                
-                pub_date = datetime.now()
-                if hasattr(entry, 'published_parsed') and entry.published_parsed:
-                    pub_date = datetime(*entry.published_parsed[:6])
-                
-                content_hash = self.create_content_hash(title, description)
-                author = entry.get('author', '')
-                
-                updates.append(BBUpdate(
-                    title=title,
-                    description=description,
-                    link=link,
-                    pub_date=pub_date,
-                    content_hash=content_hash,
-                    author=author
-                ))
-                
-            except Exception as e:
-                logger.error(f"Error processing RSS entry: {e}")
-                footer(text=f"Chen Bot's Highlights • {game_phase.replace('_', ' ').title()}")
+                embed.set_footer(text=f"Chen Bot's Highlights • {game_phase.replace('_', ' ').title()}")
                 
                 return embed
                 
@@ -4264,4 +2854,1435 @@ Focus on creating a cohesive daily story from these summaries."""
                     inline=False
                 )
             
-            embed.set_
+            embed.set_footer(text=f"Chen Bot's Pattern Analysis • {len(selected_updates)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Pattern highlights creation failed: {e}")
+            return None
+
+class BBDatabase:
+    """Handles database operations with connection pooling and error recovery"""
+    
+    def __init__(self, db_path: str = "bb_updates.db"):
+        self.db_path = db_path
+        self.connection_timeout = 30
+        self.init_database()
+    
+    def get_connection(self):
+        """Get database connection with proper error handling"""
+        try:
+            conn = sqlite3.connect(
+                self.db_path, 
+                timeout=self.connection_timeout,
+                check_same_thread=False,
+                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+            )
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+            return conn
+        except Exception as e:
+            logger.error(f"Database connection error: {e}")
+            raise
+    
+    def init_database(self):
+        """Initialize the database schema with proper indexing"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS updates (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    content_hash TEXT UNIQUE,
+                    title TEXT,
+                    description TEXT,
+                    link TEXT,
+                    pub_date TIMESTAMP,
+                    author TEXT,
+                    importance_score INTEGER DEFAULT 1,
+                    categories TEXT,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_content_hash ON updates(content_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pub_date ON updates(pub_date)")
+            
+            conn.commit()
+            logger.info("Database initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"Database initialization error: {e}")
+            raise
+        finally:
+            conn.close()
+    
+    def is_duplicate(self, content_hash: str) -> bool:
+        """Check if update already exists"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT 1 FROM updates WHERE content_hash = ?", (content_hash,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"Database duplicate check error: {e}")
+            return False
+    
+    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
+        """Store a new update"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            categories_str = ",".join(categories) if categories else ""
+            
+            cursor.execute("""
+                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (update.content_hash, update.title, update.description, 
+                  update.link, update.pub_date, update.author, importance_score, categories_str))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Database store error: {e}")
+            raise
+    
+    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates from a specific 24-hour period"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author, importance_score
+                FROM updates 
+                WHERE pub_date >= ? AND pub_date < ?
+                ORDER BY pub_date ASC
+            """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                update = BBUpdate(*row[:6])  # First 6 fields for BBUpdate
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database daily query error: {e}")
+            return []
+    
+    def get_recent_updates(self, hours: int) -> List[BBUpdate]:
+        """Get updates from the last N hours"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author
+                FROM updates 
+                WHERE pub_date > ?
+                ORDER BY pub_date DESC
+            """, (cutoff_time,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [BBUpdate(*row) for row in results]
+            
+        except Exception as e:
+            logger.error(f"Database query error: {e}")
+            return []
+
+class BBDiscordBot(commands.Bot):
+    """Main Discord bot class with 24/7 reliability features"""
+    
+    def __init__(self):
+        self.config = Config()
+        
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.guilds = True
+        super().__init__(command_prefix='!bb', intents=intents)
+        
+        self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
+        self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
+        self.analyzer = BBAnalyzer()
+        self.update_batcher = UpdateBatcher(self.analyzer, self.config)
+        self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
+        
+        # NEW: Initialize prediction system
+        self.prediction_system = PredictionSystem(self.config.get('database_path', 'bb_updates.db'))
+        
+        self.is_shutting_down = False
+        self.last_successful_check = datetime.now()
+        self.total_updates_processed = 0
+        self.consecutive_errors = 0
+        
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        signal.signal(signal.SIGINT, self.signal_handler)
+        
+        self.remove_command('help')
+        self.setup_commands()
+    
+    def setup_commands(self):
+        """Setup all slash commands"""
+        
+        @self.tree.command(name="status", description="Show bot status and statistics")
+        async def status_slash(interaction: discord.Interaction):
+            """Show bot status"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                embed = discord.Embed(
+                    title="Big Brother Bot Status",
+                    color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(name="RSS Feed", value=self.rss_url, inline=False)
+                embed.add_field(name="Update Channel", 
+                               value=f"<#{self.config.get('update_channel_id')}>" if self.config.get('update_channel_id') else "Not set", 
+                               inline=True)
+                embed.add_field(name="Updates Processed", value=str(self.total_updates_processed), inline=True)
+                embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
+                
+                time_since_check = datetime.now() - self.last_successful_check
+                embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
+                
+                queue_size = len(self.update_batcher.update_queue)
+                embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
+                
+                llm_status = "✅ Enabled" if self.update_batcher.llm_client else "❌ Disabled"
+                embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
+                
+                # Add cache statistics
+                cache_stats = self.update_batcher.processed_hashes_cache.get_stats()
+                embed.add_field(
+                    name="Hash Cache",
+                    value=f"Size: {cache_stats['size']}/{cache_stats['capacity']}\n"
+                          f"Hit Rate: {cache_stats['hit_rate']}\n"
+                          f"Evictions: {cache_stats['evictions']}",
+                    inline=True
+                )
+                
+                # Add rate limiting stats
+                rate_stats = self.update_batcher.get_rate_limit_stats()
+                embed.add_field(
+                    name="Rate Limits",
+                    value=f"Minute: {rate_stats['requests_this_minute']}/{rate_stats['minute_limit']}\n"
+                          f"Hour: {rate_stats['requests_this_hour']}/{rate_stats['hour_limit']}\n"
+                          f"Total: {rate_stats['total_requests']}",
+                    inline=True
+                )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error generating status: {e}")
+                await interaction.followup.send("Error generating status.", ephemeral=True)
+
+        @self.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
+        async def summary_slash(interaction: discord.Interaction, hours: int = 24):
+            """Generate a summary of updates"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                if hours < 1 or hours > 168:
+                    await interaction.response.send_message("Hours must be between 1 and 168", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                updates = self.db.get_recent_updates(hours)
+                
+                if not updates:
+                    await interaction.followup.send(f"No updates found in the last {hours} hours.", ephemeral=True)
+                    return
+                
+                categories = {}
+                for update in updates:
+                    update_categories = self.analyzer.categorize_update(update)
+                    for category in update_categories:
+                        if category not in categories:
+                            categories[category] = []
+                        categories[category].append(update)
+                
+                embed = discord.Embed(
+                    title=f"Big Brother Updates Summary ({hours}h)",
+                    description=f"**{len(updates)} total updates**",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for category, cat_updates in categories.items():
+                    top_updates = sorted(cat_updates, 
+                                       key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                                       reverse=True)[:3]
+                    
+                    summary_text = "\n".join([f"• {update.title[:100]}..." 
+                                            if len(update.title) > 100 
+                                            else f"• {update.title}" 
+                                            for update in top_updates])
+                    
+                    embed.add_field(
+                        name=f"{category} ({len(cat_updates)} updates)",
+                        value=summary_text or "No updates",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error generating summary: {e}")
+                await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
+
+        @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
+        async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
+            """Set the channel for RSS updates"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                if not channel.permissions_for(interaction.guild.me).send_messages:
+                    await interaction.response.send_message(
+                        f"I don't have permission to send messages in {channel.mention}", 
+                        ephemeral=True
+                    )
+                    return
+                
+                self.config.set('update_channel_id', channel.id)
+                
+                await interaction.response.send_message(
+                    f"Update channel set to {channel.mention}", 
+                    ephemeral=True
+                )
+                logger.info(f"Update channel set to {channel.id}")
+                
+            except Exception as e:
+                logger.error(f"Error setting channel: {e}")
+                await interaction.response.send_message("Error setting channel. Please try again.", ephemeral=True)
+
+        @self.tree.command(name="commands", description="Show all available commands")
+        async def commands_slash(interaction: discord.Interaction):
+            """Show available commands"""
+            embed = discord.Embed(
+                title="Big Brother Bot Commands",
+                description="Monitor Jokers Updates RSS feed with intelligent analysis",
+                color=0x3498db
+            )
+            
+            commands_list = [
+                ("/summary", "Get a summary of recent updates (Admin only)"),
+                ("/status", "Show bot status and statistics (Admin only)"),
+                ("/setchannel", "Set update channel (Admin only)"),
+                ("/commands", "Show this help message"),
+                ("/forcebatch", "Force send any queued updates (Admin only)"),
+                ("/testllm", "Test LLM connection (Admin only)"),
+                ("/sync", "Sync slash commands (Owner only)"),
+                ("/alliances", "Show current Big Brother alliances"),
+                ("/loyalty", "Show a houseguest's alliance history"),
+                ("/betrayals", "Show recent alliance betrayals"),
+                ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
+                ("/clearalliances", "Clear all alliance data (Owner only)"),
+                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
+                ("**PREDICTIONS**", "**Prediction Leaderboard Commands**"),
+                ("/create_poll", "Create a new prediction poll (Admin only)"),
+                ("/vote", "Vote on a prediction poll"),
+                ("/close_poll", "Manually close a poll (Admin only)"),
+                ("/resolve_poll", "Resolve poll and award points (Admin only)"),
+                ("/active_polls", "Show all active prediction polls"),
+                ("/poll_status", "Show details about a specific poll"),
+                ("/leaderboard", "Show prediction leaderboard"),
+                ("/my_predictions", "Show your prediction history")
+            ]
+            
+            for name, description in commands_list:
+                embed.add_field(name=name, value=description, inline=False)
+            
+            embed.set_footer(text="All commands are ephemeral (only you can see the response)")
+            
+            await interaction.response.send_message(embed=embed, ephemeral=True)
+
+        @self.tree.command(name="forcebatch", description="Force send any queued updates")
+        async def forcebatch_slash(interaction: discord.Interaction):
+            """Force send batch update"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                queue_size = len(self.update_batcher.update_queue)
+                if queue_size == 0:
+                    await interaction.followup.send("No updates in queue to send.", ephemeral=True)
+                    return
+                
+                await self.send_batch_update()
+                
+                await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error forcing batch: {e}")
+                await interaction.followup.send("Error sending batch.", ephemeral=True)
+
+        @self.tree.command(name="testllm", description="Test LLM connection and functionality")
+        async def test_llm_slash(interaction: discord.Interaction):
+            """Test LLM integration"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                if not self.update_batcher.llm_client:
+                    await interaction.followup.send("❌ LLM client not initialized - check API key", ephemeral=True)
+                    return
+                
+                # Check rate limits
+                if not await self.update_batcher._can_make_llm_request():
+                    stats = self.update_batcher.get_rate_limit_stats()
+                    await interaction.followup.send(
+                        f"❌ Rate limit reached\n"
+                        f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
+                        f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}", 
+                        ephemeral=True
+                    )
+                    return
+                
+                # Test API call
+                await self.update_batcher.rate_limiter.wait_if_needed()
+                
+                test_response = await asyncio.to_thread(
+                    self.update_batcher.llm_client.messages.create,
+                    model=self.update_batcher.llm_model,
+                    max_tokens=100,
+                    messages=[{
+                        "role": "user", 
+                        "content": "You are a Big Brother superfan. Respond with 'LLM connection successful!' and briefly explain why you love both strategic gameplay and social dynamics in Big Brother."
+                    }]
+                )
+                
+                response_text = test_response.content[0].text
+                
+                embed = discord.Embed(
+                    title="✅ LLM Connection Test",
+                    description=f"**Model**: {self.update_batcher.llm_model}\n**Response**: {response_text}",
+                    color=0x2ecc71,
+                    timestamp=datetime.now()
+                )
+                
+                # Add rate limit info
+                stats = self.update_batcher.get_rate_limit_stats()
+                embed.add_field(
+                    name="Rate Limits After Test",
+                    value=f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
+                          f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}",
+                    inline=False
+                )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error testing LLM: {e}")
+                await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
+
+        @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
+        async def sync_slash(interaction: discord.Interaction):
+            """Manually sync slash commands"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                try:
+                    synced = await self.tree.sync()
+                    await interaction.followup.send(f"✅ Synced {len(synced)} slash commands!", ephemeral=True)
+                    logger.info(f"Manually synced {len(synced)} commands")
+                except Exception as e:
+                    await interaction.followup.send(f"❌ Failed to sync commands: {e}", ephemeral=True)
+                    logger.error(f"Manual sync failed: {e}")
+                    
+            except Exception as e:
+                logger.error(f"Error in sync command: {e}")
+                await interaction.followup.send("Error syncing commands.", ephemeral=True)
+
+        @self.tree.command(name="alliances", description="Show current Big Brother alliances")
+        async def alliances_slash(interaction: discord.Interaction):
+            """Show current alliance map"""
+            try:
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
+                
+                logger.info(f"Alliance command called by {interaction.user}")
+                
+                embed = self.alliance_tracker.create_alliance_map_embed()
+                
+                logger.info(f"Alliance embed created with {len(embed.fields)} fields")
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing alliances: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating alliance map.")
+
+        @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
+        async def loyalty_slash(interaction: discord.Interaction, houseguest: str):
+            """Show loyalty information for a houseguest"""
+            try:
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
+                
+                # Capitalize the name properly
+                houseguest = houseguest.strip().title()
+                
+                embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest)
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing loyalty: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating loyalty information.")
+
+        @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
+        async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
+            """Show recent betrayals"""
+            try:
+                await interaction.response.defer()  # Removed ephemeral=True to make it public
+                
+                if days < 1 or days > 30:
+                    await interaction.followup.send("Days must be between 1 and 30")
+                    return
+                
+                betrayals = self.alliance_tracker.get_recent_betrayals(days)
+                
+                embed = discord.Embed(
+                    title="💔 Recent Alliance Betrayals",
+                    description=f"Betrayals in the last {days} days",
+                    color=0xe74c3c,
+                    timestamp=datetime.now()
+                )
+                
+                if not betrayals:
+                    embed.add_field(
+                        name="No Betrayals",
+                        value="No alliance betrayals detected in this time period",
+                        inline=False
+                    )
+                else:
+                    for i, betrayal in enumerate(betrayals[:10], 1):
+                        time_ago = datetime.now() - datetime.fromisoformat(betrayal['timestamp'])
+                        hours_ago = int(time_ago.total_seconds() / 3600)
+                        time_str = f"{hours_ago}h ago" if hours_ago < 24 else f"{hours_ago//24}d ago"
+                        
+                        embed.add_field(
+                            name=f"⚡ {time_str}",
+                            value=betrayal['description'],
+                            inline=False
+                        )
+                
+                embed.set_footer(text="Based on live feed updates")
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing betrayals: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating betrayal list.")
+
+        @self.tree.command(name="removebadalliance", description="Remove incorrectly detected alliance (Admin only)")
+        async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
+            """Remove a bad alliance"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                await interaction.response.defer(ephemeral=True)
+                
+                # Mark alliance as dissolved
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE alliances 
+                    SET status = 'dissolved', confidence_level = 0 
+                    WHERE name = ?
+                """, (alliance_name,))
+                
+                affected = cursor.rowcount
+                conn.commit()
+                conn.close()
+                
+                if affected > 0:
+                    await interaction.followup.send(f"✅ Removed alliance: **{alliance_name}**", ephemeral=True)
+                    logger.info(f"Removed bad alliance: {alliance_name}")
+                else:
+                    await interaction.followup.send(f"❌ Alliance '{alliance_name}' not found", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error removing alliance: {e}")
+                await interaction.followup.send("Error removing alliance", ephemeral=True)
+
+        @self.tree.command(name="clearalliances", description="Clear all alliance data (Owner only)")
+        async def clear_alliances(interaction: discord.Interaction):
+            """Clear all alliance data - owner only"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                # Clear all alliance data
+                cursor.execute("DELETE FROM alliance_events")
+                cursor.execute("DELETE FROM alliance_members")
+                cursor.execute("DELETE FROM alliances")
+                
+                conn.commit()
+                conn.close()
+                
+                await interaction.followup.send("✅ All alliance data has been cleared", ephemeral=True)
+                logger.info("Alliance data cleared by owner")
+                
+            except Exception as e:
+                logger.error(f"Error clearing alliances: {e}")
+                await interaction.followup.send("Error clearing alliance data", ephemeral=True)
+
+        @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
+        @discord.app_commands.describe(
+            zing_type="Choose your zing type",
+            target="Only required for targeted zings (leave blank for random/self)"
+        )
+        @discord.app_commands.choices(zing_type=[
+            discord.app_commands.Choice(name="Targeted Zing", value="targeted"),
+            discord.app_commands.Choice(name="Random Zing", value="random"),
+            discord.app_commands.Choice(name="Self Zing", value="self")
+        ])
+        async def zing_slash(interaction: discord.Interaction, 
+                            zing_type: discord.app_commands.Choice[str],
+                            target: discord.Member = None):
+            """Deliver a zing to someone"""
+            try:
+                zing_choice = zing_type.value
+                
+                # Determine the actual target based on choice
+                if zing_choice == "targeted":
+                    if not target:
+                        await interaction.response.send_message("Please specify a target for a targeted zing!", ephemeral=True)
+                        return
+                    final_target = target
+                elif zing_choice == "random":
+                    if target:
+                        await interaction.response.send_message("Random zing doesn't need a target - it will pick someone automatically!", ephemeral=True)
+                        return
+                    # Get all members in the server (excluding bots) - INCLUDE the command user
+                    members = [m for m in interaction.guild.members if not m.bot]
+                    if not members:
+                        await interaction.response.send_message("No valid members to zing!", ephemeral=True)
+                        return
+                    import random as rand_module
+                    final_target = rand_module.choice(members)
+                elif zing_choice == "self":
+                    if target:
+                        await interaction.response.send_message("Self zing doesn't need a target - you're zinging yourself!", ephemeral=True)
+                        return
+                    # Self-zing
+                    final_target = interaction.user
+                else:
+                    await interaction.response.send_message("Invalid zing type!", ephemeral=True)
+                    return
+                
+                # Select a random zing
+                import random as rand_module
+                zing = rand_module.choice(ALL_ZINGS)
+                
+                # Replace {target} with the actual mention
+                zing_text = zing.replace("{target}", final_target.mention)
+                
+                # If the zing contains [name], replace it with a random other member's name
+                if "[name]" in zing_text:
+                    other_members = [m for m in interaction.guild.members if not m.bot and m.id != final_target.id]
+                    if other_members:
+                        other_member = rand_module.choice(other_members)
+                        zing_text = zing_text.replace("[name]", other_member.display_name)
+                    else:
+                        # Fallback if no other members
+                        zing_text = zing_text.replace("[name]", "someone")
+                
+                # Create the embed
+                embed = discord.Embed(
+                    title="🎯 ZING!",
+                    description=zing_text,
+                    color=0xff1744 if final_target == interaction.user else 0xff9800
+                )
+                
+                # Add Zingbot style footer
+                zingbot_phrases = [
+                    "ZING! That's what I'm programmed for!",
+                    "Another successful zing delivered!",
+                    "Zingbot 3000 strikes again!",
+                    "I came, I saw, I ZINGED!",
+                    "My circuits are buzzing with that zing!",
+                    "Zing executed successfully!",
+                    "Target acquired and zinged!",
+                    "Maximum zing efficiency achieved!"
+                ]
+                
+                embed.set_footer(text=rand_module.choice(zingbot_phrases))
+                
+                # Add special effects for self-zings
+                if final_target == interaction.user:
+                    embed.add_field(
+                        name="😅 Self-Zing Award",
+                        value="You zinged yourself! That takes guts... or poor decision making!",
+                        inline=False
+                    )
+                
+                await interaction.response.send_message(embed=embed)
+                
+                # Log the zing
+                logger.info(f"Zing delivered: {interaction.user} zinged {final_target}")
+                
+            except Exception as e:
+                logger.error(f"Error delivering zing: {e}")
+                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
+
+        # NEW: Prediction System Commands
+        @self.tree.command(name="create_poll", description="Create a new prediction poll (Admin only)")
+        @discord.app_commands.describe(
+            category="Poll category",
+            title="Poll title",
+            description="Poll description",
+            hours_open="Hours the poll stays open",
+            option1="First option",
+            option2="Second option",
+            option3="Third option (optional)",
+            option4="Fourth option (optional)",
+            option5="Fifth option (optional)"
+        )
+        @discord.app_commands.choices(category=[
+            discord.app_commands.Choice(name="Season Winner", value="season_winner"),
+            discord.app_commands.Choice(name="Weekly HOH", value="weekly_hoh"),
+            discord.app_commands.Choice(name="Weekly Veto", value="weekly_veto"),
+            discord.app_commands.Choice(name="Weekly Eviction", value="weekly_eviction"),
+            discord.app_commands.Choice(name="Jury Vote", value="jury_vote"),
+            discord.app_commands.Choice(name="Special Event", value="special_event")
+        ])
+        async def create_poll_slash(interaction: discord.Interaction, 
+                                   category: discord.app_commands.Choice[str],
+                                   title: str, description: str, hours_open: int,
+                                   option1: str, option2: str,
+                                   option3: str = None, option4: str = None, option5: str = None):
+            """Create a new prediction poll"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                if hours_open < 1 or hours_open > 168:  # Max 1 week
+                    await interaction.response.send_message("Hours must be between 1 and 168 (1 week)", ephemeral=True)
+                    return
+                
+                # Collect options
+                options = [option1, option2]
+                if option3:
+                    options.append(option3)
+                if option4:
+                    options.append(option4)
+                if option5:
+                    options.append(option5)
+                
+                await interaction.response.defer()
+                
+                poll_id = self.prediction_system.create_poll(
+                    category_id=category.value,
+                    title=title,
+                    description=description,
+                    created_by=interaction.user.id,
+                    hours_open=hours_open,
+                    options=options
+                )
+                
+                if poll_id:
+                    category_info = PREDICTION_CATEGORIES[category.value]
+                    closes_at = datetime.now() + timedelta(hours=hours_open)
+                    
+                    embed = discord.Embed(
+                        title=f"🗳️ New Prediction Poll Created!",
+                        description=f"**{title}**\n{description}",
+                        color=0x3498db,
+                        timestamp=datetime.now()
+                    )
+                    
+                    embed.add_field(
+                        name="📊 Poll Details",
+                        value=f"**Category**: {category_info['name']}\n"
+                              f"**Points Value**: {category_info['points']}\n"
+                              f"**Poll ID**: {poll_id}\n"
+                              f"**Closes**: <t:{int(closes_at.timestamp())}:R>",
+                        inline=False
+                    )
+                    
+                    options_text = "\n".join([f"{i+1}. {opt}" for i, opt in enumerate(options)])
+                    embed.add_field(
+                        name="🔹 Options",
+                        value=options_text,
+                        inline=False
+                    )
+                    
+                    embed.add_field(
+                        name="🗳️ How to Vote",
+                        value=f"Use `/vote {poll_id} <option>` to make your prediction!",
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text=f"Created by {interaction.user.display_name}")
+                    
+                    await interaction.followup.send(embed=embed)
+                    logger.info(f"Poll created: {poll_id} - {title}")
+                    
+                else:
+                    await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error creating poll: {e}")
+                await interaction.followup.send("Error creating poll.", ephemeral=True)
+
+        @self.tree.command(name="vote", description="Vote on a prediction poll")
+        @discord.app_commands.describe(
+            poll_id="Poll ID to vote on",
+            option="Your prediction choice"
+        )
+        async def vote_slash(interaction: discord.Interaction, poll_id: int, option: str):
+            """Vote on a prediction poll"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                result = self.prediction_system.vote_on_poll(poll_id, interaction.user.id, option)
+                
+                if result['success']:
+                    embed = discord.Embed(
+                        title="✅ Vote Recorded!",
+                        description=result['message'],
+                        color=0x2ecc71,
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Get poll details for context
+                    poll_details = self.prediction_system.get_poll_details(poll_id)
+                    if poll_details:
+                        embed.add_field(
+                            name="📊 Poll Info",
+                            value=f"**{poll_details['title']}**\n"
+                                  f"Category: {poll_details['category']}\n"
+                                  f"Points: {poll_details['points_value']}",
+                            inline=False
+                        )
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    logger.info(f"Vote recorded: User {interaction.user.id} voted '{option}' on poll {poll_id}")
+                    
+                else:
+                    embed = discord.Embed(
+                        title="❌ Vote Failed",
+                        description=result['error'],
+                        color=0xe74c3c
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error voting: {e}")
+                await interaction.followup.send("Error processing vote.", ephemeral=True)
+
+        @self.tree.command(name="close_poll", description="Manually close a poll (Admin only)")
+        async def close_poll_slash(interaction: discord.Interaction, poll_id: int):
+            """Manually close a poll"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                success = self.prediction_system.close_poll(poll_id)
+                
+                if success:
+                    await interaction.followup.send(f"✅ Poll {poll_id} has been closed", ephemeral=True)
+                    logger.info(f"Poll {poll_id} manually closed by {interaction.user}")
+                else:
+                    await interaction.followup.send(f"❌ Failed to close poll {poll_id} (not found or already closed)", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error closing poll: {e}")
+                await interaction.followup.send("Error closing poll.", ephemeral=True)
+
+        @self.tree.command(name="resolve_poll", description="Resolve poll and award points (Admin only)")
+        async def resolve_poll_slash(interaction: discord.Interaction, poll_id: int, winning_option: str):
+            """Resolve a poll and award points"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer()
+                
+                result = self.prediction_system.resolve_poll(poll_id, winning_option)
+                
+                if result['success']:
+                    embed = discord.Embed(
+                        title="🏆 Poll Resolved!",
+                        description=result['message'],
+                        color=0xf39c12,
+                        timestamp=datetime.now()
+                    )
+                    
+                    embed.add_field(
+                        name="📊 Results",
+                        value=f"**Winners**: {result['winner_count']} users\n"
+                              f"**Points Awarded**: {result['points_awarded']} each",
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text=f"Resolved by {interaction.user.display_name}")
+                    
+                    await interaction.followup.send(embed=embed)
+                    logger.info(f"Poll {poll_id} resolved: {winning_option} won, {result['winner_count']} winners")
+                    
+                else:
+                    embed = discord.Embed(
+                        title="❌ Resolution Failed",
+                        description=result['error'],
+                        color=0xe74c3c
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error resolving poll: {e}")
+                await interaction.followup.send("Error resolving poll.", ephemeral=True)
+
+        @self.tree.command(name="active_polls", description="Show all active prediction polls")
+        async def active_polls_slash(interaction: discord.Interaction):
+            """Show all active polls"""
+            try:
+                await interaction.response.defer()
+                
+                polls = self.prediction_system.get_active_polls()
+                
+                if not polls:
+                    embed = discord.Embed(
+                        title="📊 Active Prediction Polls",
+                        description="No active polls at the moment.",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                embed = discord.Embed(
+                    title="📊 Active Prediction Polls",
+                    description=f"**{len(polls)} active polls**",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for poll in polls[:10]:  # Limit to 10 polls
+                    closes_timestamp = int(poll['closes_at'].timestamp()) if isinstance(poll['closes_at'], datetime) else int(datetime.fromisoformat(poll['closes_at']).timestamp())
+                    
+                    embed.add_field(
+                        name=f"🗳️ Poll #{poll['poll_id']} - {poll['category']}",
+                        value=f"**{poll['title']}**\n"
+                              f"{poll['description'][:100]}{'...' if len(poll['description']) > 100 else ''}\n"
+                              f"Points: {poll['points_value']} | Votes: {poll['vote_count']}\n"
+                              f"Closes: <t:{closes_timestamp}:R>",
+                        inline=False
+                    )
+                
+                embed.set_footer(text="Use /vote <poll_id> <option> to make predictions!")
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing active polls: {e}")
+                await interaction.followup.send("Error retrieving active polls.", ephemeral=True)
+
+        @self.tree.command(name="poll_status", description="Show details about a specific poll")
+        async def poll_status_slash(interaction: discord.Interaction, poll_id: int):
+            """Show detailed poll information"""
+            try:
+                await interaction.response.defer()
+                
+                poll_details = self.prediction_system.get_poll_details(poll_id)
+                
+                if not poll_details:
+                    await interaction.followup.send(f"Poll #{poll_id} not found.", ephemeral=True)
+                    return
+                
+                embed = discord.Embed(
+                    title=f"📊 Poll #{poll_id} Status",
+                    description=f"**{poll_details['title']}**\n{poll_details['description']}",
+                    color=0x3498db if poll_details['status'] == 'open' else 0x95a5a6,
+                    timestamp=datetime.now()
+                )
+                
+                # Poll info
+                status_emoji = "🟢" if poll_details['status'] == 'open' else "🔴" if poll_details['status'] == 'closed' else "✅"
+                embed.add_field(
+                    name="📋 Poll Info",
+                    value=f"**Category**: {poll_details['category']}\n"
+                          f"**Status**: {status_emoji} {poll_details['status'].title()}\n"
+                          f"**Points**: {poll_details['points_value']}",
+                    inline=True
+                )
+                
+                # Timing info
+                created_timestamp = int(poll_details['created_at'].timestamp()) if isinstance(poll_details['created_at'], datetime) else int(datetime.fromisoformat(poll_details['created_at']).timestamp())
+                closes_timestamp = int(poll_details['closes_at'].timestamp()) if isinstance(poll_details['closes_at'], datetime) else int(datetime.fromisoformat(poll_details['closes_at']).timestamp())
+                
+                embed.add_field(
+                    name="⏰ Timing",
+                    value=f"**Created**: <t:{created_timestamp}:R>\n"
+                          f"**Closes**: <t:{closes_timestamp}:R>",
+                    inline=True
+                )
+                
+                # Options with vote counts
+                options_text = []
+                total_votes = sum(opt['votes'] for opt in poll_details['options'])
+                
+                for opt in poll_details['options']:
+                    percentage = (opt['votes'] / total_votes * 100) if total_votes > 0 else 0
+                    bar_length = int(percentage / 10)  # 10% per bar segment
+                    bar = "█" * bar_length + "░" * (10 - bar_length)
+                    options_text.append(f"{opt['text']}: {opt['votes']} votes ({percentage:.1f}%)\n{bar}")
+                
+                embed.add_field(
+                    name=f"🔹 Options ({total_votes} total votes)",
+                    value="\n\n".join(options_text) if options_text else "No votes yet",
+                    inline=False
+                )
+                
+                if poll_details['status'] == 'open':
+                    embed.add_field(
+                        name="🗳️ How to Vote",
+                        value=f"Use `/vote {poll_id} <option>` to make your prediction!",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing poll status: {e}")
+                await interaction.followup.send("Error retrieving poll status.", ephemeral=True)
+
+        @self.tree.command(name="leaderboard", description="Show prediction leaderboard")
+        async def leaderboard_slash(interaction: discord.Interaction):
+            """Show the prediction leaderboard"""
+            try:
+                await interaction.response.defer()
+                
+                leaderboard = self.prediction_system.get_leaderboard(limit=15)
+                
+                if not leaderboard:
+                    embed = discord.Embed(
+                        title="🏆 Prediction Leaderboard",
+                        description="No predictions have been made yet!",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                embed = discord.Embed(
+                    title="🏆 Big Brother Prediction Leaderboard",
+                    description="Top predictors in the server",
+                    color=0xf39c12,
+                    timestamp=datetime.now()
+                )
+                
+                # Top 3 get special treatment
+                medals = ["🥇", "🥈", "🥉"]
+                
+                for i, entry in enumerate(leaderboard):
+                    try:
+                        user = self.get_user(entry['user_id']) or await self.fetch_user(entry['user_id'])
+                        username = user.display_name if hasattr(user, 'display_name') else user.name
+                    except:
+                        username = f"User {entry['user_id']}"
+                    
+                    medal = medals[i] if i < 3 else f"{i+1}."
+                    
+                    embed.add_field(
+                        name=f"{medal} {username}",
+                        value=f"**{entry['total_points']}** points\n"
+                              f"{entry['correct_predictions']}/{entry['total_predictions']} correct ({entry['accuracy']}%)",
+                        inline=True if i >= 3 else False
+                    )
+                
+                # Add categories info
+                categories_text = []
+                for cat_id, cat_data in PREDICTION_CATEGORIES.items():
+                    categories_text.append(f"{cat_data['name']}: {cat_data['points']} pts")
+                
+                embed.add_field(
+                    name="📊 Point Values",
+                    value="\n".join(categories_text),
+                    inline=False
+                )
+                
+                embed.set_footer(text="Compete for the title of best BB predictor!")
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing leaderboard: {e}")
+                await interaction.followup.send("Error retrieving leaderboard.", ephemeral=True)
+
+        @self.tree.command(name="my_predictions", description="Show your prediction history")
+        @discord.app_commands.describe(category="Filter by category (optional)")
+        @discord.app_commands.choices(category=[
+            discord.app_commands.Choice(name="All Categories", value="all"),
+            discord.app_commands.Choice(name="Season Winner", value="season_winner"),
+            discord.app_commands.Choice(name="Weekly HOH", value="weekly_hoh"),
+            discord.app_commands.Choice(name="Weekly Veto", value="weekly_veto"),
+            discord.app_commands.Choice(name="Weekly Eviction", value="weekly_eviction"),
+            discord.app_commands.Choice(name="Jury Vote", value="jury_vote"),
+            discord.app_commands.Choice(name="Special Event", value="special_event")
+        ])
+        async def my_predictions_slash(interaction: discord.Interaction, category: discord.app_commands.Choice[str] = None):
+            """Show user's prediction history"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                category_filter = None if not category or category.value == "all" else category.value
+                predictions = self.prediction_system.get_user_predictions(interaction.user.id, category_filter)
+                
+                if not predictions:
+                    embed = discord.Embed(
+                        title="📊 Your Predictions",
+                        description="You haven't made any predictions yet!" if not category_filter else f"No predictions in {category.name}",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Calculate stats
+                total_points = sum(p['points_earned'] for p in predictions)
+                correct_predictions = sum(1 for p in predictions if p['points_earned'] > 0 and p['status'] == 'resolved')
+                resolved_predictions = sum(1 for p in predictions if p['status'] == 'resolved')
+                accuracy = (correct_predictions / resolved_predictions * 100) if resolved_predictions > 0 else 0
+                
+                embed = discord.Embed(
+                    title=f"📊 Your Predictions{' - ' + category.name if category and category.value != 'all' else ''}",
+                    description=f"**{total_points}** total points | **{correct_predictions}/{resolved_predictions}** correct ({accuracy:.1f}%)",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                # Show recent predictions
+                for prediction in predictions[:10]:  # Limit to 10 most recent
+                    status_emoji = "✅" if prediction['points_earned'] > 0 else "❌" if prediction['status'] == 'resolved' else "⏳"
+                    
+                    predicted_timestamp = int(prediction['predicted_at'].timestamp()) if isinstance(prediction['predicted_at'], datetime) else int(datetime.fromisoformat(prediction['predicted_at']).timestamp())
+                    
+                    embed.add_field(
+                        name=f"{status_emoji} {prediction['category']}",
+                        value=f"**{prediction['title']}**\n"
+                              f"Predicted: {prediction['prediction']}\n"
+                              f"Points: {prediction['points_earned']}\n"
+                              f"<t:{predicted_timestamp}:R>",
+                        inline=True
+                    )
+                
+                if len(predictions) > 10:
+                    embed.add_field(
+                        name="📝 Note",
+                        value=f"Showing 10 most recent of {len(predictions)} total predictions",
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error showing user predictions: {e}")
+                await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
+        
+    def signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        self.is_shutting_down = True
+        asyncio.create_task(self.close())
+    
+    async def on_ready(self):
+        """Bot startup event"""
+        logger.info(f'{self.user} has connected to Discord!')
+        logger.info(f'Bot is in {len(self.guilds)} guilds')
+        
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"Synced {len(synced)} slash command(s)")
+        except Exception as e:
+            logger.error(f"Failed to sync commands: {e}")
+        
+        try:
+            self.check_rss_feed.start()
+            self.daily_recap_task.start()  # Start daily recap task
+            logger.info("RSS feed monitoring and daily recap tasks started")
+        except Exception as e:
+            logger.error(f"Error starting background tasks: {e}")
+    
+    def create_content_hash(self, title: str, description: str) -> str:
+        """Create a unique hash for content deduplication"""
+        content = f"{title}|{description}".lower()
+        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
+        content = re.sub(r'\d{1,2}/\d{1,2}', '', content)
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def process_rss_entries(self, entries) -> List[BBUpdate]:
+        """Process RSS entries into BBUpdate objects"""
+        updates = []
+        
+        for entry in entries:
+            try:
+                title = entry.get('title', 'No title')
+                description = entry.get('description', 'No description')
+                link = entry.get('link', '')
+                
+                pub_date = datetime.now()
+                if hasattr(entry, 'published_parsed') and entry.published_parsed:
+                    pub_date = datetime(*entry.published_parsed[:6])
+                
+                content_hash = self.create_content_hash(title, description)
+                author = entry.get('author', '')
+                
+                updates.append(BBUpdate(
+                    title=title,
+                    description=description,
+                    link=link,
+                    pub_date=pub_date,
+                    content_hash=content_hash,
+                    author=author
+                ))
+                
+            except Exception as e:
+                logger.error(f"Error processing RSS entry: {e}")
+                continue
+        
+        return updates
+    
+    async def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
+        """Filter out duplicate updates"""
+        new_updates = []
+        
+        for update in updates:
+            # Check both database and cache
+            if not self.db.is_duplicate(update.content_hash):
+                if not await self.update_batcher.processed_hashes_cache.contains(update.content_hash):
+                    new_updates.append(update)
+        
+        return new_updates
+    
+    @tasks.loop(hours=24)
+    async def daily_recap_task(self):
+        """Daily recap task that runs at 8:01 AM Pacific Time"""
+        if self.is_shutting_down:
+            return
+        
+        try:
+            # Get current time in Pacific timezone
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Check if it's the right time (8:01 AM Pacific)
+            if now_pacific.hour != 8 or now_pacific.minute != 1:
+                return
+            
+            logger.info("Starting daily recap generation")
+            
+            # Calculate the day period (previous 8:01 AM to current 8:01 AM)
+            end_time = now_pacific.replace(tzinfo=None)  # Current time
+            start_time = end_time - timedelta(hours=24)  # 24 hours ago
+            
+            # Get all updates from the day
+            daily_updates = self.db.get_daily_updates(start_time, end_time)
+            
+            if not daily_updates:
+                logger.info("No updates found for daily recap")
+                return
+            
+            # Calculate day number (days since season start)
+            # For now, we'll use a simple calculation - you might want to adjust this
+            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
+            day_number = (end_time.date() - season_start.date()).days + 1
+            
+            # Create daily recap
+            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+            
+            # Send daily recap
+            await self.send_daily_recap(recap_embeds)
+            
+            logger.info(f"Daily recap sent for Day {day_number} with {len(daily_updates)} updates")
+            
+        except Exception as e:
+            logger.error(f"Error in daily recap task: {e}")
+            logger.error(traceback.format_exc())
+    
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready before starting daily recap task"""
+        await self.wait_until_ready()
+        
+        # Calculate time until next 8:01 AM Pacific
+        pacific_tz = pytz.timezone('US/Pacific')
+        now_pacific = datetime.now(pacific_tz)
+        
+        # Find next 8:01 AM Pacific
+        next_recap_time = now_pacific.replace(hour=8, minute=1, second=0, microsecond=0)
+        if now_pacific >= next_recap_time:
+            next_recap_time += timedelta(days=1)
+        
+        # Wait until that time
+        wait_seconds = (next_recap_time - now_pacific).total_seconds()
+        logger.info(f"Daily recap task will start in {wait_seconds/3600:.1f} hours at {next_recap_time.strftime('%I:%M %p PT')}")
+        
+        await asyncio.sleep(wait_seconds)
+    
+    async def send_daily_recap(self, embeds: List[discord.Embed]):
+        """Send daily recap to the configured channel"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                return
+            
+            embeds = await self.update_batcher.create_batch_summary()
+            
+            for embed in embeds[:10]:  # Discord limit
+                await channel.send(embed=embed)
+            
+            logger.info(f"Sent batch update with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending batch update: {e}")
+
+# Create bot instance
+bot = BBDiscordBot()
+
+def main():
+    """Main function to run the bot"""
+    try:
+        bot_token = bot.config.get('bot_token')
+        if not bot_token:
+            logger.error("No bot token found!")
+            return
+        
+        logger.info("Starting Big Brother Discord Bot with Prediction Leaderboard...")
+        bot.run(bot_token, reconnect=True)
+        
+    except Exception as e:
+        logger.critical(f"Fatal error: {e}")
+        logger.critical(traceback.format_exc())
+
+if __name__ == "__main__":
+    main()id:
+            logger.warning("Update channel not configured for daily recap")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found for daily recap")
+                return
+            
+            # Send all embeds
+            for embed in embeds[:5]:  # Limit to 5 embeds max
+                await channel.send(embed=embed)
+            
+            logger.info(f"Daily recap sent with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending daily recap: {e}")
+
+    @tasks.loop(minutes=2)
+    async def check_rss_feed(self):
+        """Check RSS feed for new updates with intelligent batching"""
+        if self.is_shutting_down:
+            return
+        
+        try:
+            feed = feedparser.parse(self.rss_url)
+            
+            if not feed.entries:
+                logger.warning("No entries returned from RSS feed")
+                return
+            
+            updates = self.process_rss_entries(feed.entries)
+            new_updates = await self.filter_duplicates(updates)  # Now async
+            
+            for update in new_updates:
+                try:
+                    categories = self.analyzer.categorize_update(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    
+                    self.db.store_update(update, importance, categories)
+                    await self.update_batcher.add_update(update)  # Now async
+                    
+                    # Check for alliance information
+                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    for event in alliance_events:
+                        alliance_id = self.alliance_tracker.process_alliance_event(event)
+                        if alliance_id:
+                            logger.info(f"Alliance event processed: {event['type'].value}")
+                    
+                    self.total_updates_processed += 1
+                    
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+                    self.consecutive_errors += 1
+            
+            if self.update_batcher.should_send_batch():
+                await self.send_batch_update()
+            
+            self.last_successful_check = datetime.now()
+            self.consecutive_errors = 0
+            
+            if new_updates:
+                logger.info(f"Added {len(new_updates)} updates to batch queue")
+                
+        except Exception as e:
+            logger.error(f"Error in RSS check: {e}")
+            self.consecutive_errors += 1
+    
+    async def send_batch_update(self):
+        """Send intelligent batch summary to Discord"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_
