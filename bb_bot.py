@@ -2956,7 +2956,7 @@ class BBDiscordBot(commands.Bot):
         @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
         @discord.app_commands.describe(
             zing_type="Choose your zing type",
-            target="Only required for targeted zings"
+            target="Only required for targeted zings (leave blank for random/self)"
         )
         @discord.app_commands.choices(zing_type=[
             discord.app_commands.Choice(name="Targeted Zing", value="targeted"),
