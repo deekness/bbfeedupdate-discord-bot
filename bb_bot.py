@@ -2764,7 +2764,7 @@ class BBDiscordBot(commands.Bot):
         async def zing_slash(interaction: discord.Interaction, mode: str):
          
     
-    async def deliver_zing(self, interaction: discord.Interaction, target: discord.Member):
+        async def deliver_zing(self, interaction: discord.Interaction, target: discord.Member):
         """Deliver a zing to the specified target"""
         try:
             import random
