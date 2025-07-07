@@ -3289,7 +3289,8 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
     
     def _create_contextual_hourly_embed(self, contextual_summary: str, update_count: int) -> List[discord.Embed]:
         """Create hourly summary embed with contextual summary"""
-        current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
+            pacific_tz = pytz.timezone('US/Pacific')
+            current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
         
         embed = discord.Embed(
             title=f"🏠 Chen Bot's House Summary - {current_hour}",  # FIXED: New title format
@@ -3332,7 +3333,8 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
     
     def _create_narrative_hourly_embed(self, narrative_summary: str, update_count: int) -> List[discord.Embed]:
         """Create hourly embed with narrative LLM summary"""
-        current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
+        pacific_tz = pytz.timezone('US/Pacific')
+        current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
     
         embed = discord.Embed(
             title=f"🏠 Chen Bot's House Summary - {current_hour}",
