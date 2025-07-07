@@ -574,6 +574,91 @@ class TimelineEvent:
     importance_score: int  # 1-10
     summary_source: str  # Which summary this came from
 
+
+class Config:
+    """Enhanced configuration management with validation"""
+    
+    def __init__(self):
+        self.config_file = Path("config.json")
+        self.config = self._load_config()
+        self._validate_config()
+    
+    def _load_config(self) -> dict:
+        """Load configuration with better validation"""
+        config = DEFAULT_CONFIG.copy()
+        
+        # Environment variables (priority 1)
+        for env_var, config_key in ENV_MAPPINGS.items():
+            env_value = os.getenv(env_var)
+            if env_value:
+                config[config_key] = self._convert_env_value(config_key, env_value)
+        
+        # Config file (priority 2)
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    file_config = json.load(f)
+                    # Only use file config for missing env vars
+                    for key, value in file_config.items():
+                        if key in config and not os.getenv(key.upper()):
+                            config[key] = value
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        return config
+    
+    def _convert_env_value(self, config_key: str, env_value: str):
+        """Convert environment variable to proper type"""
+        if config_key == 'update_channel_id':
+            try:
+                return int(env_value) if env_value != '0' else None
+            except ValueError:
+                logger.warning(f"Invalid channel ID: {env_value}")
+                return None
+        elif config_key in ['rss_check_interval', 'max_retries', 'retry_delay', 'owner_id',
+                           'llm_requests_per_minute', 'llm_requests_per_hour', 'max_processed_hashes']:
+            try:
+                return int(env_value)
+            except ValueError:
+                logger.warning(f"Invalid integer for {config_key}: {env_value}")
+                return DEFAULT_CONFIG.get(config_key, 0)
+        elif config_key in ['enable_heartbeat', 'enable_llm_summaries']:
+            return env_value.lower() == 'true'
+        else:
+            return env_value
+    
+    def _validate_config(self):
+        """Validate critical configuration values"""
+        if not self.config.get('bot_token'):
+            raise ValueError("BOT_TOKEN is required")
+        
+        # Validate rate limiting settings
+        if self.config.get('llm_requests_per_minute', 0) <= 0:
+            self.config['llm_requests_per_minute'] = DEFAULT_CONFIG['llm_requests_per_minute']
+        
+        if self.config.get('llm_requests_per_hour', 0) <= 0:
+            self.config['llm_requests_per_hour'] = DEFAULT_CONFIG['llm_requests_per_hour']
+        
+        logger.info("Configuration validated successfully")
+    
+    def get(self, key: str, default=None):
+        """Get configuration value"""
+        return self.config.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set configuration value"""
+        self.config[key] = value
+
+@dataclass
+class BBUpdate:
+    """Represents a Big Brother update"""
+    title: str
+    description: str
+    link: str
+    pub_date: datetime
+    content_hash: str
+    author: str = ""
+
 class ContextualSummarizer:
     """Enhanced summarizer that maintains context across summaries"""
     
@@ -1144,90 +1229,6 @@ Focus on both strategic gameplay and social dynamics, ensuring the summary flows
             conn.rollback()
         finally:
             conn.close()
-
-class Config:
-    """Enhanced configuration management with validation"""
-    
-    def __init__(self):
-        self.config_file = Path("config.json")
-        self.config = self._load_config()
-        self._validate_config()
-    
-    def _load_config(self) -> dict:
-        """Load configuration with better validation"""
-        config = DEFAULT_CONFIG.copy()
-        
-        # Environment variables (priority 1)
-        for env_var, config_key in ENV_MAPPINGS.items():
-            env_value = os.getenv(env_var)
-            if env_value:
-                config[config_key] = self._convert_env_value(config_key, env_value)
-        
-        # Config file (priority 2)
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, 'r') as f:
-                    file_config = json.load(f)
-                    # Only use file config for missing env vars
-                    for key, value in file_config.items():
-                        if key in config and not os.getenv(key.upper()):
-                            config[key] = value
-            except Exception as e:
-                logger.error(f"Error loading config file: {e}")
-        
-        return config
-    
-    def _convert_env_value(self, config_key: str, env_value: str):
-        """Convert environment variable to proper type"""
-        if config_key == 'update_channel_id':
-            try:
-                return int(env_value) if env_value != '0' else None
-            except ValueError:
-                logger.warning(f"Invalid channel ID: {env_value}")
-                return None
-        elif config_key in ['rss_check_interval', 'max_retries', 'retry_delay', 'owner_id',
-                           'llm_requests_per_minute', 'llm_requests_per_hour', 'max_processed_hashes']:
-            try:
-                return int(env_value)
-            except ValueError:
-                logger.warning(f"Invalid integer for {config_key}: {env_value}")
-                return DEFAULT_CONFIG.get(config_key, 0)
-        elif config_key in ['enable_heartbeat', 'enable_llm_summaries']:
-            return env_value.lower() == 'true'
-        else:
-            return env_value
-    
-    def _validate_config(self):
-        """Validate critical configuration values"""
-        if not self.config.get('bot_token'):
-            raise ValueError("BOT_TOKEN is required")
-        
-        # Validate rate limiting settings
-        if self.config.get('llm_requests_per_minute', 0) <= 0:
-            self.config['llm_requests_per_minute'] = DEFAULT_CONFIG['llm_requests_per_minute']
-        
-        if self.config.get('llm_requests_per_hour', 0) <= 0:
-            self.config['llm_requests_per_hour'] = DEFAULT_CONFIG['llm_requests_per_hour']
-        
-        logger.info("Configuration validated successfully")
-    
-    def get(self, key: str, default=None):
-        """Get configuration value"""
-        return self.config.get(key, default)
-    
-    def set(self, key: str, value):
-        """Set configuration value"""
-        self.config[key] = value
-
-@dataclass
-class BBUpdate:
-    """Represents a Big Brother update"""
-    title: str
-    description: str
-    link: str
-    pub_date: datetime
-    content_hash: str
-    author: str = ""
 
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights and social dynamics"""
