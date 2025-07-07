@@ -4181,48 +4181,48 @@ class BBDiscordBot(commands.Bot):
                 logger.warning("No entries returned from RSS feed")
                 return
         
-        updates = self.process_rss_entries(feed.entries)
-        new_updates = await self.filter_duplicates(updates)
+            updates = self.process_rss_entries(feed.entries)
+            new_updates = await self.filter_duplicates(updates)
         
-        for update in new_updates:
-            try:
-                categories = self.analyzer.categorize_update(update)
-                importance = self.analyzer.analyze_strategic_importance(update)
+            for update in new_updates:
+                try:
+                    categories = self.analyzer.categorize_update(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
                 
-                self.db.store_update(update, importance, categories)
-                await self.update_batcher.add_update(update)  # Adds to both queues
+                    self.db.store_update(update, importance, categories)
+                    await self.update_batcher.add_update(update)  # Adds to both queues
                 
-                # Check for alliance information
-                alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
-                for event in alliance_events:
-                    alliance_id = self.alliance_tracker.process_alliance_event(event)
-                    if alliance_id:
-                        logger.info(f"Alliance event processed: {event['type'].value}")
+                    # Check for alliance information
+                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    for event in alliance_events:
+                        alliance_id = self.alliance_tracker.process_alliance_event(event)
+                        if alliance_id:
+                            logger.info(f"Alliance event processed: {event['type'].value}")
                 
-                self.total_updates_processed += 1
+                    self.total_updates_processed += 1
                 
-            except Exception as e:
-                logger.error(f"Error processing update: {e}")
-                self.consecutive_errors += 1
+                except Exception as e:
+                    logger.error(f"Error processing update: {e}")
+                    self.consecutive_errors += 1
         
-        # Check for highlights batch (25 updates or urgent conditions)
-        if self.update_batcher.should_send_highlights():
-            await self.send_highlights_batch()
+            # Check for highlights batch (25 updates or urgent conditions)
+            if self.update_batcher.should_send_highlights():
+                await self.send_highlights_batch()
         
-        # Check for hourly summary (every hour)
-        if self.update_batcher.should_send_hourly_summary():
-            await self.send_hourly_summary()
+            # Check for hourly summary (every hour)
+            if self.update_batcher.should_send_hourly_summary():
+                await self.send_hourly_summary()
         
-        self.last_successful_check = datetime.now()
-        self.consecutive_errors = 0
+            self.last_successful_check = datetime.now()
+            self.consecutive_errors = 0
         
-        if new_updates:
-            logger.info(f"Added {len(new_updates)} updates to both batching queues")
-            logger.info(f"Queue status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
+             if new_updates:
+                logger.info(f"Added {len(new_updates)} updates to both batching queues")
+                logger.info(f"Queue status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
             
-    except Exception as e:
-        logger.error(f"Error in RSS check: {e}")
-        self.consecutive_errors += 1
+        except Exception as e:
+            logger.error(f"Error in RSS check: {e}")
+            self.consecutive_errors += 1
 
 # Create bot instance
 bot = BBDiscordBot()
