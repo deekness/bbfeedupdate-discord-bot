@@ -1,4 +1,3 @@
-
 import discord
 from discord.ext import commands, tasks
 import feedparser
@@ -4224,7 +4223,6 @@ class BBDiscordBot(commands.Bot):
     ("/commands", "Show this help message"),
     ("/forcebatch", "Force send any queued updates (Admin only)"),
     ("/testllm", "Test LLM connection (Admin only)"),
-    ("/testhourly", "Test Hourly Summary (Admin only)"),
     ("/sync", "Sync slash commands (Owner only)"),
     ("/alliances", "Show current Big Brother alliances"),
     ("/loyalty", "Show a houseguest's alliance history"),
