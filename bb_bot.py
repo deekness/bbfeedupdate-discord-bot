@@ -864,18 +864,18 @@ class ContextualSummarizer:
         # FIXED: Sort updates chronologically before formatting
         sorted_updates = sorted(updates, key=lambda x: x.pub_date)
     
-    formatted = []
-    for i, update in enumerate(sorted_updates, 1):
-        time_str = update.pub_date.strftime("%I:%M %p") if update.pub_date else "Unknown time"
-        # Remove leading zero from time
-        time_str = time_str.lstrip('0')
-        formatted.append(f"{i}. {time_str} - {update.title}")
-        if update.description and update.description != update.title:
-            # Truncate long descriptions
-            desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
-            formatted.append(f"   {desc}")
+        formatted = []
+        for i, update in enumerate(sorted_updates, 1):
+            time_str = update.pub_date.strftime("%I:%M %p") if update.pub_date else "Unknown time"
+            # Remove leading zero from time
+            time_str = time_str.lstrip('0')
+            formatted.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                # Truncate long descriptions
+                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+                formatted.append(f"   {desc}")
     
-    return "\n".join(formatted)
+        return "\n".join(formatted)
     
     def _calculate_current_day(self) -> int:
         """Calculate current day number of the season"""
