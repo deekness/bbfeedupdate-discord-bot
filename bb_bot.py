@@ -335,6 +335,11 @@ EXCLUDE_WORDS = {
     'Competition', 'Ceremony', 'Veto', 'Power', 'Head', 'Household'
 }
 
+# Big Brother 26 Houseguest names - update when real cast is announced
+BB_HOUSEGUESTS = [
+    "Angela", "Brooklyn", "Cam", "Cedric", "Chelsie", "Joseph", "Kimo", 
+    "Leah", "Makensy", "Quinn", "Rubina", "T'Kor", "Tucker"
+]
 # Configure comprehensive logging
 def setup_logging():
     """Setup comprehensive logging for 24/7 operation"""
