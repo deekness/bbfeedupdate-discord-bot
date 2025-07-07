@@ -3155,8 +3155,21 @@ class BBDiscordBot(commands.Bot):
                 time_since_check = datetime.now() - self.last_successful_check
                 embed.add_field(name="Last RSS Check", value=f"{time_since_check.total_seconds():.0f} seconds ago", inline=True)
                 
-                queue_size = len(self.update_batcher.update_queue)
-                embed.add_field(name="Updates in Queue", value=str(queue_size), inline=True)
+                highlights_queue_size = len(self.update_batcher.highlights_queue)
+                hourly_queue_size = len(self.update_batcher.hourly_queue)
+
+                embed.add_field(name="Highlights Queue", value=f"{highlights_queue_size}/25", inline=True)
+                embed.add_field(name="Hourly Queue", value=str(hourly_queue_size), inline=True)
+
+                # Show time until next hourly summary
+                time_since_hourly = datetime.now() - self.update_batcher.last_hourly_summary
+                minutes_until_hourly = 60 - (time_since_hourly.total_seconds() / 60)
+                if minutes_until_hourly <= 0:
+                    hourly_status = "Ready to send!"
+                else:
+                    hourly_status = f"{minutes_until_hourly:.0f} min"
+
+                embed.add_field(name="Next Hourly Summary", value=hourly_status, inline=True)
                 
                 llm_status = "✅ Enabled" if self.update_batcher.llm_client else "❌ Disabled"
                 embed.add_field(name="LLM Summaries", value=llm_status, inline=True)
