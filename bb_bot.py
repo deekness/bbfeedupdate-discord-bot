@@ -3149,7 +3149,7 @@ Write this as a flowing narrative summary (2-3 paragraphs) that captures the ess
 
 CRITICAL: Present events in chronological order (earliest first, latest last). Do NOT reverse the timeline.
 
-Make it engaging and insightful, as if you're explaining to a friend who missed this hour of feeds, walking them through the events as they actually happened."""
+Make it engaging and insightful, as if you are explaining to a friend who missed this hour of feeds, walking them through the events as they actually happened."""
 
 {updates_text}
 
