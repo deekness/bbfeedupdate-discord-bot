@@ -3424,8 +3424,8 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
             return self._create_pattern_hourly_summary()
     
     def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
-        """Create pattern-based hourly summary when LLM unavailable"""
-        logger.info("Creating pattern-based hourly summary")
+        """Create pattern-based hourly summary with narrative summaries instead of raw titles"""
+        logger.info("Creating enhanced pattern-based hourly summary")
         
         # Group updates by categories
         categories = defaultdict(list)
@@ -3437,56 +3437,217 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
         current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
         
         embed = discord.Embed(
-            title=f"🏠 Chen Bot's House Summary - {current_hour}",  # FIXED: New title format
-            description=f"**{len(self.hourly_queue)} updates this hour**",
+            title=f"🏠 Chen Bot's House Summary - {current_hour}",
+            description=f"**{len(self.hourly_queue)} updates this hour** • Pattern Analysis",
             color=0x95a5a6,  # Gray for pattern-based
             timestamp=datetime.now()
         )
         
-        # Add top categories with actual narrative content
-        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True)[:5]:
+        # Create narrative summaries for each category
+        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True)[:6]:
             if updates:
-                # Get the most important update from this category
-                top_update = max(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x))
-                
-                # Create a mini-narrative for this category
-                category_text = f"**{len(updates)} updates**\n"
-                
-                # Add the top update with cleaned title
-                title = top_update.title
-                # Remove timestamp if present
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
-                
-                if len(title) > 100:
-                    title = title[:97] + "..."
-                
-                category_text += f"• {title}"
-                
-                # Add time context
-                time_str = self._extract_correct_time(top_update)
-                category_text += f"\n*Most recent: {time_str}*"
-                
-                embed.add_field(
-                    name=category,
-                    value=category_text,
-                    inline=False
-                )
+                narrative_summary = self._create_category_narrative(category, updates)
+                if narrative_summary:  # Only add if we generated a good summary
+                    embed.add_field(
+                        name=f"{category} ({len(updates)} updates)",
+                        value=narrative_summary,
+                        inline=False
+                    )
         
-        # Add a summary field
+        # Add overall hour analysis
         total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
         avg_importance = total_importance / len(self.hourly_queue) if self.hourly_queue else 0
         
+        if avg_importance >= 6:
+            activity_level = "🔥 High Drama"
+        elif avg_importance >= 4:
+            activity_level = "⭐ Active"
+        elif avg_importance >= 2:
+            activity_level = "📈 Moderate"
+        else:
+            activity_level = "😴 Quiet"
+        
+        most_active_category = max(categories.keys(), key=lambda x: len(categories[x])) if categories else "General"
+        
         embed.add_field(
-            name="📈 Hour Summary",
-            value=f"Activity Level: {'🔥 High' if avg_importance > 6 else '⭐ Medium' if avg_importance > 3 else '📝 Low'}\n"
-                  f"Most Active Category: {max(categories.keys(), key=lambda x: len(categories[x])) if categories else 'None'}",
+            name="📊 Hour Analysis",
+            value=f"**Activity Level:** {activity_level}\n"
+                  f"**Focus:** {most_active_category.replace('🎯 ', '').replace('💥 ', '').replace('🏆 ', '').replace('💕 ', '').replace('🎬 ', '').replace('📝 ', '')}\n"
+                  f"**Updates:** {len(self.hourly_queue)} total",
             inline=False
         )
         
-        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} ")
+        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Enhanced Pattern Analysis")
         
         return [embed]
+    
+    def _create_category_narrative(self, category: str, updates: List[BBUpdate]) -> str:
+        """Create a narrative summary for a category of updates"""
+        if not updates:
+            return ""
+        
+        # Sort updates by importance and time
+        sorted_updates = sorted(updates, key=lambda x: (
+            self.analyzer.analyze_strategic_importance(x), 
+            x.pub_date
+        ), reverse=True)
+        
+        # Extract key information patterns based on category
+        if "Strategy" in category:
+            return self._create_strategy_narrative(sorted_updates)
+        elif "Competition" in category:
+            return self._create_competition_narrative(sorted_updates)
+        elif "Drama" in category:
+            return self._create_drama_narrative(sorted_updates)
+        elif "Romance" in category:
+            return self._create_romance_narrative(sorted_updates)
+        elif "Entertainment" in category:
+            return self._create_entertainment_narrative(sorted_updates)
+        else:  # General
+            return self._create_general_narrative(sorted_updates)
+    
+    def _create_strategy_narrative(self, updates: List[BBUpdate]) -> str:
+        """Create narrative for strategy updates"""
+        key_terms = []
+        houseguests = set()
+        
+        for update in updates[:3]:  # Focus on top 3 most important
+            content = f"{update.title} {update.description}".lower()
+            
+            # Extract houseguests
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            houseguests.update(hgs[:2])  # Limit to avoid clutter
+            
+            # Look for strategic keywords
+            if any(word in content for word in ['vote', 'voting', 'jury']):
+                key_terms.append("voting dynamics")
+            if any(word in content for word in ['alliance', 'target', 'backdoor']):
+                key_terms.append("targeting decisions")
+            if any(word in content for word in ['hoh', 'head of household', 'power']):
+                key_terms.append("power dynamics")
+            if any(word in content for word in ['final', 'winner', 'crown']):
+                key_terms.append("endgame positioning")
+        
+        # Build narrative
+        hg_text = f"involving {', '.join(list(houseguests)[:3])}" if houseguests else ""
+        term_text = f"focusing on {', '.join(set(key_terms)[:2])}" if key_terms else "with strategic implications"
+        
+        return f"Strategic developments {hg_text} unfolded this hour, {term_text}. Key decisions and positioning moves shaped the current game dynamics."
+    
+    def _create_competition_narrative(self, updates: List[BBUpdate]) -> str:
+        """Create narrative for competition updates"""
+        competitions = []
+        winners = set()
+        
+        for update in updates:
+            content = f"{update.title} {update.description}".lower()
+            
+            # Extract competition types and winners
+            if 'hoh' in content or 'head of household' in content:
+                competitions.append("HOH")
+            if 'pov' in content or 'veto' in content:
+                competitions.append("Veto")
+            if 'winner' in content or 'wins' in content:
+                hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+                winners.update(hgs[:1])
+        
+        comp_text = f"{', '.join(set(competitions))}" if competitions else "Competition"
+        winner_text = f"with {', '.join(list(winners)[:2])} emerging victorious" if winners else "with competitive results"
+        
+        return f"{comp_text} activities dominated the hour {winner_text}. Power dynamics and strategic positioning shifted based on competition outcomes."
+    
+    def _create_drama_narrative(self, updates: List[BBUpdate]) -> str:
+        """Create narrative for drama updates"""
+        participants = set()
+        drama_types = []
+        
+        for update in updates[:2]:
+            content = f"{update.title} {update.description}".lower()
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            participants.update(hgs[:2])
+            
+            if any(word in content for word in ['fight', 'argument', 'confrontation']):
+                drama_types.append("confrontations")
+            if any(word in content for word in ['emotional', 'crying', 'upset']):
+                drama_types.append("emotional moments")
+            if any(word in content for word in ['called out', 'blowup']):
+                drama_types.append("heated exchanges")
+        
+        participant_text = f"involving {', '.join(list(participants)[:3])}" if participants else ""
+        drama_text = f"featuring {', '.join(set(drama_types)[:2])}" if drama_types else "with interpersonal tensions"
+        
+        return f"House drama escalated {participant_text} {drama_text}. Relationships and alliances faced strain as emotions ran high."
+    
+    def _create_romance_narrative(self, updates: List[BBUpdate]) -> str:
+        """Create narrative for romance updates"""
+        couples = set()
+        romance_types = []
+        
+        for update in updates:
+            content = f"{update.title} {update.description}".lower()
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            if len(hgs) >= 2:
+                couples.add(f"{hgs[0]} and {hgs[1]}")
+            
+            if any(word in content for word in ['showmance', 'romance', 'relationship']):
+                romance_types.append("relationship developments")
+            if any(word in content for word in ['kiss', 'cuddle', 'flirt']):
+                romance_types.append("intimate moments")
+            if any(word in content for word in ['feelings', 'attracted']):
+                romance_types.append("emotional connections")
+        
+        couple_text = f"between {', '.join(list(couples)[:2])}" if couples else ""
+        romance_text = f"featuring {', '.join(set(romance_types)[:2])}" if romance_types else "with romantic undertones"
+        
+        return f"Romantic dynamics {couple_text} developed this hour {romance_text}. Showmance speculation and relationship building continued to evolve."
+    
+    def _create_entertainment_narrative(self, updates: List[BBUpdate]) -> str:
+        """Create narrative for entertainment updates"""
+        entertainment_types = []
+        participants = set()
+        
+        for update in updates[:2]:
+            content = f"{update.title} {update.description}".lower()
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            participants.update(hgs[:2])
+            
+            if any(word in content for word in ['funny', 'joke', 'laugh', 'hilarious']):
+                entertainment_types.append("comedic moments")
+            if any(word in content for word in ['prank', 'silly', 'quirky']):
+                entertainment_types.append("playful antics")
+            if any(word in content for word in ['memorable', 'entertaining']):
+                entertainment_types.append("memorable interactions")
+        
+        participant_text = f"featuring {', '.join(list(participants)[:3])}" if participants else ""
+        entertainment_text = f"with {', '.join(set(entertainment_types)[:2])}" if entertainment_types else "providing lighthearted content"
+        
+        return f"Entertainment highlights {participant_text} brightened the hour {entertainment_text}. Houseguests delivered memorable moments and personality-driven content."
+    
+    def _create_general_narrative(self, updates: List[BBUpdate]) -> str:
+        """Create narrative for general updates"""
+        # For general updates, look for the most important themes
+        themes = []
+        houseguests = set()
+        
+        for update in updates[:3]:
+            content = f"{update.title} {update.description}".lower()
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            houseguests.update(hgs[:2])
+            
+            # Identify general themes
+            if any(word in content for word in ['finale', 'final', 'winner', 'crown']):
+                themes.append("finale activities")
+            if any(word in content for word in ['ceremony', 'announcement', 'reveal']):
+                themes.append("ceremonial moments")
+            if any(word in content for word in ['reunion', 'together', 'celebrate']):
+                themes.append("reunion celebrations")
+            if any(word in content for word in ['tradition', 'ritual', 'custom']):
+                themes.append("Big Brother traditions")
+        
+        hg_text = f"involving {', '.join(list(houseguests)[:3])}" if houseguests else ""
+        theme_text = f"centered around {', '.join(set(themes)[:2])}" if themes else "covering various house activities"
+        
+        return f"General house activities {hg_text} unfolded this hour {theme_text}. Multiple aspects of Big Brother life contributed to the ongoing narrative."
     
     def get_contextual_stats(self) -> Dict:
         """Get statistics about contextual analysis"""
