@@ -3323,6 +3323,362 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
             'contextual_features_enabled': self.contextual_enabled
         }
 
+async def create_daily_recap(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+    """Create comprehensive daily recap using contextual AI"""
+    if not daily_updates:
+        logger.warning("No updates provided for daily recap")
+        return []
+    
+    logger.info(f"Creating daily recap for Day {day_number} with {len(daily_updates)} updates")
+    
+    embeds = []
+    
+    try:
+        # FIRST: Check if we have LLM client
+        if not self.llm_client:
+            logger.warning("No LLM client available, using pattern-based daily recap")
+            embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+        
+        # SECOND: Check rate limits
+        elif not await self._can_make_llm_request():
+            stats = self.rate_limiter.get_stats()
+            logger.warning(f"Rate limit reached for daily recap: {stats['requests_this_minute']}/{stats['minute_limit']} per minute")
+            embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+        
+        # THIRD: Try contextual summary if enabled
+        elif self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
+            try:
+                logger.info("Using contextual AI for daily recap")
+                contextual_summary = await self.contextual_summarizer.create_contextual_summary(
+                    updates=daily_updates,
+                    summary_type="daily_recap",
+                    analyzer=self.analyzer,
+                    llm_client=self.llm_client
+                )
+                embeds = self._create_contextual_daily_embed(contextual_summary, daily_updates, day_number)
+            except Exception as e:
+                logger.error(f"Contextual daily recap failed: {e}")
+                # Fallback to regular LLM summary
+                embeds = await self._create_llm_daily_recap_fallback(daily_updates, day_number)
+        
+        # FOURTH: Regular LLM summary
+        else:
+            logger.info("Using regular LLM for daily recap")
+            embeds = await self._create_llm_daily_recap_fallback(daily_updates, day_number)
+            
+    except Exception as e:
+        logger.error(f"All daily recap methods failed: {e}")
+        embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+    
+    logger.info(f"Created daily recap for Day {day_number} with {len(embeds)} embeds")
+    return embeds
+
+async def _create_llm_daily_recap_fallback(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+    """Create regular LLM daily recap as fallback"""
+    try:
+        await self.rate_limiter.wait_if_needed()
+        
+        # Sort updates chronologically (earliest first)
+        sorted_updates = sorted(daily_updates, key=lambda x: x.pub_date)
+        
+        # Group updates by time periods for better analysis
+        morning_updates = []
+        afternoon_updates = []
+        evening_updates = []
+        night_updates = []
+        
+        for update in sorted_updates:
+            hour = update.pub_date.hour
+            if 6 <= hour < 12:
+                morning_updates.append(update)
+            elif 12 <= hour < 18:
+                afternoon_updates.append(update)
+            elif 18 <= hour < 24:
+                evening_updates.append(update)
+            else:  # 0-6
+                night_updates.append(update)
+        
+        # Create time-period summaries
+        time_periods = [
+            ("Morning", morning_updates),
+            ("Afternoon", afternoon_updates), 
+            ("Evening", evening_updates),
+            ("Late Night", night_updates)
+        ]
+        
+        # Format all updates with timestamps for the prompt
+        all_updates_text = []
+        for update in sorted_updates:
+            time_str = self._extract_correct_time(update)
+            title = update.title
+            # Clean title of timestamp if present
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
+            
+            all_updates_text.append(f"{time_str} - {title}")
+        
+        updates_text = "\n".join(all_updates_text)
+        
+        # Calculate strategic importance for context
+        high_importance_count = sum(1 for u in daily_updates if self.analyzer.analyze_strategic_importance(u) >= 7)
+        
+        prompt = f"""You are a Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
+
+Analyze these {len(daily_updates)} updates from the entire day in CHRONOLOGICAL ORDER (earliest to latest):
+
+{updates_text}
+
+Create a complete narrative that tells the story of Day {day_number} in the Big Brother house. This should be more comprehensive and analytical than an hourly summary.
+
+Structure your analysis as follows:
+
+**THE DAY'S STORY**: Write a flowing narrative (3-4 paragraphs) that chronicles the major developments throughout the day. Present events chronologically as they happened, showing how the day unfolded from morning to night.
+
+**KEY STRATEGIC DEVELOPMENTS**: Analyze the most important game moves, alliance discussions, targeting decisions, and strategic positioning that occurred.
+
+**SOCIAL DYNAMICS**: Examine relationship developments, conflicts, bonding moments, and how the social game evolved throughout the day.
+
+**MAJOR HIGHLIGHTS**: Identify the 3-5 most significant moments that Big Brother superfans would want to know about from this day.
+
+CRITICAL REQUIREMENTS:
+- Present ALL events in chronological order (earliest first, latest last)
+- Show progression throughout the day
+- Be comprehensive but focus on the biggest moments
+- Analyze the strategic and social implications
+- Write as if explaining Day {day_number} to a superfan who missed the feeds
+
+This is a DAILY recap - be more detailed and analytical than hourly summaries while maintaining the engaging narrative style."""
+
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=1500,  # More tokens for daily recap
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Create embed with the comprehensive daily narrative
+        return self._create_narrative_daily_embed(response.content[0].text, daily_updates, day_number)
+        
+    except Exception as e:
+        logger.error(f"LLM daily recap fallback failed: {e}")
+        return self._create_pattern_daily_recap(daily_updates, day_number)
+
+def _create_contextual_daily_embed(self, contextual_summary: str, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+    """Create daily recap embed with contextual summary"""
+    embed = discord.Embed(
+        title=f"📖 Day {day_number} Recap - Big Brother House",
+        description=f"**{len(daily_updates)} total updates** • Complete day narrative with contextual AI",
+        color=0x8e44ad,  # Purple for daily recaps
+        timestamp=datetime.now()
+    )
+    
+    # Split the contextual summary into manageable parts
+    summary_parts = self._split_summary_for_embed(contextual_summary, max_length=1000)
+    
+    for i, part in enumerate(summary_parts):
+        if i == 0:
+            field_name = "🎬 Day's Complete Story"
+        else:
+            field_name = f"🎬 Story (Part {i+1})"
+        
+        embed.add_field(
+            name=field_name,
+            value=part,
+            inline=False
+        )
+    
+    # Add day statistics
+    high_importance = sum(1 for u in daily_updates if self.analyzer.analyze_strategic_importance(u) >= 7)
+    categories = defaultdict(int)
+    for update in daily_updates:
+        update_categories = self.analyzer.categorize_update(update)
+        for category in update_categories:
+            categories[category] += 1
+    
+    top_category = max(categories.keys(), key=lambda x: categories[x]) if categories else "General"
+    
+    embed.add_field(
+        name="📊 Day {day_number} Stats",
+        value=f"High-impact moments: {high_importance}\n"
+              f"Most active category: {top_category}\n"
+              f"Total feed activity: {len(daily_updates)} updates",
+        inline=False
+    )
+    
+    # Add context information if available
+    if hasattr(self, 'contextual_summarizer'):
+        try:
+            context_stats = self.contextual_summarizer.get_context_stats()
+            embed.add_field(
+                name="🧠 Season Context",
+                value=f"Timeline events tracked: {context_stats['timeline_events_count']}\n"
+                      f"Narrative continuity: Building on {context_stats['recent_summaries_count']} previous summaries\n"
+                      f"Season progress: Day {day_number} of ongoing season",
+                inline=False
+            )
+        except Exception as e:
+            logger.debug(f"Context stats failed in daily recap: {e}")
+    
+    embed.set_footer(text=f"Day {day_number} Daily Recap • 8:01 AM PT Summary • Contextual AI")
+    
+    return [embed]
+
+def _create_narrative_daily_embed(self, narrative_summary: str, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+    """Create daily embed with narrative LLM summary"""
+    embed = discord.Embed(
+        title=f"📖 Day {day_number} Recap - Big Brother House",
+        description=f"**{len(daily_updates)} total updates** • Complete day narrative",
+        color=0x8e44ad,  # Purple for daily recaps
+        timestamp=datetime.now()
+    )
+    
+    # Split the narrative summary into manageable parts
+    summary_parts = self._split_summary_for_embed(narrative_summary, max_length=1000)
+    
+    for i, part in enumerate(summary_parts):
+        if i == 0:
+            field_name = "📚 The Day's Complete Story"
+        else:
+            field_name = f"📚 Story (Part {i+1})"
+        
+        embed.add_field(
+            name=field_name,
+            value=part,
+            inline=False
+        )
+    
+    # Add day statistics
+    high_importance = sum(1 for u in daily_updates if self.analyzer.analyze_strategic_importance(u) >= 7)
+    total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in daily_updates)
+    avg_importance = total_importance / len(daily_updates) if daily_updates else 0
+    
+    # Categorize the day's activity
+    categories = defaultdict(int)
+    for update in daily_updates:
+        update_categories = self.analyzer.categorize_update(update)
+        for category in update_categories:
+            categories[category] += 1
+    
+    top_category = max(categories.keys(), key=lambda x: categories[x]) if categories else "General"
+    
+    # Determine day's activity level
+    if avg_importance >= 6:
+        activity_level = "🔥 Explosive"
+    elif avg_importance >= 4:
+        activity_level = "⭐ High Activity"
+    elif avg_importance >= 2:
+        activity_level = "📈 Moderate"
+    else:
+        activity_level = "😴 Quiet"
+    
+    embed.add_field(
+        name=f"📊 Day {day_number} Analysis",
+        value=f"Activity Level: {activity_level}\n"
+              f"Major moments: {high_importance} high-impact events\n"
+              f"Most active category: {top_category} ({categories[top_category]} updates)\n"
+              f"Total feed coverage: {len(daily_updates)} updates",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Day {day_number} Daily Recap • 8:01 AM PT • AI Narrative Analysis")
+    
+    return [embed]
+
+def _create_pattern_daily_recap(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+    """Create pattern-based daily recap when LLM unavailable"""
+    logger.info("Creating pattern-based daily recap")
+    
+    # Sort updates chronologically
+    sorted_updates = sorted(daily_updates, key=lambda x: x.pub_date)
+    
+    # Group by time periods
+    time_periods = {
+        "🌅 Morning (6 AM - 12 PM)": [],
+        "☀️ Afternoon (12 PM - 6 PM)": [],
+        "🌆 Evening (6 PM - 12 AM)": [],
+        "🌙 Late Night (12 AM - 6 AM)": []
+    }
+    
+    for update in sorted_updates:
+        hour = update.pub_date.hour
+        if 6 <= hour < 12:
+            time_periods["🌅 Morning (6 AM - 12 PM)"].append(update)
+        elif 12 <= hour < 18:
+            time_periods["☀️ Afternoon (12 PM - 6 PM)"].append(update)
+        elif 18 <= hour < 24:
+            time_periods["🌆 Evening (6 PM - 12 AM)"].append(update)
+        else:
+            time_periods["🌙 Late Night (12 AM - 6 AM)"].append(update)
+    
+    embed = discord.Embed(
+        title=f"📖 Day {day_number} Recap - Big Brother House",
+        description=f"**{len(daily_updates)} total updates** • Pattern Analysis Recap",
+        color=0x95a5a6,  # Gray for pattern-based
+        timestamp=datetime.now()
+    )
+    
+    # Add each time period with top updates
+    for period_name, period_updates in time_periods.items():
+        if not period_updates:
+            continue
+        
+        # Get top 3 most important updates from this period
+        top_updates = sorted(period_updates, 
+                           key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                           reverse=True)[:3]
+        
+        period_text = f"**{len(period_updates)} updates**\n"
+        
+        for i, update in enumerate(top_updates, 1):
+            time_str = self._extract_correct_time(update)
+            title = update.title
+            # Clean title
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
+            
+            if len(title) > 80:
+                title = title[:77] + "..."
+            
+            importance = self.analyzer.analyze_strategic_importance(update)
+            importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+            
+            period_text += f"{importance_emoji} {time_str}: {title}\n"
+        
+        embed.add_field(
+            name=period_name,
+            value=period_text,
+            inline=False
+        )
+    
+    # Add day summary
+    total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in daily_updates)
+    avg_importance = total_importance / len(daily_updates) if daily_updates else 0
+    high_importance = sum(1 for u in daily_updates if self.analyzer.analyze_strategic_importance(u) >= 7)
+    
+    if avg_importance >= 6:
+        day_rating = "🔥 Explosive Day"
+    elif avg_importance >= 4:
+        day_rating = "⭐ High Activity Day"
+    elif avg_importance >= 2:
+        day_rating = "📈 Moderate Activity"
+    else:
+        day_rating = "😴 Quiet Day"
+    
+    embed.add_field(
+        name=f"📊 Day {day_number} Summary",
+        value=f"Day Rating: {day_rating}\n"
+              f"Major Moments: {high_importance} high-impact events\n"
+              f"Peak Activity: {max(time_periods.keys(), key=lambda x: len(time_periods[x])) if any(time_periods.values()) else 'Even throughout'}\n"
+              f"Total Coverage: {len(daily_updates)} feed updates",
+        inline=False
+    )
+    
+    embed.set_footer(text=f"Day {day_number} Daily Recap • 8:01 AM PT • Pattern Analysis")
+    
+    return [embed]
+
+
 class Config:
     """Enhanced configuration management with validation"""
     
