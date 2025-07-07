@@ -29,6 +29,17 @@ sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
 sqlite3.register_converter("timestamp", lambda b: datetime.fromisoformat(b.decode()))
 sqlite3.register_converter("TIMESTAMP", lambda b: datetime.fromisoformat(b.decode()))
 
+@dataclass
+class TimelineEvent:
+    """Represents a significant event in the season timeline"""
+    day: int
+    timestamp: datetime
+    event_type: str  # 'competition', 'eviction', 'alliance', 'drama', 'twist'
+    description: str
+    houseguests_involved: List[str]
+    importance_score: int  # 1-10
+    summary_source: str  # Which summary this came from
+
 # Configuration constants
 DEFAULT_CONFIG = {
     "bot_token": "",
@@ -55,7 +66,11 @@ DEFAULT_CONFIG = {
     # Rate limiting settings
     "llm_requests_per_minute": 10,
     "llm_requests_per_hour": 100,
-    "max_processed_hashes": 10000
+    "max_processed_hashes": 10000,
+    # NEW: Context-aware settings
+    "max_context_length": 10000,
+    "context_retention_days": 30,
+    "enable_contextual_summaries": True
 }
 
 # Environment variable mappings
@@ -536,6 +551,599 @@ class RateLimiter:
             'minute_limit': self.max_requests_per_minute,
             'hour_limit': self.max_requests_per_hour
         }
+
+import asyncio
+import json
+import logging
+from collections import deque
+from datetime import datetime, timedelta
+from typing import List, Dict, Set, Optional
+import sqlite3
+from dataclasses import dataclass
+
+logger = logging.getLogger(__name__)
+
+@dataclass
+class TimelineEvent:
+    """Represents a significant event in the season timeline"""
+    day: int
+    timestamp: datetime
+    event_type: str  # 'competition', 'eviction', 'alliance', 'drama', 'twist'
+    description: str
+    houseguests_involved: List[str]
+    importance_score: int  # 1-10
+    summary_source: str  # Which summary this came from
+
+class ContextualSummarizer:
+    """Enhanced summarizer that maintains context across summaries"""
+    
+    def __init__(self, db_path: str, max_context_length: int = 10000):
+        self.db_path = db_path
+        self.max_context_length = max_context_length
+        
+        # In-memory context storage
+        self.recent_context = deque(maxlen=50)  # Store recent summaries
+        self.season_timeline = []  # Major events chronology
+        self.houseguest_tracker = {}  # Track each HG's story arc
+        
+        # Initialize database tables for persistent context
+        self.init_context_tables()
+        
+        # Load existing context from database
+        self.load_context_from_db()
+        
+        logger.info("ContextualSummarizer initialized")
+    
+    def get_connection(self):
+        """Get database connection with datetime support"""
+        conn = sqlite3.connect(
+            self.db_path,
+            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+        )
+        return conn
+    
+    def init_context_tables(self):
+        """Initialize database tables for context persistence"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Table for storing summary context
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS summary_context (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    summary_type TEXT NOT NULL,
+                    summary_text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    day_number INTEGER,
+                    importance_score INTEGER DEFAULT 5,
+                    houseguests_mentioned TEXT,
+                    context_keywords TEXT
+                )
+            """)
+            
+            # Table for season timeline events
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS season_timeline (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    day_number INTEGER NOT NULL,
+                    event_timestamp TIMESTAMP NOT NULL,
+                    event_type TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    houseguests_involved TEXT,
+                    importance_score INTEGER DEFAULT 5,
+                    summary_source TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Table for houseguest story arcs
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS houseguest_arcs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    houseguest_name TEXT NOT NULL,
+                    arc_summary TEXT NOT NULL,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    key_events TEXT,
+                    relationship_status TEXT,
+                    strategic_position TEXT
+                )
+            """)
+            
+            # Create indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timeline_day ON season_timeline(day_number)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_timeline_houseguests ON season_timeline(houseguests_involved)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_created ON summary_context(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_arcs_houseguest ON houseguest_arcs(houseguest_name)")
+            
+            conn.commit()
+            logger.info("Context database tables initialized")
+            
+        except Exception as e:
+            logger.error(f"Error initializing context tables: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
+    
+    def load_context_from_db(self):
+        """Load existing context from database into memory"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Load recent summaries
+            cursor.execute("""
+                SELECT summary_text FROM summary_context 
+                ORDER BY created_at DESC 
+                LIMIT 50
+            """)
+            
+            summaries = cursor.fetchall()
+            for (summary_text,) in reversed(summaries):  # Reverse to maintain chronological order
+                self.recent_context.append(summary_text)
+            
+            # Load timeline events
+            cursor.execute("""
+                SELECT day_number, event_timestamp, event_type, description, 
+                       houseguests_involved, importance_score, summary_source
+                FROM season_timeline 
+                ORDER BY day_number, event_timestamp
+            """)
+            
+            events = cursor.fetchall()
+            for row in events:
+                day, timestamp, event_type, desc, hgs_str, importance, source = row
+                houseguests = json.loads(hgs_str) if hgs_str else []
+                
+                self.season_timeline.append(TimelineEvent(
+                    day=day,
+                    timestamp=timestamp,
+                    event_type=event_type,
+                    description=desc,
+                    houseguests_involved=houseguests,
+                    importance_score=importance,
+                    summary_source=source
+                ))
+            
+            # Load houseguest arcs
+            cursor.execute("""
+                SELECT houseguest_name, arc_summary, key_events, 
+                       relationship_status, strategic_position
+                FROM houseguest_arcs
+            """)
+            
+            arcs = cursor.fetchall()
+            for row in arcs:
+                name, arc, events, relationships, strategy = row
+                self.houseguest_tracker[name] = {
+                    'arc_summary': arc,
+                    'key_events': json.loads(events) if events else [],
+                    'relationship_status': relationships,
+                    'strategic_position': strategy
+                }
+            
+            logger.info(f"Loaded context: {len(self.recent_context)} summaries, "
+                       f"{len(self.season_timeline)} timeline events, "
+                       f"{len(self.houseguest_tracker)} houseguest arcs")
+            
+        except Exception as e:
+            logger.error(f"Error loading context from database: {e}")
+        finally:
+            conn.close()
+    
+    async def create_contextual_summary(self, updates: List[BBUpdate], 
+                                      summary_type: str = "batch",
+                                      analyzer = None,
+                                      llm_client = None) -> str:
+        """Create a context-aware summary of the updates"""
+        if not llm_client:
+            logger.warning("No LLM client provided for contextual summary")
+            return self._create_fallback_summary(updates)
+        
+        try:
+            # Build context from recent summaries
+            recent_context = self._build_recent_context()
+            
+            # Get relevant timeline events
+            relevant_timeline = self._get_relevant_timeline_events(updates, analyzer)
+            
+            # Get relevant houseguest arcs
+            relevant_arcs = self._get_relevant_houseguest_arcs(updates, analyzer)
+            
+            # Format the updates
+            formatted_updates = self._format_updates(updates)
+            
+            # Calculate current day
+            current_day = self._calculate_current_day()
+            
+            # Build enhanced prompt with context
+            prompt = self._build_contextual_prompt(
+                recent_context, relevant_timeline, relevant_arcs, 
+                formatted_updates, summary_type, current_day
+            )
+            
+            # Call LLM with context-aware prompt
+            summary = await asyncio.to_thread(
+                llm_client.messages.create,
+                model="claude-3-haiku-20240307",  # or your preferred model
+                max_tokens=800,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            summary_text = summary.content[0].text
+            
+            # Store this summary for future context
+            await self._store_summary_context(summary_text, summary_type, updates, current_day, analyzer)
+            
+            # Extract and store timeline events from this summary
+            await self._extract_and_store_timeline_events(summary_text, updates, current_day, analyzer)
+            
+            # Update houseguest arcs based on this summary
+            await self._update_houseguest_arcs(summary_text, updates, analyzer)
+            
+            logger.info(f"Created contextual {summary_type} summary with {len(updates)} updates")
+            return summary_text
+            
+        except Exception as e:
+            logger.error(f"Error creating contextual summary: {e}")
+            return self._create_fallback_summary(updates)
+    
+    def _build_recent_context(self) -> str:
+        """Build context string from recent summaries"""
+        if not self.recent_context:
+            return "No recent context available."
+        
+        # Get last 3-5 summaries depending on length
+        context_summaries = list(self.recent_context)[-5:]
+        context_text = "\n\n".join([
+            f"Previous Summary {i+1}: {summary[:300]}..." 
+            if len(summary) > 300 else f"Previous Summary {i+1}: {summary}"
+            for i, summary in enumerate(context_summaries)
+        ])
+        
+        # Truncate if too long
+        if len(context_text) > self.max_context_length // 2:
+            context_text = context_text[:self.max_context_length // 2] + "..."
+        
+        return context_text
+    
+    def _get_relevant_timeline_events(self, updates: List[BBUpdate], analyzer) -> str:
+        """Find timeline events relevant to current updates"""
+        if not self.season_timeline or not analyzer:
+            return "No relevant timeline events found."
+        
+        # Extract houseguests mentioned in updates
+        mentioned_hgs = set()
+        for update in updates:
+            hgs = analyzer.extract_houseguests(update.title + " " + update.description)
+            mentioned_hgs.update(hgs)
+        
+        if not mentioned_hgs:
+            # If no specific houseguests, get recent high-importance events
+            relevant_events = [
+                event for event in self.season_timeline 
+                if event.importance_score >= 7
+            ][-5:]  # Last 5 high-importance events
+        else:
+            # Find events involving mentioned houseguests
+            relevant_events = [
+                event for event in self.season_timeline 
+                if any(hg in event.houseguests_involved for hg in mentioned_hgs)
+                or any(hg.lower() in event.description.lower() for hg in mentioned_hgs)
+            ][-10:]  # Last 10 relevant events
+        
+        if not relevant_events:
+            return "No directly relevant timeline events found."
+        
+        timeline_text = "\n".join([
+            f"Day {event.day}: {event.description} ({event.event_type})"
+            for event in relevant_events
+        ])
+        
+        return timeline_text
+    
+    def _get_relevant_houseguest_arcs(self, updates: List[BBUpdate], analyzer) -> str:
+        """Get relevant houseguest story arcs"""
+        if not self.houseguest_tracker or not analyzer:
+            return "No houseguest arc information available."
+        
+        # Extract houseguests mentioned in updates
+        mentioned_hgs = set()
+        for update in updates:
+            hgs = analyzer.extract_houseguests(update.title + " " + update.description)
+            mentioned_hgs.update(hgs)
+        
+        relevant_arcs = []
+        for hg in mentioned_hgs:
+            if hg in self.houseguest_tracker:
+                arc = self.houseguest_tracker[hg]
+                relevant_arcs.append(f"{hg}: {arc['arc_summary']}")
+        
+        if not relevant_arcs:
+            return "No relevant houseguest arcs found."
+        
+        return "\n".join(relevant_arcs)
+    
+    def _format_updates(self, updates: List[BBUpdate]) -> str:
+        """Format updates for the prompt"""
+        formatted = []
+        for i, update in enumerate(updates, 1):
+            time_str = update.pub_date.strftime("%I:%M %p") if update.pub_date else "Unknown time"
+            formatted.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                # Truncate long descriptions
+                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+                formatted.append(f"   {desc}")
+        
+        return "\n".join(formatted)
+    
+    def _calculate_current_day(self) -> int:
+        """Calculate current day number of the season"""
+        # You might want to adjust this based on actual season start date
+        season_start = datetime(2025, 7, 1)  # Adjust for actual season
+        current_date = datetime.now()
+        day_number = (current_date.date() - season_start.date()).days + 1
+        return max(1, day_number)
+    
+    def _build_contextual_prompt(self, recent_context: str, relevant_timeline: str,
+                                relevant_arcs: str, formatted_updates: str,
+                                summary_type: str, current_day: int) -> str:
+        """Build the context-aware prompt"""
+        prompt = f"""You are a Big Brother superfan analyst creating a {summary_type} summary for Day {current_day}.
+
+RECENT CONTEXT FROM PREVIOUS SUMMARIES:
+{recent_context}
+
+RELEVANT SEASON TIMELINE EVENTS:
+{relevant_timeline}
+
+RELEVANT HOUSEGUEST STORY ARCS:
+{relevant_arcs}
+
+NEW UPDATES TO ANALYZE (Day {current_day}):
+{formatted_updates}
+
+Create a comprehensive summary that:
+1. Builds on the existing narrative established in previous summaries
+2. References relevant past events when they provide important context
+3. Shows how current developments connect to ongoing storylines
+4. Maintains continuity with the established season narrative
+5. Highlights any significant shifts or developments in ongoing stories
+
+Focus on both strategic gameplay and social dynamics, ensuring the summary flows naturally from the established context while highlighting what's new and significant about these particular updates."""
+
+        return prompt
+    
+    async def _store_summary_context(self, summary_text: str, summary_type: str, 
+                                   updates: List[BBUpdate], day_number: int, analyzer):
+        """Store the summary for future context"""
+        # Add to in-memory context
+        self.recent_context.append(summary_text)
+        
+        # Store in database
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Extract houseguests and keywords from updates
+            mentioned_hgs = set()
+            keywords = set()
+            
+            if analyzer:
+                for update in updates:
+                    hgs = analyzer.extract_houseguests(update.title + " " + update.description)
+                    mentioned_hgs.update(hgs)
+                    
+                    # Extract keywords (you might want to enhance this)
+                    content = (update.title + " " + update.description).lower()
+                    for keyword_list in [analyzer.COMPETITION_KEYWORDS, analyzer.STRATEGY_KEYWORDS, 
+                                        analyzer.DRAMA_KEYWORDS, analyzer.RELATIONSHIP_KEYWORDS]:
+                        keywords.update([kw for kw in keyword_list if kw in content])
+            
+            # Calculate importance score
+            importance_score = 5
+            if analyzer:
+                avg_importance = sum(analyzer.analyze_strategic_importance(u) for u in updates) / len(updates)
+                importance_score = min(10, max(1, int(avg_importance)))
+            
+            cursor.execute("""
+                INSERT INTO summary_context 
+                (summary_type, summary_text, day_number, importance_score, 
+                 houseguests_mentioned, context_keywords)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (summary_type, summary_text, day_number, importance_score,
+                  json.dumps(list(mentioned_hgs)), json.dumps(list(keywords))))
+            
+            conn.commit()
+            
+        except Exception as e:
+            logger.error(f"Error storing summary context: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
+    
+    async def _extract_and_store_timeline_events(self, summary_text: str, 
+                                               updates: List[BBUpdate], 
+                                               day_number: int, analyzer):
+        """Extract significant events from the summary and add to timeline"""
+        # This is a simplified version - you could use LLM to extract events more intelligently
+        try:
+            # Look for key phrases that indicate timeline-worthy events
+            timeline_indicators = [
+                ('wins hoh', 'competition'),
+                ('wins pov', 'competition'),
+                ('wins veto', 'competition'),
+                ('evicted', 'eviction'),
+                ('nominated', 'strategy'),
+                ('alliance formed', 'alliance'),
+                ('betrayed', 'alliance'),
+                ('fight', 'drama'),
+                ('argument', 'drama'),
+                ('showmance', 'relationship'),
+                ('kiss', 'relationship')
+            ]
+            
+            content = summary_text.lower()
+            events_to_add = []
+            
+            for indicator, event_type in timeline_indicators:
+                if indicator in content:
+                    # Extract houseguests mentioned in the summary
+                    mentioned_hgs = []
+                    if analyzer:
+                        mentioned_hgs = analyzer.extract_houseguests(summary_text)
+                    
+                    # Create a timeline event
+                    event_desc = f"Summary mentions: {indicator}"
+                    if mentioned_hgs:
+                        event_desc += f" involving {', '.join(mentioned_hgs[:3])}"
+                    
+                    events_to_add.append({
+                        'day': day_number,
+                        'timestamp': datetime.now(),
+                        'event_type': event_type,
+                        'description': event_desc,
+                        'houseguests': mentioned_hgs[:5],  # Limit to 5
+                        'importance': 6,  # Medium importance for extracted events
+                        'source': f"{summary_text[:50]}..."
+                    })
+            
+            # Store events in database and memory
+            if events_to_add:
+                conn = self.get_connection()
+                cursor = conn.cursor()
+                
+                for event in events_to_add:
+                    cursor.execute("""
+                        INSERT INTO season_timeline 
+                        (day_number, event_timestamp, event_type, description, 
+                         houseguests_involved, importance_score, summary_source)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (event['day'], event['timestamp'], event['event_type'],
+                          event['description'], json.dumps(event['houseguests']),
+                          event['importance'], event['source']))
+                    
+                    # Add to in-memory timeline
+                    self.season_timeline.append(TimelineEvent(
+                        day=event['day'],
+                        timestamp=event['timestamp'],
+                        event_type=event['event_type'],
+                        description=event['description'],
+                        houseguests_involved=event['houseguests'],
+                        importance_score=event['importance'],
+                        summary_source=event['source']
+                    ))
+                
+                conn.commit()
+                conn.close()
+                logger.info(f"Added {len(events_to_add)} timeline events from summary")
+                
+        except Exception as e:
+            logger.error(f"Error extracting timeline events: {e}")
+    
+    async def _update_houseguest_arcs(self, summary_text: str, 
+                                    updates: List[BBUpdate], analyzer):
+        """Update houseguest story arcs based on new summary"""
+        if not analyzer:
+            return
+        
+        try:
+            # Extract houseguests mentioned in this summary
+            mentioned_hgs = analyzer.extract_houseguests(summary_text)
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            for hg in mentioned_hgs:
+                # Get current arc or create new one
+                current_arc = self.houseguest_tracker.get(hg, {
+                    'arc_summary': f"{hg} is a houseguest in Big Brother.",
+                    'key_events': [],
+                    'relationship_status': 'Unknown',
+                    'strategic_position': 'Unknown'
+                })
+                
+                # Simple arc update - in practice, you might use LLM for this too
+                current_arc['key_events'].append(f"Day {self._calculate_current_day()}: Mentioned in summary")
+                current_arc['arc_summary'] = f"{hg} continues their Big Brother journey. Recent activity includes being mentioned in today's developments."
+                
+                # Store updated arc
+                cursor.execute("""
+                    INSERT OR REPLACE INTO houseguest_arcs 
+                    (houseguest_name, arc_summary, key_events, relationship_status, strategic_position)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (hg, current_arc['arc_summary'], 
+                      json.dumps(current_arc['key_events'][-10:]),  # Keep last 10 events
+                      current_arc['relationship_status'],
+                      current_arc['strategic_position']))
+                
+                # Update in-memory tracker
+                self.houseguest_tracker[hg] = current_arc
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Error updating houseguest arcs: {e}")
+    
+    def _create_fallback_summary(self, updates: List[BBUpdate]) -> str:
+        """Create a basic summary when LLM is not available"""
+        if not updates:
+            return "No updates to summarize."
+        
+        summary_parts = [
+            f"Summary of {len(updates)} Big Brother updates:",
+            ""
+        ]
+        
+        # Group by categories if analyzer is available
+        categories = {}
+        for update in updates[:10]:  # Limit to first 10
+            summary_parts.append(f"• {update.title}")
+        
+        if len(updates) > 10:
+            summary_parts.append(f"• ... and {len(updates) - 10} more updates")
+        
+        return "\n".join(summary_parts)
+    
+    def get_context_stats(self) -> Dict:
+        """Get statistics about the current context"""
+        return {
+            'recent_summaries_count': len(self.recent_context),
+            'timeline_events_count': len(self.season_timeline),
+            'tracked_houseguests_count': len(self.houseguest_tracker),
+            'latest_day': max([event.day for event in self.season_timeline], default=1)
+        }
+    
+    def clear_old_context(self, days_to_keep: int = 30):
+        """Clear old context to prevent database bloat"""
+        cutoff_date = datetime.now() - timedelta(days=days_to_keep)
+        
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Clear old summaries
+            cursor.execute("""
+                DELETE FROM summary_context 
+                WHERE created_at < ?
+            """, (cutoff_date,))
+            
+            # Clear old timeline events (keep major events)
+            cursor.execute("""
+                DELETE FROM season_timeline 
+                WHERE created_at < ? AND importance_score < 7
+            """, (cutoff_date,))
+            
+            conn.commit()
+            logger.info(f"Cleared context older than {days_to_keep} days")
+            
+        except Exception as e:
+            logger.error(f"Error clearing old context: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
 
 class Config:
     """Enhanced configuration management with validation"""
@@ -2959,6 +3567,280 @@ Focus on creating a cohesive daily story from these summaries."""
         
         return [embed]
 
+class EnhancedUpdateBatcher(UpdateBatcher):
+    """Enhanced UpdateBatcher with contextual summary capabilities"""
+    
+    def __init__(self, analyzer: BBAnalyzer, config: Config):
+        super().__init__(analyzer, config)
+        
+        # Initialize the contextual summarizer
+        db_path = config.get('database_path', 'bb_updates.db')
+        self.contextual_summarizer = ContextualSummarizer(
+            db_path=db_path,
+            max_context_length=config.get('max_context_length', 10000)
+        )
+        
+        # Check if contextual summaries are enabled
+        self.contextual_enabled = config.get('enable_contextual_summaries', True)
+        
+        logger.info(f"Enhanced UpdateBatcher initialized - Contextual: {'Enabled' if self.contextual_enabled else 'Disabled'}")
+    
+    async def _create_llm_highlights_only(self) -> List[discord.Embed]:
+        """Create highlights using contextual LLM analysis"""
+        if not self.llm_client or not self.contextual_enabled:
+            return await super()._create_llm_highlights_only()
+        
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            # Use contextual summarizer for highlights
+            contextual_summary = await self.contextual_summarizer.create_contextual_summary(
+                updates=self.highlights_queue,
+                summary_type="highlights",
+                analyzer=self.analyzer,
+                llm_client=self.llm_client
+            )
+            
+            # Create embed with contextual summary
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Contextual analysis of {len(self.highlights_queue)} recent updates",
+                color=0xe74c3c,
+                timestamp=datetime.now()
+            )
+            
+            # Split long summaries into multiple fields
+            summary_parts = self._split_summary_for_embed(contextual_summary)
+            
+            for i, part in enumerate(summary_parts):
+                field_name = "📋 Analysis" if i == 0 else f"📋 Analysis (cont'd {i+1})"
+                embed.add_field(
+                    name=field_name,
+                    value=part,
+                    inline=False
+                )
+            
+            # Add context indicator
+            context_stats = self.contextual_summarizer.get_context_stats()
+            embed.add_field(
+                name="🧠 Context Awareness",
+                value=f"Building on {context_stats['recent_summaries_count']} recent summaries "
+                      f"and {context_stats['timeline_events_count']} timeline events",
+                inline=False
+            )
+            
+            embed.set_footer(text=f"Contextual Highlights • {len(self.highlights_queue)} updates processed • Day {context_stats['latest_day']}")
+            
+            return [embed]
+            
+        except Exception as e:
+            logger.error(f"Contextual highlights failed: {e}")
+            # Fallback to original method
+            return await super()._create_llm_highlights_only()
+    
+    async def _create_llm_hourly_summary(self) -> List[discord.Embed]:
+        """Create hourly summary using contextual analysis"""
+        if not self.llm_client or not self.contextual_enabled:
+            return await super()._create_llm_hourly_summary()
+        
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            # Use contextual summarizer for hourly summary
+            contextual_summary = await self.contextual_summarizer.create_contextual_summary(
+                updates=self.hourly_queue,
+                summary_type="hourly",
+                analyzer=self.analyzer,
+                llm_client=self.llm_client
+            )
+            
+            # Create enhanced hourly summary embed
+            current_hour = datetime.now().strftime("%I %p")
+            context_stats = self.contextual_summarizer.get_context_stats()
+            
+            embed = discord.Embed(
+                title=f"📊 Contextual Hourly Digest - {current_hour}",
+                description=f"**{len(self.hourly_queue)} updates this hour** • Day {context_stats['latest_day']} Analysis",
+                color=0x9b59b6,
+                timestamp=datetime.now()
+            )
+            
+            # Split summary into digestible parts
+            summary_parts = self._split_summary_for_embed(contextual_summary, max_length=900)
+            
+            for i, part in enumerate(summary_parts):
+                if i == 0:
+                    field_name = "📈 Contextual Analysis"
+                else:
+                    field_name = f"📈 Analysis (Part {i+1})"
+                
+                embed.add_field(
+                    name=field_name,
+                    value=part,
+                    inline=False
+                )
+            
+            # Add context indicators
+            embed.add_field(
+                name="🧠 Context Foundation",
+                value=f"Analysis builds on {context_stats['recent_summaries_count']} recent summaries\n"
+                      f"Timeline: {context_stats['timeline_events_count']} significant events tracked\n"
+                      f"Houseguests: {context_stats['tracked_houseguests_count']} story arcs maintained",
+                inline=False
+            )
+            
+            embed.set_footer(text=f"Contextual Hourly Digest • {current_hour} • AI Narrative Building")
+            
+            return [embed]
+            
+        except Exception as e:
+            logger.error(f"Contextual hourly summary failed: {e}")
+            # Fallback to original method
+            return await super()._create_llm_hourly_summary()
+    
+    async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create contextual daily recap"""
+        if not updates:
+            return []
+        
+        logger.info(f"Creating contextual daily recap for {len(updates)} updates")
+        
+        try:
+            # Use contextual summarizer for daily recap if enabled
+            if self.llm_client and self.contextual_enabled:
+                contextual_summary = await self.contextual_summarizer.create_contextual_summary(
+                    updates=updates,
+                    summary_type="daily_recap",
+                    analyzer=self.analyzer,
+                    llm_client=self.llm_client
+                )
+                
+                return self._create_contextual_daily_embed(contextual_summary, day_number, len(updates))
+            else:
+                # Fallback to original method
+                return await super().create_daily_recap(updates, day_number)
+                
+        except Exception as e:
+            logger.error(f"Contextual daily recap failed: {e}")
+            return await super().create_daily_recap(updates, day_number)
+    
+    def _create_contextual_daily_embed(self, contextual_summary: str, 
+                                     day_number: int, update_count: int) -> List[discord.Embed]:
+        """Create daily recap embed with contextual summary"""
+        context_stats = self.contextual_summarizer.get_context_stats()
+        
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Contextual Recap",
+            description=f"**{update_count} updates** • Building on the season narrative",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Split the contextual summary into manageable parts
+        summary_parts = self._split_summary_for_embed(contextual_summary, max_length=900)
+        
+        for i, part in enumerate(summary_parts):
+            if i == 0:
+                field_name = "📖 Day's Narrative"
+            else:
+                field_name = f"📖 Narrative (Part {i+1})"
+            
+            embed.add_field(
+                name=field_name,
+                value=part,
+                inline=False
+            )
+        
+        # Add context information
+        embed.add_field(
+            name="🧠 Narrative Context",
+            value=f"This recap builds on {context_stats['recent_summaries_count']} previous summaries\n"
+                  f"Season timeline: {context_stats['timeline_events_count']} major events\n"
+                  f"Houseguest arcs: {context_stats['tracked_houseguests_count']} players tracked",
+            inline=False
+        )
+        
+        # Add day importance indicator
+        embed.add_field(
+            name="📊 Day Significance",
+            value=f"Day {day_number} in the ongoing Big Brother narrative",
+            inline=True
+        )
+        
+        embed.set_footer(text=f"Contextual Daily Recap • Day {day_number} • Narrative-Aware AI")
+        
+        return [embed]
+    
+    def _split_summary_for_embed(self, summary: str, max_length: int = 1000) -> List[str]:
+        """Split long summaries into Discord embed-friendly chunks"""
+        if len(summary) <= max_length:
+            return [summary]
+        
+        # Split by paragraphs first
+        paragraphs = summary.split('\n\n')
+        parts = []
+        current_part = ""
+        
+        for paragraph in paragraphs:
+            # If adding this paragraph would exceed limit, start new part
+            if len(current_part) + len(paragraph) + 2 > max_length and current_part:
+                parts.append(current_part.strip())
+                current_part = paragraph
+            else:
+                if current_part:
+                    current_part += "\n\n" + paragraph
+                else:
+                    current_part = paragraph
+        
+        # Add the last part
+        if current_part:
+            parts.append(current_part.strip())
+        
+        # If we still have parts that are too long, split by sentences
+        final_parts = []
+        for part in parts:
+            if len(part) <= max_length:
+                final_parts.append(part)
+            else:
+                # Split long parts by sentences
+                sentences = part.split('. ')
+                current_chunk = ""
+                
+                for sentence in sentences:
+                    if len(current_chunk) + len(sentence) + 2 > max_length and current_chunk:
+                        final_parts.append(current_chunk.strip() + ("." if not current_chunk.endswith(".") else ""))
+                        current_chunk = sentence
+                    else:
+                        if current_chunk:
+                            current_chunk += ". " + sentence
+                        else:
+                            current_chunk = sentence
+                
+                if current_chunk:
+                    final_parts.append(current_chunk + ("." if not current_chunk.endswith(".") else ""))
+        
+        return final_parts
+    
+    def get_contextual_stats(self) -> Dict:
+        """Get statistics about contextual analysis"""
+        base_stats = self.get_rate_limit_stats()
+        
+        if hasattr(self, 'contextual_summarizer'):
+            context_stats = self.contextual_summarizer.get_context_stats()
+        else:
+            context_stats = {
+                'recent_summaries_count': 0,
+                'timeline_events_count': 0,
+                'tracked_houseguests_count': 0,
+                'latest_day': 1
+            }
+        
+        return {
+            **base_stats,
+            **context_stats,
+            'contextual_features_enabled': self.contextual_enabled
+        }
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
@@ -3117,7 +3999,7 @@ class BBDiscordBot(commands.Bot):
         self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
         self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
         self.analyzer = BBAnalyzer()
-        self.update_batcher = UpdateBatcher(self.analyzer, self.config)
+        self.update_batcher = EnhancedUpdateBatcher(self.analyzer, self.config)
         self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
         self.prediction_manager = PredictionManager(self.config.get('database_path', 'bb_updates.db'))
         
@@ -3299,29 +4181,33 @@ class BBDiscordBot(commands.Bot):
                 color=0x3498db
             )
             
-            commands_list = [
-                ("/summary", "Get a summary of recent updates (Admin only)"),
-                ("/status", "Show bot status and statistics (Admin only)"),
-                ("/setchannel", "Set update channel (Admin only)"),
-                ("/commands", "Show this help message"),
-                ("/forcebatch", "Force send any queued updates (Admin only)"),
-                ("/testllm", "Test LLM connection (Admin only)"),
-                ("/sync", "Sync slash commands (Owner only)"),
-                ("/alliances", "Show current Big Brother alliances"),
-                ("/loyalty", "Show a houseguest's alliance history"),
-                ("/betrayals", "Show recent alliance betrayals"),
-                ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
-                ("/clearalliances", "Clear all alliance data (Owner only)"),
-                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
-                # Prediction commands
-                ("/createpoll", "Create a prediction poll (Admin only)"),
-                ("/predict", "Make a prediction on an active poll"),
-                ("/polls", "View active prediction polls"),
-                ("/closepoll", "Manually close a prediction poll (Admin only)"),
-                ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
-                ("/leaderboard", "View prediction leaderboards"),
-                ("/mypredictions", "View your prediction history")
-            ]
+commands_list = [
+    ("/summary", "Get a summary of recent updates (Admin only)"),
+    ("/status", "Show bot status and statistics (Admin only)"),
+    ("/setchannel", "Set update channel (Admin only)"),
+    ("/commands", "Show this help message"),
+    ("/forcebatch", "Force send any queued updates (Admin only)"),
+    ("/testllm", "Test LLM connection (Admin only)"),
+    ("/sync", "Sync slash commands (Owner only)"),
+    ("/alliances", "Show current Big Brother alliances"),
+    ("/loyalty", "Show a houseguest's alliance history"),
+    ("/betrayals", "Show recent alliance betrayals"),
+    ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
+    ("/clearalliances", "Clear all alliance data (Owner only)"),
+    ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
+    # NEW CONTEXTUAL COMMANDS
+    ("/context", "View contextual analysis statistics (Admin only)"),
+    ("/timeline", "View season timeline events"),
+    ("/togglecontext", "Enable/disable contextual summaries (Owner only)"),
+    # Prediction commands
+    ("/createpoll", "Create a prediction poll (Admin only)"),
+    ("/predict", "Make a prediction on an active poll"),
+    ("/polls", "View active prediction polls"),
+    ("/closepoll", "Manually close a prediction poll (Admin only)"),
+    ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
+    ("/leaderboard", "View prediction leaderboards"),
+    ("/mypredictions", "View your prediction history")
+]
             
             for name, description in commands_list:
                 embed.add_field(name=name, value=description, inline=False)
@@ -3581,7 +4467,156 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error clearing alliances: {e}")
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
+        @self.tree.command(name="context", description="View contextual analysis statistics")
+        async def context_slash(interaction: discord.Interaction):
+            """Show context statistics"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Get context stats from the enhanced batcher
+                if hasattr(self.update_batcher, 'contextual_summarizer'):
+                    stats = self.update_batcher.get_contextual_stats()
+                    
+                    embed = discord.Embed(
+                        title="🧠 Contextual Analysis Status",
+                        description="AI narrative building and context awareness",
+                        color=0x9b59b6,
+                        timestamp=datetime.now()
+                    )
+                    
+                    embed.add_field(
+                        name="📚 Context Memory",
+                        value=f"Recent summaries: {stats['recent_summaries_count']}/50\n"
+                              f"Timeline events: {stats['timeline_events_count']}\n"
+                              f"Houseguest arcs: {stats['tracked_houseguests_count']}",
+                        inline=True
+                    )
+                    
+                    embed.add_field(
+                        name="📅 Season Progress",
+                        value=f"Latest day: {stats['latest_day']}\n"
+                              f"Context-aware: {'✅ Enabled' if stats['contextual_features_enabled'] else '❌ Disabled'}\n"
+                              f"Narrative building: ✅ Active",
+                        inline=True
+                    )
+                    
+                    embed.add_field(
+                        name="🔄 Rate Limits",
+                        value=f"Minute: {stats['requests_this_minute']}/{stats['minute_limit']}\n"
+                              f"Hour: {stats['requests_this_hour']}/{stats['hour_limit']}\n"
+                              f"Total: {stats['total_requests']}",
+                        inline=True
+                    )
+                    
+                    embed.set_footer(text="Contextual AI • Building narrative continuity")
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                else:
+                    await interaction.followup.send("Contextual features not enabled on this bot instance.", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error showing context stats: {e}")
+                await interaction.followup.send("Error retrieving context information.", ephemeral=True)
 
+        @self.tree.command(name="timeline", description="View season timeline events")
+        async def timeline_slash(interaction: discord.Interaction, days: int = 7):
+            """Show recent timeline events"""
+            try:
+                await interaction.response.defer()
+                
+                if days < 1 or days > 30:
+                    await interaction.followup.send("Days must be between 1 and 30")
+                    return
+                
+                if hasattr(self.update_batcher, 'contextual_summarizer'):
+                    # Get recent timeline events
+                    cutoff_day = self.update_batcher.contextual_summarizer._calculate_current_day() - days
+                    recent_events = [
+                        event for event in self.update_batcher.contextual_summarizer.season_timeline
+                        if event.day >= cutoff_day
+                    ]
+                    
+                    embed = discord.Embed(
+                        title=f"📅 Season Timeline - Last {days} Days",
+                        description=f"Significant events from the Big Brother season",
+                        color=0x3498db,
+                        timestamp=datetime.now()
+                    )
+                    
+                    if not recent_events:
+                        embed.add_field(
+                            name="No Events",
+                            value=f"No significant events recorded in the last {days} days",
+                            inline=False
+                        )
+                    else:
+                        # Group by event type
+                        event_types = {}
+                        for event in recent_events[-15:]:  # Last 15 events
+                            if event.event_type not in event_types:
+                                event_types[event.event_type] = []
+                            event_types[event.event_type].append(event)
+                        
+                        type_emojis = {
+                            'competition': '🏆',
+                            'eviction': '🚪',
+                            'alliance': '🤝',
+                            'drama': '💥',
+                            'relationship': '💕',
+                            'strategy': '🎯'
+                        }
+                        
+                        for event_type, events in event_types.items():
+                            emoji = type_emojis.get(event_type, '📝')
+                            event_text = []
+                            
+                            for event in events[-5:]:  # Last 5 of each type
+                                event_text.append(f"Day {event.day}: {event.description}")
+                            
+                            embed.add_field(
+                                name=f"{emoji} {event_type.title()} Events",
+                                value="\n".join(event_text) if event_text else "No recent events",
+                                inline=False
+                            )
+                    
+                    embed.set_footer(text="Timeline tracked by contextual AI")
+                    await interaction.followup.send(embed=embed)
+                else:
+                    await interaction.followup.send("Timeline tracking not available - contextual features not enabled.")
+                    
+            except Exception as e:
+                logger.error(f"Error showing timeline: {e}")
+                await interaction.followup.send("Error retrieving timeline information.")
+
+        @self.tree.command(name="togglecontext", description="Enable/disable contextual summaries (Owner only)")
+        async def toggle_context_slash(interaction: discord.Interaction):
+            """Toggle contextual summary features"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                current_status = self.config.get('enable_contextual_summaries', True)
+                new_status = not current_status
+                self.config.set('enable_contextual_summaries', new_status)
+                
+                # Update the batcher setting
+                if hasattr(self.update_batcher, 'contextual_enabled'):
+                    self.update_batcher.contextual_enabled = new_status
+                
+                status_text = "enabled" if new_status else "disabled"
+                await interaction.response.send_message(f"✅ Contextual summaries {status_text}", ephemeral=True)
+                logger.info(f"Contextual summaries {status_text} by owner")
+                
+            except Exception as e:
+                logger.error(f"Error toggling context: {e}")
+                await interaction.response.send_message("Error toggling contextual features.", ephemeral=True)
+                
         @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
         @discord.app_commands.describe(
             zing_type="Choose your zing type",
@@ -4020,23 +5055,24 @@ class BBDiscordBot(commands.Bot):
         asyncio.create_task(self.close())
     
     async def on_ready(self):
-        """Bot startup event"""
-        logger.info(f'{self.user} has connected to Discord!')
-        logger.info(f'Bot is in {len(self.guilds)} guilds')
-        
-        try:
-            synced = await self.tree.sync()
-            logger.info(f"Synced {len(synced)} slash command(s)")
-        except Exception as e:
-            logger.error(f"Failed to sync commands: {e}")
-        
-        try:
-            self.check_rss_feed.start()
-            self.daily_recap_task.start()
-            self.auto_close_predictions_task.start()
-            logger.info("RSS feed monitoring and daily recap and prediction auto-close tasks started")
-        except Exception as e:
-            logger.error(f"Error starting background tasks: {e}")
+    """Bot startup event"""
+    logger.info(f'{self.user} has connected to Discord!')
+    logger.info(f'Bot is in {len(self.guilds)} guilds')
+    
+    try:
+        synced = await self.tree.sync()
+        logger.info(f"Synced {len(synced)} slash command(s)")
+    except Exception as e:
+        logger.error(f"Failed to sync commands: {e}")
+    
+    try:
+        self.check_rss_feed.start()
+        self.daily_recap_task.start()
+        self.auto_close_predictions_task.start()
+        self.cleanup_context_task.start()  # ADD THIS LINE
+        logger.info("RSS feed monitoring, daily recap, prediction auto-close, and context cleanup tasks started")
+    except Exception as e:
+        logger.error(f"Error starting background tasks: {e}")
     
     def create_content_hash(self, title: str, description: str) -> str:
         """Create a unique hash for content deduplication"""
