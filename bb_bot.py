@@ -4208,7 +4208,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in daily recap task: {e}")
             logger.error(traceback.format_exc())
     
-    @tasks.loop(minutes=30)
+@tasks.loop(minutes=30)
 async def auto_close_predictions_task(self):
     """Auto-close expired predictions every 30 minutes"""
     if self.is_shutting_down:
