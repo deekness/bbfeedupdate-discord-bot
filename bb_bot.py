@@ -2951,9 +2951,9 @@ Be selective - these should be the updates that a superfan would want to know ab
                 title = re.sub(r'^\d{1,2}:\d{2}\s*[-–—]\s*', '', title)
                 
                 time_str = highlight.get('time', 'Time')
-                # Simple fix for duplicate times like "08:10 PM - 08:10 PM PST"
-                if ' - ' in time_str:
-                    time_str = time_str.split(' - ')[-1]  # Take the last part (keeps "08:10 PM PST")
+                # Fix duplicate times like "08:10 PM - 08:10 PM PST" -> "08:10 PM PST"
+                if ' - ' in time_str and time_str.count(':') > 1:
+                    time_str = time_str.split(' - ')[-1]
 
                 
                 if highlight.get('reason') and highlight['reason'].strip():
