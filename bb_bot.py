@@ -2852,33 +2852,33 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-    """Create comprehensive hourly summary from hourly queue"""
-    if not self.hourly_queue:
-        return []
-    
-    embeds = []
-    
-    # DON'T use contextual summarizer for hourly summaries
-    # Use the parent class method to maintain proper formatting
-    if self.llm_client and await self._can_make_llm_request():
-        try:
-            # Call the parent class method directly
-            embeds = await super()._create_llm_hourly_summary()
-        except Exception as e:
-            logger.error(f"LLM hourly summary failed: {e}")
+        """Create comprehensive hourly summary from hourly queue"""
+        if not self.hourly_queue:
+            return []
+        
+        embeds = []
+        
+        # DON'T use contextual summarizer for hourly summaries
+        # Use the parent class method to maintain proper formatting
+        if self.llm_client and await self._can_make_llm_request():
+            try:
+                # Call the parent class method directly
+                embeds = await super()._create_llm_hourly_summary()
+            except Exception as e:
+                logger.error(f"LLM hourly summary failed: {e}")
+                embeds = self._create_pattern_hourly_summary()
+        else:
+            reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
+            logger.info(f"Using pattern hourly summary: {reason}")
             embeds = self._create_pattern_hourly_summary()
-    else:
-        reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
-        logger.info(f"Using pattern hourly summary: {reason}")
-        embeds = self._create_pattern_hourly_summary()
-    
-    # Clear hourly queue after processing
-    processed_count = len(self.hourly_queue)
-    self.hourly_queue.clear()
-    self.last_hourly_summary = datetime.now()
-    
-    logger.info(f"Created hourly summary from {processed_count} updates")
-    return embeds
+        
+        # Clear hourly queue after processing
+        processed_count = len(self.hourly_queue)
+        self.hourly_queue.clear()
+        self.last_hourly_summary = datetime.now()
+        
+        logger.info(f"Created hourly summary from {processed_count} updates")
+        return embeds
     
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
         """Create just highlights using LLM"""
@@ -5341,6 +5341,36 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
+
+    @tasks.loop(hours=24)
+    async def cleanup_context_task(self):
+        """Clean up old context data daily"""
+        if self.is_shutting_down:
+            return
+        
+        try:
+            if hasattr(self.update_batcher, 'contextual_summarizer'):
+                retention_days = self.config.get('context_retention_days', 30)
+                self.update_batcher.contextual_summarizer.clear_old_context(retention_days)
+                logger.info(f"Context cleanup completed - kept last {retention_days} days")
+        except Exception as e:
+            logger.error(f"Error in context cleanup task: {e}")
+
+    @cleanup_context_task.before_loop
+    async def before_cleanup_context_task(self):
+        """Wait for bot to be ready before starting cleanup task"""
+        await self.wait_until_ready()
+
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready before starting daily recap task"""
+        await self.wait_until_ready()
+
+    @check_rss_feed.before_loop  
+    async def before_check_rss_feed(self):
+        """Wait for bot to be ready before starting RSS checks"""
+        await self.wait_until_ready()
+        
 
 # Create bot instance
 bot = BBDiscordBot()
