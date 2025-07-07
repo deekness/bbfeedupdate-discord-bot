@@ -3154,10 +3154,10 @@ Make it engaging and insightful, as if you're explaining to a friend who missed 
     
     def _create_contextual_hourly_embed(self, contextual_summary: str, update_count: int) -> List[discord.Embed]:
         """Create hourly summary embed with contextual summary"""
-        current_hour = datetime.now().strftime("%I %p")
+        current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
         
         embed = discord.Embed(
-            title=f"📊 Hourly Digest - {current_hour}",
+            title=f"🏠 Chen Bot's House Summary - {current_hour}",  # FIXED: New title format
             description=f"**{update_count} updates this hour** • AI Contextual Analysis",
             color=0x9b59b6,
             timestamp=datetime.now()
@@ -3191,16 +3191,16 @@ Make it engaging and insightful, as if you're explaining to a friend who missed 
             except Exception as e:
                 logger.debug(f"Context stats failed: {e}")
         
-        embed.set_footer(text=f"Contextual Hourly Digest • {current_hour} • Narrative AI")
+        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Contextual AI")
         
         return [embed]
     
     def _create_narrative_hourly_embed(self, narrative_summary: str, update_count: int) -> List[discord.Embed]:
         """Create hourly embed with narrative LLM summary"""
-        current_hour = datetime.now().strftime("%I %p")
+        current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
         
         embed = discord.Embed(
-            title=f"📊 Hourly Digest - {current_hour}",
+            embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • AI Narrative")
             description=f"**{update_count} updates this hour** • AI Narrative Analysis",
             color=0x9b59b6,
             timestamp=datetime.now()
@@ -3221,7 +3221,7 @@ Make it engaging and insightful, as if you're explaining to a friend who missed 
                 inline=False
             )
         
-        embed.set_footer(text=f"Hourly Digest • {current_hour} • AI Narrative")
+        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour}")
         
         return [embed]
     
