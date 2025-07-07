@@ -2852,31 +2852,33 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary from hourly queue"""
-        if not self.hourly_queue:
-            return []
-        
-        embeds = []
-        
-        # Use LLM if available and rate limits allow
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                embeds = await self._create_llm_hourly_summary()
-            except Exception as e:
-                logger.error(f"LLM hourly summary failed: {e}")
-                embeds = self._create_pattern_hourly_summary()
-        else:
-            reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
-            logger.info(f"Using pattern hourly summary: {reason}")
+    """Create comprehensive hourly summary from hourly queue"""
+    if not self.hourly_queue:
+        return []
+    
+    embeds = []
+    
+    # DON'T use contextual summarizer for hourly summaries
+    # Use the parent class method to maintain proper formatting
+    if self.llm_client and await self._can_make_llm_request():
+        try:
+            # Call the parent class method directly
+            embeds = await super()._create_llm_hourly_summary()
+        except Exception as e:
+            logger.error(f"LLM hourly summary failed: {e}")
             embeds = self._create_pattern_hourly_summary()
-        
-        # Clear hourly queue after processing
-        processed_count = len(self.hourly_queue)
-        self.hourly_queue.clear()
-        self.last_hourly_summary = datetime.now()
-        
-        logger.info(f"Created hourly summary from {processed_count} updates")
-        return embeds
+    else:
+        reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
+        logger.info(f"Using pattern hourly summary: {reason}")
+        embeds = self._create_pattern_hourly_summary()
+    
+    # Clear hourly queue after processing
+    processed_count = len(self.hourly_queue)
+    self.hourly_queue.clear()
+    self.last_hourly_summary = datetime.now()
+    
+    logger.info(f"Created hourly summary from {processed_count} updates")
+    return embeds
     
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
         """Create just highlights using LLM"""
