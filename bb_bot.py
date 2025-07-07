@@ -3288,48 +3288,48 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
             return self._create_pattern_hourly_summary()
     
     def _create_contextual_hourly_embed(self, contextual_summary: str, update_count: int) -> List[discord.Embed]:
-        """Create hourly summary embed with contextual summary"""
-            pacific_tz = pytz.timezone('US/Pacific')
-            current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
-        
-        embed = discord.Embed(
-            title=f"🏠 Chen Bot's House Summary - {current_hour}",  # FIXED: New title format
-            description=f"**{update_count} updates this hour** • AI Contextual Analysis",
-            color=0x9b59b6,
-            timestamp=datetime.now()
+    """Create hourly summary embed with contextual summary"""
+    pacific_tz = pytz.timezone('US/Pacific')
+    current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
+
+    embed = discord.Embed(
+        title=f"🏠 Chen Bot's House Summary - {current_hour}",  # FIXED: New title format
+        description=f"**{update_count} updates this hour** • AI Contextual Analysis",
+        color=0x9b59b6,
+        timestamp=datetime.now()
+    )
+
+    # Split the contextual summary into manageable parts
+    summary_parts = self._split_summary_for_embed(contextual_summary, max_length=1000)
+
+    for i, part in enumerate(summary_parts):
+        if i == 0:
+            field_name = "🎯 Hour's Narrative"
+        else:
+            field_name = f"🎯 Narrative (Part {i+1})"
+
+        embed.add_field(
+            name=field_name,
+            value=part,
+            inline=False
         )
-        
-        # Split the contextual summary into manageable parts
-        summary_parts = self._split_summary_for_embed(contextual_summary, max_length=1000)
-        
-        for i, part in enumerate(summary_parts):
-            if i == 0:
-                field_name = "🎯 Hour's Narrative"
-            else:
-                field_name = f"🎯 Narrative (Part {i+1})"
-            
+
+    # Add context information
+    if hasattr(self, 'contextual_summarizer'):
+        try:
+            context_stats = self.contextual_summarizer.get_context_stats()
             embed.add_field(
-                name=field_name,
-                value=part,
+                name="🧠 Context Awareness",
+                value=f"Building on {context_stats['recent_summaries_count']} recent summaries\n"
+                      f"Season Day {context_stats['latest_day']} • {context_stats['timeline_events_count']} timeline events",
                 inline=False
             )
-        
-        # Add context information
-        if hasattr(self, 'contextual_summarizer'):
-            try:
-                context_stats = self.contextual_summarizer.get_context_stats()
-                embed.add_field(
-                    name="🧠 Context Awareness",
-                    value=f"Building on {context_stats['recent_summaries_count']} recent summaries\n"
-                          f"Season Day {context_stats['latest_day']} • {context_stats['timeline_events_count']} timeline events",
-                    inline=False
-                )
-            except Exception as e:
-                logger.debug(f"Context stats failed: {e}")
-        
-        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Contextual AI")
-        
-        return [embed]
+        except Exception as e:
+            logger.debug(f"Context stats failed: {e}")
+
+    embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Contextual AI")
+
+    return [embed]
     
     def _create_narrative_hourly_embed(self, narrative_summary: str, update_count: int) -> List[discord.Embed]:
         """Create hourly embed with narrative LLM summary"""
