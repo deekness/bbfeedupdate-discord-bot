@@ -4216,7 +4216,7 @@ class BBDiscordBot(commands.Bot):
             self.last_successful_check = datetime.now()
             self.consecutive_errors = 0
         
-             if new_updates:
+            if new_updates:
                 logger.info(f"Added {len(new_updates)} updates to both batching queues")
                 logger.info(f"Queue status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
             
