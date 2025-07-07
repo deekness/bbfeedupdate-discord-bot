@@ -3162,7 +3162,7 @@ Create a narrative summary that tells the story of this hour in the Big Brother 
 
 Write this as a flowing narrative summary (1-2 paragraphs) that captures the essence of this hour for Big Brother fans. Do Not just list events - tell the story of what happened.
 
-Make it engaging and insightful, as if you're explaining to a friend who missed this hour of feeds."""
+Make it engaging and insightful, as if you are explaining to a friend who missed this hour of feeds."""
 
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
