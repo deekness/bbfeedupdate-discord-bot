@@ -3488,101 +3488,101 @@ async def create_daily_recap(self, daily_updates: List[BBUpdate], day_number: in
         logger.info(f"Created daily recap for Day {day_number} with {len(embeds)} embeds")
         return embeds
     
-    async def _create_contextual_daily_structured_summary(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create contextual daily recap with structured format"""
-        await self.rate_limiter.wait_if_needed()
-        
-        # Temporarily store daily updates in hourly queue for processing
-        temp_queue = self.hourly_queue.copy()
-        self.hourly_queue = daily_updates
-        
-        try:
-            # Get contextual information
-            recent_context = self.contextual_summarizer._build_recent_context()
-            relevant_timeline = self.contextual_summarizer._get_relevant_timeline_events(daily_updates, self.analyzer)
-            relevant_arcs = self.contextual_summarizer._get_relevant_houseguest_arcs(daily_updates, self.analyzer)
-            formatted_updates = self.contextual_summarizer._format_updates(daily_updates)
+        async def _create_contextual_daily_structured_summary(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+            """Create contextual daily recap with structured format"""
+            await self.rate_limiter.wait_if_needed()
             
-            # Build enhanced prompt for daily recap
-            prompt = f"""You are a Big Brother superfan analyst creating a comprehensive DAILY RECAP for Day {day_number}.
-
-RECENT CONTEXT FROM PREVIOUS SUMMARIES:
-{recent_context}
-
-RELEVANT SEASON TIMELINE EVENTS:
-{relevant_timeline}
-
-RELEVANT HOUSEGUEST STORY ARCS:
-{relevant_arcs}
-
-NEW UPDATES TO ANALYZE (Day {day_number}) - IN CHRONOLOGICAL ORDER (earliest first):
-{formatted_updates}
-
-Create a comprehensive daily recap that builds on the existing narrative and shows the complete story of Day {day_number}. Present events chronologically as they happened throughout the day.
-
-Provide your analysis in this EXACT JSON format:
-
-{{
-    "headline": "Compelling headline summarizing Day {day_number}'s biggest story",
-    "strategic_analysis": "Comprehensive analysis of game moves, alliance discussions, targeting decisions, and strategic positioning throughout the day. Only include if there are meaningful strategic developments - otherwise use null.",
-    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes throughout the day. Only include if there are meaningful alliance developments - otherwise use null.",
-    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content from the day. Only include if there are entertaining moments - otherwise use null.",
-    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments from the day. Only include if there are romance-related developments - otherwise use null.",
-    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere changes. Only include if there are meaningful cultural/social developments - otherwise use null.",
-    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "Day", "{day_number}", "developments"],
-    "overall_importance": 8,
-    "importance_explanation": "Brief explanation of why Day {day_number} received this importance score"
-}}
-
-CRITICAL INSTRUCTIONS:
-- This is a DAILY recap - be more comprehensive and analytical than hourly summaries
-- ONLY include sections where there are actual meaningful developments
-- Use null for any section that doesn't have substantial content  
-- Present events chronologically showing how the day progressed
-- Build on established context and reference past events when relevant
-- Key players should be houseguests most central to Day {day_number}'s events
-- Overall importance: 1-3 (quiet day), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
-- Show the progression and evolution throughout the entire day"""
-
-            # Call LLM
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model="claude-3-haiku-20240307",
-                max_tokens=1500,  # More tokens for daily recap
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
+            # Temporarily store daily updates in hourly queue for processing
+            temp_queue = self.hourly_queue.copy()
+            self.hourly_queue = daily_updates
             
-            response_text = response.content[0].text
-            
-            # Parse response
-            analysis_data = self._parse_structured_llm_response(response_text)
-            
-            # Create structured embed
-            embeds = self.contextual_summarizer._create_contextual_summary_embed(
-                analysis_data, len(daily_updates), "daily_recap"
-            )
-            
-            # Store context information
-            summary_text = f"Day {day_number} Headline: {analysis_data.get('headline', 'No headline')}"
-            for key in ['strategic_analysis', 'alliance_dynamics', 'entertainment_highlights', 'showmance_updates', 'house_culture']:
-                content = analysis_data.get(key)
-                if content and content.strip() and content.lower() != 'null':
-                    summary_text += f"\n{key.replace('_', ' ').title()}: {content[:100]}..."
-            
-            await self.contextual_summarizer._store_summary_context(summary_text, "daily_recap", daily_updates, day_number, self.analyzer)
-            await self.contextual_summarizer._extract_and_store_timeline_events(summary_text, daily_updates, day_number, self.analyzer)
-            await self.contextual_summarizer._update_houseguest_arcs(summary_text, daily_updates, self.analyzer)
-            
-            logger.info(f"Created contextual structured daily recap for Day {day_number}")
-            return embeds
-            
-        except Exception as e:
-            logger.error(f"Failed to create contextual daily recap: {e}")
-            return self._create_pattern_daily_recap(daily_updates, day_number)
-        finally:
-            # Restore original hourly queue
-            self.hourly_queue = temp_queue
+            try:
+                # Get contextual information
+                recent_context = self.contextual_summarizer._build_recent_context()
+                relevant_timeline = self.contextual_summarizer._get_relevant_timeline_events(daily_updates, self.analyzer)
+                relevant_arcs = self.contextual_summarizer._get_relevant_houseguest_arcs(daily_updates, self.analyzer)
+                formatted_updates = self.contextual_summarizer._format_updates(daily_updates)
+                
+                # Build enhanced prompt for daily recap
+                prompt = f"""You are a Big Brother superfan analyst creating a comprehensive DAILY RECAP for Day {day_number}.
+    
+    RECENT CONTEXT FROM PREVIOUS SUMMARIES:
+    {recent_context}
+    
+    RELEVANT SEASON TIMELINE EVENTS:
+    {relevant_timeline}
+    
+    RELEVANT HOUSEGUEST STORY ARCS:
+    {relevant_arcs}
+    
+    NEW UPDATES TO ANALYZE (Day {day_number}) - IN CHRONOLOGICAL ORDER (earliest first):
+    {formatted_updates}
+    
+    Create a comprehensive daily recap that builds on the existing narrative and shows the complete story of Day {day_number}. Present events chronologically as they happened throughout the day.
+    
+    Provide your analysis in this EXACT JSON format:
+    
+    {{
+        "headline": "Compelling headline summarizing Day {day_number}'s biggest story",
+        "strategic_analysis": "Comprehensive analysis of game moves, alliance discussions, targeting decisions, and strategic positioning throughout the day. Only include if there are meaningful strategic developments - otherwise use null.",
+        "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes throughout the day. Only include if there are meaningful alliance developments - otherwise use null.",
+        "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content from the day. Only include if there are entertaining moments - otherwise use null.",
+        "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments from the day. Only include if there are romance-related developments - otherwise use null.",
+        "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere changes. Only include if there are meaningful cultural/social developments - otherwise use null.",
+        "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "Day", "{day_number}", "developments"],
+        "overall_importance": 8,
+        "importance_explanation": "Brief explanation of why Day {day_number} received this importance score"
+    }}
+    
+    CRITICAL INSTRUCTIONS:
+    - This is a DAILY recap - be more comprehensive and analytical than hourly summaries
+    - ONLY include sections where there are actual meaningful developments
+    - Use null for any section that doesn't have substantial content  
+    - Present events chronologically showing how the day progressed
+    - Build on established context and reference past events when relevant
+    - Key players should be houseguests most central to Day {day_number}'s events
+    - Overall importance: 1-3 (quiet day), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+    - Show the progression and evolution throughout the entire day"""
+    
+                # Call LLM
+                response = await asyncio.to_thread(
+                    self.llm_client.messages.create,
+                    model="claude-3-haiku-20240307",
+                    max_tokens=1500,  # More tokens for daily recap
+                    temperature=0.3,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                
+                response_text = response.content[0].text
+                
+                # Parse response
+                analysis_data = self._parse_structured_llm_response(response_text)
+                
+                # Create structured embed
+                embeds = self.contextual_summarizer._create_contextual_summary_embed(
+                    analysis_data, len(daily_updates), "daily_recap"
+                )
+                
+                # Store context information
+                summary_text = f"Day {day_number} Headline: {analysis_data.get('headline', 'No headline')}"
+                for key in ['strategic_analysis', 'alliance_dynamics', 'entertainment_highlights', 'showmance_updates', 'house_culture']:
+                    content = analysis_data.get(key)
+                    if content and content.strip() and content.lower() != 'null':
+                        summary_text += f"\n{key.replace('_', ' ').title()}: {content[:100]}..."
+                
+                await self.contextual_summarizer._store_summary_context(summary_text, "daily_recap", daily_updates, day_number, self.analyzer)
+                await self.contextual_summarizer._extract_and_store_timeline_events(summary_text, daily_updates, day_number, self.analyzer)
+                await self.contextual_summarizer._update_houseguest_arcs(summary_text, daily_updates, self.analyzer)
+                
+                logger.info(f"Created contextual structured daily recap for Day {day_number}")
+                return embeds
+                
+            except Exception as e:
+                logger.error(f"Failed to create contextual daily recap: {e}")
+                return self._create_pattern_daily_recap(daily_updates, day_number)
+            finally:
+                # Restore original hourly queue
+                self.hourly_queue = temp_queue
 
 def _create_contextual_daily_embed(self, contextual_summary: str, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
     """Create daily recap embed with contextual summary"""
