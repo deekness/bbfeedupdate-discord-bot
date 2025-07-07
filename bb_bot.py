@@ -860,17 +860,22 @@ class ContextualSummarizer:
         return "\n".join(relevant_arcs)
     
     def _format_updates(self, updates: List[BBUpdate]) -> str:
-        """Format updates for the prompt"""
-        formatted = []
-        for i, update in enumerate(updates, 1):
-            time_str = update.pub_date.strftime("%I:%M %p") if update.pub_date else "Unknown time"
-            formatted.append(f"{i}. {time_str} - {update.title}")
-            if update.description and update.description != update.title:
-                # Truncate long descriptions
-                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
-                formatted.append(f"   {desc}")
-        
-        return "\n".join(formatted)
+    """Format updates for the prompt in chronological order"""
+    # FIXED: Sort updates chronologically before formatting
+    sorted_updates = sorted(updates, key=lambda x: x.pub_date)
+    
+    formatted = []
+    for i, update in enumerate(sorted_updates, 1):
+        time_str = update.pub_date.strftime("%I:%M %p") if update.pub_date else "Unknown time"
+        # Remove leading zero from time
+        time_str = time_str.lstrip('0')
+        formatted.append(f"{i}. {time_str} - {update.title}")
+        if update.description and update.description != update.title:
+            # Truncate long descriptions
+            desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+            formatted.append(f"   {desc}")
+    
+    return "\n".join(formatted)
     
     def _calculate_current_day(self) -> int:
         """Calculate current day number of the season"""
@@ -895,7 +900,7 @@ RELEVANT SEASON TIMELINE EVENTS:
 RELEVANT HOUSEGUEST STORY ARCS:
 {relevant_arcs}
 
-NEW UPDATES TO ANALYZE (Day {current_day}):
+NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
 {formatted_updates}
 
 Create a comprehensive summary that:
@@ -905,6 +910,7 @@ Create a comprehensive summary that:
 4. Maintains continuity with the established season narrative
 5. Highlights any significant shifts or developments in ongoing stories
 
+CRITICAL: Present events in chronological order as they actually happened. Do NOT reverse the timeline or put the most recent events first. Tell the story as it unfolded from earliest to latest.
 Focus on both strategic gameplay and social dynamics, ensuring the summary flows naturally from the established context while highlighting what's new and significant about these particular updates."""
 
         return prompt
@@ -3105,9 +3111,13 @@ class EnhancedUpdateBatcher(UpdateBatcher):
         try:
             await self.rate_limiter.wait_if_needed()
             
-            # Prepare update data
+            # FIXED: Sort updates chronologically before processing
+            # Sort by pub_date to ensure chronological order (earliest first)
+            sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
+
+            # Prepare update data in chronological order
             updates_data = []
-            for update in self.hourly_queue:
+            for update in sorted_updates:
                 time_str = self._extract_correct_time(update)
                 updates_data.append({
                     'time': time_str,
@@ -3122,7 +3132,24 @@ class EnhancedUpdateBatcher(UpdateBatcher):
             
             prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
 
-Analyze these {len(self.hourly_queue)} updates from the past hour:
+Analyze these {len(self.hourly_queue)} updates from the past hour in CHRONOLOGICAL ORDER (earliest to latest):
+
+{updates_text}
+
+Create a narrative summary that tells the story of this hour in the Big Brother house. IMPORTANT: Present events in the order they happened (chronological order), not in reverse order.
+
+Focus on:
+
+1. **Major Developments**: What were the most significant events as they unfolded?
+2. **Strategic Gameplay**: Any alliance talk, targeting, or game moves?
+3. **Social Dynamics**: Relationship developments, conflicts, or bonding moments?
+4. **Entertainment Value**: Funny moments, drama, or memorable interactions?
+
+Write this as a flowing narrative summary (2-3 paragraphs) that captures the essence of this hour for Big Brother fans. Tell the story chronologically - what happened first, then what happened next, etc.
+
+CRITICAL: Present events in chronological order (earliest first, latest last). Do NOT reverse the timeline.
+
+Make it engaging and insightful, as if you're explaining to a friend who missed this hour of feeds, walking them through the events as they actually happened."""
 
 {updates_text}
 
@@ -3200,7 +3227,7 @@ Make it engaging and insightful, as if you're explaining to a friend who missed 
         current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
         
         embed = discord.Embed(
-            embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • AI Narrative")
+            embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} ")
             description=f"**{update_count} updates this hour** • AI Narrative Analysis",
             color=0x9b59b6,
             timestamp=datetime.now()
@@ -3236,11 +3263,11 @@ Make it engaging and insightful, as if you're explaining to a friend who missed 
             for category in update_categories:
                 categories[category].append(update)
         
-        current_hour = datetime.now().strftime("%I %p")
+        current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
         
         embed = discord.Embed(
-            title=f"📊 Hourly Digest - {current_hour}",
-            description=f"**{len(self.hourly_queue)} updates this hour** • Pattern Analysis",
+            title=f"🏠 Chen Bot's House Summary - {current_hour}",  # FIXED: New title format
+            description=f"**{len(self.hourly_queue)} updates this hour**",
             color=0x95a5a6,  # Gray for pattern-based
             timestamp=datetime.now()
         )
@@ -3286,7 +3313,7 @@ Make it engaging and insightful, as if you're explaining to a friend who missed 
             inline=False
         )
         
-        embed.set_footer(text=f"Hourly Digest • {current_hour} • Pattern Analysis (LLM Unavailable)")
+        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} ")
         
         return [embed]
     
