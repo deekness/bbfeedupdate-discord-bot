@@ -340,6 +340,7 @@ BB_HOUSEGUESTS = [
     "Angela", "Brooklyn", "Cam", "Cedric", "Chelsie", "Joseph", "Kimo", 
     "Leah", "Makensy", "Quinn", "Rubina", "T'Kor", "Tucker"
 ]
+
 # Configure comprehensive logging
 def setup_logging():
     """Setup comprehensive logging for 24/7 operation"""
@@ -556,103 +557,6 @@ class RateLimiter:
             'minute_limit': self.max_requests_per_minute,
             'hour_limit': self.max_requests_per_hour
         }
-
-import asyncio
-import json
-import logging
-from collections import deque
-from datetime import datetime, timedelta
-from typing import List, Dict, Set, Optional
-import sqlite3
-from dataclasses import dataclass
-
-logger = logging.getLogger(__name__)
-
-@dataclass
-class TimelineEvent:
-    """Represents a significant event in the season timeline"""
-    day: int
-    timestamp: datetime
-    event_type: str  # 'competition', 'eviction', 'alliance', 'drama', 'twist'
-    description: str
-    houseguests_involved: List[str]
-    importance_score: int  # 1-10
-    summary_source: str  # Which summary this came from
-
-
-class Config:
-    """Enhanced configuration management with validation"""
-    
-    def __init__(self):
-        self.config_file = Path("config.json")
-        self.config = self._load_config()
-        self._validate_config()
-    
-    def _load_config(self) -> dict:
-        """Load configuration with better validation"""
-        config = DEFAULT_CONFIG.copy()
-        
-        # Environment variables (priority 1)
-        for env_var, config_key in ENV_MAPPINGS.items():
-            env_value = os.getenv(env_var)
-            if env_value:
-                config[config_key] = self._convert_env_value(config_key, env_value)
-        
-        # Config file (priority 2)
-        if self.config_file.exists():
-            try:
-                with open(self.config_file, 'r') as f:
-                    file_config = json.load(f)
-                    # Only use file config for missing env vars
-                    for key, value in file_config.items():
-                        if key in config and not os.getenv(key.upper()):
-                            config[key] = value
-            except Exception as e:
-                logger.error(f"Error loading config file: {e}")
-        
-        return config
-    
-    def _convert_env_value(self, config_key: str, env_value: str):
-        """Convert environment variable to proper type"""
-        if config_key == 'update_channel_id':
-            try:
-                return int(env_value) if env_value != '0' else None
-            except ValueError:
-                logger.warning(f"Invalid channel ID: {env_value}")
-                return None
-        elif config_key in ['rss_check_interval', 'max_retries', 'retry_delay', 'owner_id',
-                           'llm_requests_per_minute', 'llm_requests_per_hour', 'max_processed_hashes']:
-            try:
-                return int(env_value)
-            except ValueError:
-                logger.warning(f"Invalid integer for {config_key}: {env_value}")
-                return DEFAULT_CONFIG.get(config_key, 0)
-        elif config_key in ['enable_heartbeat', 'enable_llm_summaries']:
-            return env_value.lower() == 'true'
-        else:
-            return env_value
-    
-    def _validate_config(self):
-        """Validate critical configuration values"""
-        if not self.config.get('bot_token'):
-            raise ValueError("BOT_TOKEN is required")
-        
-        # Validate rate limiting settings
-        if self.config.get('llm_requests_per_minute', 0) <= 0:
-            self.config['llm_requests_per_minute'] = DEFAULT_CONFIG['llm_requests_per_minute']
-        
-        if self.config.get('llm_requests_per_hour', 0) <= 0:
-            self.config['llm_requests_per_hour'] = DEFAULT_CONFIG['llm_requests_per_hour']
-        
-        logger.info("Configuration validated successfully")
-    
-    def get(self, key: str, default=None):
-        """Get configuration value"""
-        return self.config.get(key, default)
-    
-    def set(self, key: str, value):
-        """Set configuration value"""
-        self.config[key] = value
 
 @dataclass
 class BBUpdate:
@@ -1027,8 +931,8 @@ Focus on both strategic gameplay and social dynamics, ensuring the summary flows
                     
                     # Extract keywords (you might want to enhance this)
                     content = (update.title + " " + update.description).lower()
-                    for keyword_list in [analyzer.COMPETITION_KEYWORDS, analyzer.STRATEGY_KEYWORDS, 
-                                        analyzer.DRAMA_KEYWORDS, analyzer.RELATIONSHIP_KEYWORDS]:
+                    for keyword_list in [COMPETITION_KEYWORDS, STRATEGY_KEYWORDS, 
+                                        DRAMA_KEYWORDS, RELATIONSHIP_KEYWORDS]:
                         keywords.update([kw for kw in keyword_list if kw in content])
             
             # Calculate importance score
@@ -2729,7 +2633,7 @@ class PredictionManager:
 class UpdateBatcher:
     """Enhanced batching system with dual rhythms - Highlights + Hourly Summary"""
     
-    def __init__(self, analyzer: BBAnalyzer, config: Config):
+    def __init__(self, analyzer: BBAnalyzer, config):
         self.analyzer = analyzer
         self.config = config
         
@@ -2851,35 +2755,6 @@ class UpdateBatcher:
         logger.info(f"Created highlights batch from {processed_count} updates")
         return embeds
     
-    async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary from hourly queue"""
-        if not self.hourly_queue:
-            return []
-        
-        embeds = []
-        
-        # DON'T use contextual summarizer for hourly summaries
-        # Use the parent class method to maintain proper formatting
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                # Call the parent class method directly
-                embeds = await super()._create_llm_hourly_summary()
-            except Exception as e:
-                logger.error(f"LLM hourly summary failed: {e}")
-                embeds = self._create_pattern_hourly_summary()
-        else:
-            reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
-            logger.info(f"Using pattern hourly summary: {reason}")
-            embeds = self._create_pattern_hourly_summary()
-        
-        # Clear hourly queue after processing
-        processed_count = len(self.hourly_queue)
-        self.hourly_queue.clear()
-        self.last_hourly_summary = datetime.now()
-        
-        logger.info(f"Created hourly summary from {processed_count} updates")
-        return embeds
-    
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
         """Create just highlights using LLM"""
         await self.rate_limiter.wait_if_needed()
@@ -2974,20 +2849,6 @@ Be selective - these should be the updates that a superfan would want to know ab
                         value=title,
                         inline=False
                     )
-
-                
-                if highlight.get('reason') and highlight['reason'].strip():
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
-                        value=f"{title}\n*{highlight['reason']}*",
-                        inline=False
-                    )
-                else:
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
-                        value=title,
-                        inline=False
-                    )
             
             # FIXED: Better footer text
             embed.set_footer(text=f"Chen Bot's Highlights • {len(self.highlights_queue)} updates processed")
@@ -2996,60 +2857,6 @@ Be selective - these should be the updates that a superfan would want to know ab
         except Exception as e:
             logger.error(f"Failed to parse highlights response: {e}")
             return [self._create_pattern_highlights_embed()]
-    
-    async def _create_llm_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary using LLM"""
-        await self.rate_limiter.wait_if_needed()
-        
-        # Prepare update data
-        updates_data = []
-        for update in self.hourly_queue:
-            time_str = self._extract_correct_time(update)
-            updates_data.append({
-                'time': time_str,
-                'title': update.title,
-                'description': update.description[:200] if update.description != update.title else ""
-            })
-        
-        updates_text = "\n".join([
-            f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
-            for u in updates_data
-        ])
-        
-        prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
-
-Analyze these {len(self.hourly_queue)} updates from the past hour:
-
-{updates_text}
-
-Provide a thorough analysis covering both strategic and social aspects:
-
-{{
-    "headline": "Compelling headline that captures the hour's most significant development",
-    "summary": "4-5 sentence summary of the hour's key developments and overall narrative",
-    "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning, voting plans",
-    "social_dynamics": "Alliance formations, shifts, trust levels, betrayals, strategic partnerships",
-    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes",
-    "key_players": ["houseguests", "involved", "in", "major", "moments"],
-    "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
-    "strategic_importance": 7,
-    "house_culture": "Inside jokes, routines, traditions, or quirky moments from this hour",
-    "relationship_updates": "Showmance developments, romantic connections, relationship changes"
-}}
-
-This is an HOURLY DIGEST so be comprehensive and analytical."""
-
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=1500,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Parse response and create embed
-        analysis = self._parse_llm_response(response.content[0].text)
-        return self._create_hourly_summary_embed(analysis, len(self.hourly_queue))
     
     def _parse_llm_response(self, response_text: str) -> dict:
         """Parse LLM response with fallback handling"""
@@ -3088,106 +2895,6 @@ This is an HOURLY DIGEST so be comprehensive and analytical."""
             logger.debug(f"Text parsing error: {e}")
         
         return analysis
-    
-    def _create_hourly_summary_embed(self, analysis: dict, update_count: int) -> List[discord.Embed]:
-        """Create hourly summary embed"""
-        current_hour = datetime.now().strftime("%I %p")
-        
-        embed = discord.Embed(
-            title=f"📊 Hourly Digest - {current_hour}",
-            description=f"**{update_count} updates this hour** • {analysis.get('headline', 'Hourly Summary')}\n\n{analysis.get('summary', 'Summary not available')}",
-            color=0x9b59b6,  # Purple for hourly summaries
-            timestamp=datetime.now()
-        )
-        
-        # Add comprehensive sections
-        if analysis.get('strategic_analysis'):
-            embed.add_field(
-                name="🎯 Strategic Developments",
-                value=analysis['strategic_analysis'],
-                inline=False
-            )
-        
-        if analysis.get('social_dynamics'):
-            embed.add_field(
-                name="🤝 Alliance & Social Dynamics",
-                value=analysis['social_dynamics'],
-                inline=False
-            )
-        
-        if analysis.get('entertainment_highlights'):
-            embed.add_field(
-                name="🎬 Entertainment & Drama",
-                value=analysis['entertainment_highlights'],
-                inline=False
-            )
-        
-        if analysis.get('relationship_updates'):
-            embed.add_field(
-                name="💕 Showmance Updates",
-                value=analysis['relationship_updates'],
-                inline=False
-            )
-        
-        if analysis.get('house_culture'):
-            embed.add_field(
-                name="🏠 House Culture",
-                value=analysis['house_culture'],
-                inline=False
-            )
-        
-        # Add key players and importance
-        if analysis.get('key_players'):
-            players = analysis['key_players'][:8]
-            embed.add_field(
-                name="⭐ Key Players This Hour",
-                value=" • ".join(players),
-                inline=False
-            )
-        
-        importance = analysis.get('strategic_importance', 5)
-        importance_bar = "🔥" * min(importance, 10)
-        embed.add_field(
-            name="📈 Hour Importance",
-            value=f"{importance_bar} {importance}/10",
-            inline=True
-        )
-        
-        embed.set_footer(text=f"Hourly Digest • {current_hour} • Chen Bot Analysis")
-        
-        return [embed]
-    
-    def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
-        """Create pattern-based hourly summary when LLM unavailable"""
-        # Group updates by categories
-        categories = defaultdict(list)
-        for update in self.hourly_queue:
-            update_categories = self.analyzer.categorize_update(update)
-            for category in update_categories:
-                categories[category].append(update)
-        
-        current_hour = datetime.now().strftime("%I %p")
-        
-        embed = discord.Embed(
-            title=f"📊 Hourly Digest - {current_hour}",
-            description=f"**{len(self.hourly_queue)} updates this hour** • Pattern-based analysis",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Add top categories
-        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True)[:5]:
-            if updates:
-                top_update = max(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x))
-                embed.add_field(
-                    name=f"{category} ({len(updates)} updates)",
-                    value=f"• {top_update.title[:100]}..." if len(top_update.title) > 100 else f"• {top_update.title}",
-                    inline=False
-                )
-        
-        embed.set_footer(text=f"Hourly Digest • {current_hour} • Pattern Analysis")
-        
-        return [embed]
     
     def _create_pattern_highlights_embed(self) -> discord.Embed:
         """Create highlights embed using pattern matching when LLM unavailable"""
@@ -3270,562 +2977,6 @@ This is an HOURLY DIGEST so be comprehensive and analytical."""
         """Get current rate limiting statistics"""
         return self.rate_limiter.get_stats()
     
-    # Keep the daily recap methods from the original class
-    async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create a comprehensive daily recap from all updates"""
-        if not updates:
-            return []
-        
-        logger.info(f"Creating daily recap for {len(updates)} updates")
-        
-        # Check if we need to chunk the updates (too many for single LLM call)
-        if len(updates) > 50:
-            return await self._create_chunked_daily_recap(updates, day_number)
-        else:
-            return await self._create_single_daily_recap(updates, day_number)
-    
-    async def _create_single_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create daily recap from manageable number of updates"""
-        if not self.llm_client or not await self._can_make_llm_request():
-            return self._create_pattern_daily_recap(updates, day_number)
-        
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            # Prepare chronological update data
-            updates_data = []
-            for update in updates:
-                time_str = self._extract_correct_time(update)
-                updates_data.append({
-                    'time': time_str,
-                    'title': update.title,
-                    'description': update.description[:150] if update.description != update.title else ""
-                })
-            
-            # Create daily recap prompt
-            prompt = f"""You are the ultimate Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
-
-Analyze these {len(updates)} updates from the entire day (chronological order):
-
-{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
-
-Create a comprehensive daily recap that tells the story of Day {day_number}:
-
-{{
-    "headline": "Day {day_number} headline capturing the most significant storyline",
-    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
-    "strategic_analysis": "Strategic developments - key conversations, alliance shifts, target changes, power dynamics",
-    "social_dynamics": "Alliance formations, trust shifts, betrayals, strategic partnerships throughout the day",
-    "entertainment_highlights": "Memorable moments, drama, funny interactions, personality conflicts from the day",
-    "key_players": ["houseguests", "who", "were", "central", "to", "the", "day"],
-    "strategic_importance": 8,
-    "house_culture": "Daily routines, inside jokes, traditions, or cultural moments that defined the day",
-    "relationship_updates": "Showmance developments, romantic moments, or relationship changes",
-    "day_timeline": "Brief chronological overview of how the day unfolded from morning to night"
-}}
-
-Focus on creating a comprehensive daily story that captures the full arc of Day {day_number}. This should read like a daily diary entry for superfans."""
-
-            # Make LLM request
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=1500,  # Longer for daily recap
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse response
-            analysis = self._parse_llm_response(response.content[0].text)
-            
-            # Create daily recap embed
-            return self._create_daily_recap_embed(analysis, day_number, len(updates))
-            
-        except Exception as e:
-            logger.error(f"Daily recap LLM failed: {e}")
-            return self._create_pattern_daily_recap(updates, day_number)
-    
-    async def _create_chunked_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create daily recap by summarizing in chunks first"""
-        chunk_size = 25
-        chunks = [updates[i:i + chunk_size] for i in range(0, len(updates), chunk_size)]
-        
-        logger.info(f"Creating chunked daily recap: {len(chunks)} chunks of ~{chunk_size} updates each")
-        
-        # First pass: summarize each chunk
-        chunk_summaries = []
-        for i, chunk in enumerate(chunks):
-            if not await self._can_make_llm_request():
-                # Fall back to pattern analysis if rate limited
-                summary = self._summarize_chunk_pattern(chunk, i + 1)
-            else:
-                summary = await self._summarize_chunk_llm(chunk, i + 1)
-            
-            chunk_summaries.append(summary)
-        
-        # Second pass: create final daily recap from summaries
-        return await self._create_final_daily_recap(chunk_summaries, day_number, len(updates))
-    
-    async def _summarize_chunk_llm(self, chunk: List[BBUpdate], chunk_number: int) -> str:
-        """Summarize a chunk of updates using LLM"""
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            updates_text = "\n".join([
-                f"{self._extract_correct_time(u)} - {u.title}"
-                for u in chunk
-            ])
-            
-            prompt = f"""Summarize this chunk of Big Brother updates (Chunk {chunk_number}):
-
-{updates_text}
-
-Provide a 2-3 sentence summary capturing the key strategic and social developments in this time period. Focus on the most important events and conversations."""
-
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=200,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            return f"**Chunk {chunk_number}**: {response.content[0].text}"
-            
-        except Exception as e:
-            logger.error(f"Chunk summarization failed: {e}")
-            return self._summarize_chunk_pattern(chunk, chunk_number)
-    
-    def _summarize_chunk_pattern(self, chunk: List[BBUpdate], chunk_number: int) -> str:
-        """Summarize a chunk using pattern matching"""
-        # Group by importance and pick top updates
-        important_updates = sorted(
-            chunk, 
-            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-            reverse=True
-        )[:3]
-        
-        titles = [u.title[:60] + "..." if len(u.title) > 60 else u.title for u in important_updates]
-        return f"**Chunk {chunk_number}**: {' • '.join(titles)}"
-    
-    async def _create_final_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
-        """Create final daily recap from chunk summaries"""
-        if not self.llm_client or not await self._can_make_llm_request():
-            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
-        
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            summaries_text = "\n\n".join(chunk_summaries)
-            
-            prompt = f"""Create a comprehensive Day {day_number} recap from these chunk summaries:
-
-{summaries_text}
-
-Create a daily recap that tells the story of Day {day_number} from these summaries:
-
-{{
-    "headline": "Day {day_number} headline capturing the most significant storyline",
-    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
-    "strategic_analysis": "Strategic developments throughout the day",
-    "social_dynamics": "Alliance and relationship dynamics",
-    "entertainment_highlights": "Memorable moments and drama",
-    "key_players": ["main", "houseguests", "from", "the", "day"],
-    "strategic_importance": 8,
-    "house_culture": "Daily culture and routine moments",
-    "relationship_updates": "Showmance and relationship developments",
-    "day_timeline": "How the day unfolded chronologically"
-}}
-
-Focus on creating a cohesive daily story from these summaries."""
-
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=1200,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            analysis = self._parse_llm_response(response.content[0].text)
-            return self._create_daily_recap_embed(analysis, day_number, total_updates)
-            
-        except Exception as e:
-            logger.error(f"Final daily recap failed: {e}")
-            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
-    
-    def _create_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int) -> List[discord.Embed]:
-        """Create the daily recap embed"""
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Recap",
-            description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('summary', 'Daily summary not available')}",
-            color=0x9b59b6,  # Purple for daily recaps
-            timestamp=datetime.now()
-        )
-        
-        # Add timeline if available
-        if analysis.get('day_timeline'):
-            embed.add_field(
-                name="📖 Day Timeline",
-                value=analysis['day_timeline'],
-                inline=False
-            )
-        
-        # Add strategic analysis
-        if analysis.get('strategic_analysis'):
-            embed.add_field(
-                name="🎯 Strategic Developments",
-                value=analysis['strategic_analysis'],
-                inline=False
-            )
-        
-        # Add other sections
-        if analysis.get('social_dynamics'):
-            embed.add_field(
-                name="🤝 Alliance Dynamics",
-                value=analysis['social_dynamics'],
-                inline=False
-            )
-        
-        if analysis.get('entertainment_highlights'):
-            embed.add_field(
-                name="🎬 Day Highlights",
-                value=analysis['entertainment_highlights'],
-                inline=False
-            )
-        
-        if analysis.get('relationship_updates'):
-            embed.add_field(
-                name="💕 Showmance Updates",
-                value=analysis['relationship_updates'],
-                inline=False
-            )
-        
-        if analysis.get('house_culture'):
-            embed.add_field(
-                name="🏠 House Culture",
-                value=analysis['house_culture'],
-                inline=False
-            )
-        
-        # Add key players
-        if analysis.get('key_players'):
-            players = analysis['key_players'][:8]
-            embed.add_field(
-                name="⭐ Key Players of the Day",
-                value=" • ".join(players),
-                inline=False
-            )
-        
-        # Add importance
-        importance = analysis.get('strategic_importance', 5)
-        importance_bar = "🔥" * min(importance, 10)
-        embed.add_field(
-            name="📊 Day Importance",
-            value=f"{importance_bar} {importance}/10",
-            inline=True
-        )
-        
-        embed.set_footer(text=f"Daily Recap • Day {day_number} • BB Superfan AI")
-        
-        return [embed]
-    
-    def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create daily recap using pattern matching"""
-        # Analyze updates by importance
-        important_updates = sorted(
-            updates, 
-            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-            reverse=True
-        )[:10]  # Top 10 most important
-        
-        # Group by categories
-        categories = defaultdict(list)
-        for update in important_updates:
-            update_categories = self.analyzer.categorize_update(update)
-            for category in update_categories:
-                categories[category].append(update)
-        
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Recap",
-            description=f"**{len(updates)} updates** • Pattern-based daily summary",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Add top moments
-        top_moments = []
-        for update in important_updates[:5]:
-            time_str = self._extract_correct_time(update)
-            title = update.title[:80] + "..." if len(update.title) > 80 else update.title
-            top_moments.append(f"**{time_str}**: {title}")
-        
-        if top_moments:
-            embed.add_field(
-                name="🎯 Top Moments of the Day",
-                value="\n".join(top_moments),
-                inline=False
-            )
-        
-        # Add categories
-        for category, cat_updates in categories.items():
-            if cat_updates:
-                summary = f"{len(cat_updates)} updates in this category"
-                embed.add_field(
-                    name=f"{category}",
-                    value=summary,
-                    inline=True
-                )
-        
-        embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
-        
-        return [embed]
-    
-    def _create_pattern_daily_recap_from_summaries(self, summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
-        """Create pattern-based daily recap from summaries"""
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Recap",
-            description=f"**{total_updates} updates** • Chunked summary analysis",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Add chunk summaries
-        summary_text = "\n\n".join(summaries)
-        if len(summary_text) > 1000:
-            summary_text = summary_text[:997] + "..."
-        
-        embed.add_field(
-            name="📝 Daily Summary",
-            value=summary_text,
-            inline=False
-        )
-        
-        embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
-        
-        return [embed]
-
-class EnhancedUpdateBatcher(UpdateBatcher):
-    """Enhanced UpdateBatcher with contextual summary capabilities"""
-    
-    def __init__(self, analyzer: BBAnalyzer, config: Config):
-        super().__init__(analyzer, config)
-        
-        # Initialize the contextual summarizer
-        db_path = config.get('database_path', 'bb_updates.db')
-        self.contextual_summarizer = ContextualSummarizer(
-            db_path=db_path,
-            max_context_length=config.get('max_context_length', 10000)
-        )
-        
-        # Check if contextual summaries are enabled
-        self.contextual_enabled = config.get('enable_contextual_summaries', True)
-        
-        logger.info(f"Enhanced UpdateBatcher initialized - Contextual: {'Enabled' if self.contextual_enabled else 'Disabled'}")
-    
-    async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-        """Create highlights using contextual LLM analysis"""
-        if not self.llm_client:
-            return [self._create_pattern_highlights_embed()]
-        
-        # For highlights, we want to use the ORIGINAL method but with context awareness
-        # Don't use the narrative summarizer for highlights
-        
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            # Get context for better selection, but don't use the narrative summarizer
-            context_info = ""
-            if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
-                try:
-                    context_stats = self.contextual_summarizer.get_context_stats()
-                    if context_stats['recent_summaries_count'] > 0:
-                        # Get a brief context to help with selection
-                        recent_context = list(self.contextual_summarizer.recent_context)[-2:]  # Last 2 summaries
-                        context_info = f"\n\nCONTEXT: Recent significant events include: {' '.join([s[:100] + '...' for s in recent_context])}"
-                except Exception as e:
-                    logger.debug(f"Context retrieval failed: {e}")
-            
-            # Prepare update data (SAME AS ORIGINAL)
-            updates_text = "\n".join([
-                f"{self._extract_correct_time(u)} - {u.title}"
-                for u in self.highlights_queue
-            ])
-            
-            # Enhanced prompt with optional context
-            prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.{context_info}
-
-{updates_text}
-
-Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-
-HIGHLIGHT-WORTHY updates include:
-- Competition wins (HOH, POV, etc.)
-- Major strategic moves or betrayals
-- Dramatic fights or confrontations  
-- Romantic moments (first kiss, breakup, etc.)
-- Hilarious or memorable incidents
-- Game-changing twists revealed
-- Eviction results or surprise votes
-- Alliance formations or breaks
-
-For each selected update, provide:
-{{
-    "highlights": [
-        {{
-            "time": "exact time from update",
-            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
-            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-        }}
-    ]
-}}
-
-Be selective - these should be the updates that a superfan would want to know about from this batch."""
-
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=800,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse and create embed (SAME AS ORIGINAL)
-            try:
-                highlights_data = self._parse_llm_response(response.content[0].text)
-                
-                if not highlights_data.get('highlights'):
-                    logger.warning("No highlights in LLM response, using pattern fallback")
-                    return [self._create_pattern_highlights_embed()]
-                
-                embed = discord.Embed(
-                    title="🎯 Feed Highlights - What Just Happened",
-                    description=f"Key moments from the last {len(self.highlights_queue)} updates",
-                    color=0xe74c3c,
-                    timestamp=datetime.now()
-                )
-                
-                # Add context indicator if available
-                if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
-                    try:
-                        context_stats = self.contextual_summarizer.get_context_stats()
-                        if context_stats['recent_summaries_count'] > 0:
-                            embed.description += f" • Building on season narrative"
-                    except:
-                        pass
-                
-                for highlight in highlights_data['highlights'][:10]:
-                    title = highlight.get('title', 'Update')
-                    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-                    
-                    if highlight.get('reason') and highlight['reason'].strip():
-                        embed.add_field(
-                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                            value=f"{title}\n*{highlight['reason']}*",
-                            inline=False
-                        )
-                    else:
-                        embed.add_field(
-                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                            value=title,
-                            inline=False
-                        )
-                
-                # Enhanced footer
-                footer_text = f"Chen Bot's Highlights • {len(self.highlights_queue)} updates processed"
-                if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
-                    try:
-                        context_stats = self.contextual_summarizer.get_context_stats()
-                        footer_text += f" • Day {context_stats['latest_day']}"
-                    except:
-                        pass
-                
-                embed.set_footer(text=footer_text)
-                return [embed]
-                
-            except Exception as e:
-                logger.error(f"Failed to parse highlights response: {e}")
-                return [self._create_pattern_highlights_embed()]
-                
-        except Exception as e:
-            logger.error(f"Contextual highlights failed: {e}")
-            # Fallback to original method
-            return await super()._create_llm_highlights_only()
-    
-    async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create contextual daily recap"""
-        if not updates:
-            return []
-        
-        logger.info(f"Creating contextual daily recap for {len(updates)} updates")
-        
-        try:
-            # Use contextual summarizer for daily recap if enabled
-            if self.llm_client and self.contextual_enabled:
-                contextual_summary = await self.contextual_summarizer.create_contextual_summary(
-                    updates=updates,
-                    summary_type="daily_recap",
-                    analyzer=self.analyzer,
-                    llm_client=self.llm_client
-                )
-                
-                return self._create_contextual_daily_embed(contextual_summary, day_number, len(updates))
-            else:
-                # Fallback to original method
-                return await super().create_daily_recap(updates, day_number)
-                
-        except Exception as e:
-            logger.error(f"Contextual daily recap failed: {e}")
-            return await super().create_daily_recap(updates, day_number)
-    
-    def _create_contextual_daily_embed(self, contextual_summary: str, 
-                                     day_number: int, update_count: int) -> List[discord.Embed]:
-        """Create daily recap embed with contextual summary"""
-        context_stats = self.contextual_summarizer.get_context_stats()
-        
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Contextual Recap",
-            description=f"**{update_count} updates** • Building on the season narrative",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Split the contextual summary into manageable parts
-        summary_parts = self._split_summary_for_embed(contextual_summary, max_length=900)
-        
-        for i, part in enumerate(summary_parts):
-            if i == 0:
-                field_name = "📖 Day's Narrative"
-            else:
-                field_name = f"📖 Narrative (Part {i+1})"
-            
-            embed.add_field(
-                name=field_name,
-                value=part,
-                inline=False
-            )
-        
-        # Add context information
-        embed.add_field(
-            name="🧠 Narrative Context",
-            value=f"This recap builds on {context_stats['recent_summaries_count']} previous summaries\n"
-                  f"Season timeline: {context_stats['timeline_events_count']} major events\n"
-                  f"Houseguest arcs: {context_stats['tracked_houseguests_count']} players tracked",
-            inline=False
-        )
-        
-        # Add day importance indicator
-        embed.add_field(
-            name="📊 Day Significance",
-            value=f"Day {day_number} in the ongoing Big Brother narrative",
-            inline=True
-        )
-        
-        embed.set_footer(text=f"Contextual Daily Recap • Day {day_number} • Narrative-Aware AI")
-        
-        return [embed]
-    
     def _split_summary_for_embed(self, summary: str, max_length: int = 1000) -> List[str]:
         """Split long summaries into Discord embed-friendly chunks"""
         if len(summary) <= max_length:
@@ -3875,6 +3026,269 @@ Be selective - these should be the updates that a superfan would want to know ab
                     final_parts.append(current_chunk + ("." if not current_chunk.endswith(".") else ""))
         
         return final_parts
+
+class EnhancedUpdateBatcher(UpdateBatcher):
+    """Enhanced UpdateBatcher with contextual summary capabilities"""
+    
+    def __init__(self, analyzer: BBAnalyzer, config):
+        super().__init__(analyzer, config)
+        
+        # Initialize the contextual summarizer
+        db_path = config.get('database_path', 'bb_updates.db')
+        self.contextual_summarizer = ContextualSummarizer(
+            db_path=db_path,
+            max_context_length=config.get('max_context_length', 10000)
+        )
+        
+        # Check if contextual summaries are enabled
+        self.contextual_enabled = config.get('enable_contextual_summaries', True)
+        
+        logger.info(f"Enhanced UpdateBatcher initialized - Contextual: {'Enabled' if self.contextual_enabled else 'Disabled'}")
+    
+    async def create_hourly_summary(self) -> List[discord.Embed]:
+        """Create comprehensive hourly summary using contextual AI"""
+        if not self.hourly_queue:
+            logger.warning("No updates in hourly queue for summary")
+            return []
+        
+        logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
+        
+        embeds = []
+        
+        try:
+            # FIRST: Check if we have LLM client
+            if not self.llm_client:
+                logger.warning("No LLM client available, using pattern-based hourly summary")
+                embeds = self._create_pattern_hourly_summary()
+            
+            # SECOND: Check rate limits
+            elif not await self._can_make_llm_request():
+                stats = self.rate_limiter.get_stats()
+                logger.warning(f"Rate limit reached for hourly summary: {stats['requests_this_minute']}/{stats['minute_limit']} per minute")
+                embeds = self._create_pattern_hourly_summary()
+            
+            # THIRD: Try contextual summary if enabled
+            elif self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
+                try:
+                    logger.info("Using contextual AI for hourly summary")
+                    contextual_summary = await self.contextual_summarizer.create_contextual_summary(
+                        updates=self.hourly_queue,
+                        summary_type="hourly_summary",
+                        analyzer=self.analyzer,
+                        llm_client=self.llm_client
+                    )
+                    embeds = self._create_contextual_hourly_embed(contextual_summary, len(self.hourly_queue))
+                except Exception as e:
+                    logger.error(f"Contextual hourly summary failed: {e}")
+                    # Fallback to regular LLM summary
+                    embeds = await self._create_llm_hourly_summary_fallback()
+            
+            # FOURTH: Regular LLM summary
+            else:
+                logger.info("Using regular LLM for hourly summary")
+                embeds = await self._create_llm_hourly_summary_fallback()
+                
+        except Exception as e:
+            logger.error(f"All hourly summary methods failed: {e}")
+            embeds = self._create_pattern_hourly_summary()
+        
+        # Clear hourly queue after processing
+        processed_count = len(self.hourly_queue)
+        self.hourly_queue.clear()
+        self.last_hourly_summary = datetime.now()
+        
+        logger.info(f"Created hourly summary from {processed_count} updates using {'contextual AI' if self.contextual_enabled else 'pattern analysis'}")
+        return embeds
+    
+    async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
+        """Create regular LLM hourly summary as fallback"""
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare update data
+            updates_data = []
+            for update in self.hourly_queue:
+                time_str = self._extract_correct_time(update)
+                updates_data.append({
+                    'time': time_str,
+                    'title': update.title,
+                    'description': update.description[:200] if update.description != update.title else ""
+                })
+            
+            updates_text = "\n".join([
+                f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
+                for u in updates_data
+            ])
+            
+            prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
+
+Analyze these {len(self.hourly_queue)} updates from the past hour:
+
+{updates_text}
+
+Create a narrative summary that tells the story of this hour in the Big Brother house. Focus on:
+
+1. **Major Developments**: What were the most significant events?
+2. **Strategic Gameplay**: Any alliance talk, targeting, or game moves?
+3. **Social Dynamics**: Relationship developments, conflicts, or bonding moments?
+4. **Entertainment Value**: Funny moments, drama, or memorable interactions?
+
+Write this as a flowing narrative summary (2-3 paragraphs) that captures the essence of this hour for Big Brother fans. Don't just list events - tell the story of what happened.
+
+Make it engaging and insightful, as if you're explaining to a friend who missed this hour of feeds."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Create embed with the narrative summary
+            return self._create_narrative_hourly_embed(response.content[0].text, len(self.hourly_queue))
+            
+        except Exception as e:
+            logger.error(f"LLM hourly summary fallback failed: {e}")
+            return self._create_pattern_hourly_summary()
+    
+    def _create_contextual_hourly_embed(self, contextual_summary: str, update_count: int) -> List[discord.Embed]:
+        """Create hourly summary embed with contextual summary"""
+        current_hour = datetime.now().strftime("%I %p")
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Digest - {current_hour}",
+            description=f"**{update_count} updates this hour** • AI Contextual Analysis",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Split the contextual summary into manageable parts
+        summary_parts = self._split_summary_for_embed(contextual_summary, max_length=1000)
+        
+        for i, part in enumerate(summary_parts):
+            if i == 0:
+                field_name = "🎯 Hour's Narrative"
+            else:
+                field_name = f"🎯 Narrative (Part {i+1})"
+            
+            embed.add_field(
+                name=field_name,
+                value=part,
+                inline=False
+            )
+        
+        # Add context information
+        if hasattr(self, 'contextual_summarizer'):
+            try:
+                context_stats = self.contextual_summarizer.get_context_stats()
+                embed.add_field(
+                    name="🧠 Context Awareness",
+                    value=f"Building on {context_stats['recent_summaries_count']} recent summaries\n"
+                          f"Season Day {context_stats['latest_day']} • {context_stats['timeline_events_count']} timeline events",
+                    inline=False
+                )
+            except Exception as e:
+                logger.debug(f"Context stats failed: {e}")
+        
+        embed.set_footer(text=f"Contextual Hourly Digest • {current_hour} • Narrative AI")
+        
+        return [embed]
+    
+    def _create_narrative_hourly_embed(self, narrative_summary: str, update_count: int) -> List[discord.Embed]:
+        """Create hourly embed with narrative LLM summary"""
+        current_hour = datetime.now().strftime("%I %p")
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Digest - {current_hour}",
+            description=f"**{update_count} updates this hour** • AI Narrative Analysis",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Split the narrative summary into manageable parts
+        summary_parts = self._split_summary_for_embed(narrative_summary, max_length=1000)
+        
+        for i, part in enumerate(summary_parts):
+            if i == 0:
+                field_name = "📖 This Hour's Story"
+            else:
+                field_name = f"📖 Story (Part {i+1})"
+            
+            embed.add_field(
+                name=field_name,
+                value=part,
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Hourly Digest • {current_hour} • AI Narrative")
+        
+        return [embed]
+    
+    def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
+        """Create pattern-based hourly summary when LLM unavailable"""
+        logger.info("Creating pattern-based hourly summary")
+        
+        # Group updates by categories
+        categories = defaultdict(list)
+        for update in self.hourly_queue:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        current_hour = datetime.now().strftime("%I %p")
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Digest - {current_hour}",
+            description=f"**{len(self.hourly_queue)} updates this hour** • Pattern Analysis",
+            color=0x95a5a6,  # Gray for pattern-based
+            timestamp=datetime.now()
+        )
+        
+        # Add top categories with actual narrative content
+        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True)[:5]:
+            if updates:
+                # Get the most important update from this category
+                top_update = max(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x))
+                
+                # Create a mini-narrative for this category
+                category_text = f"**{len(updates)} updates**\n"
+                
+                # Add the top update with cleaned title
+                title = top_update.title
+                # Remove timestamp if present
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
+                
+                if len(title) > 100:
+                    title = title[:97] + "..."
+                
+                category_text += f"• {title}"
+                
+                # Add time context
+                time_str = self._extract_correct_time(top_update)
+                category_text += f"\n*Most recent: {time_str}*"
+                
+                embed.add_field(
+                    name=category,
+                    value=category_text,
+                    inline=False
+                )
+        
+        # Add a summary field
+        total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
+        avg_importance = total_importance / len(self.hourly_queue) if self.hourly_queue else 0
+        
+        embed.add_field(
+            name="📈 Hour Summary",
+            value=f"Activity Level: {'🔥 High' if avg_importance > 6 else '⭐ Medium' if avg_importance > 3 else '📝 Low'}\n"
+                  f"Most Active Category: {max(categories.keys(), key=lambda x: len(categories[x])) if categories else 'None'}",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Hourly Digest • {current_hour} • Pattern Analysis (LLM Unavailable)")
+        
+        return [embed]
     
     def get_contextual_stats(self) -> Dict:
         """Get statistics about contextual analysis"""
@@ -3895,6 +3309,80 @@ Be selective - these should be the updates that a superfan would want to know ab
             **context_stats,
             'contextual_features_enabled': self.contextual_enabled
         }
+
+class Config:
+    """Enhanced configuration management with validation"""
+    
+    def __init__(self):
+        self.config_file = Path("config.json")
+        self.config = self._load_config()
+        self._validate_config()
+    
+    def _load_config(self) -> dict:
+        """Load configuration with better validation"""
+        config = DEFAULT_CONFIG.copy()
+        
+        # Environment variables (priority 1)
+        for env_var, config_key in ENV_MAPPINGS.items():
+            env_value = os.getenv(env_var)
+            if env_value:
+                config[config_key] = self._convert_env_value(config_key, env_value)
+        
+        # Config file (priority 2)
+        if self.config_file.exists():
+            try:
+                with open(self.config_file, 'r') as f:
+                    file_config = json.load(f)
+                    # Only use file config for missing env vars
+                    for key, value in file_config.items():
+                        if key in config and not os.getenv(key.upper()):
+                            config[key] = value
+            except Exception as e:
+                logger.error(f"Error loading config file: {e}")
+        
+        return config
+    
+    def _convert_env_value(self, config_key: str, env_value: str):
+        """Convert environment variable to proper type"""
+        if config_key == 'update_channel_id':
+            try:
+                return int(env_value) if env_value != '0' else None
+            except ValueError:
+                logger.warning(f"Invalid channel ID: {env_value}")
+                return None
+        elif config_key in ['rss_check_interval', 'max_retries', 'retry_delay', 'owner_id',
+                           'llm_requests_per_minute', 'llm_requests_per_hour', 'max_processed_hashes']:
+            try:
+                return int(env_value)
+            except ValueError:
+                logger.warning(f"Invalid integer for {config_key}: {env_value}")
+                return DEFAULT_CONFIG.get(config_key, 0)
+        elif config_key in ['enable_heartbeat', 'enable_llm_summaries']:
+            return env_value.lower() == 'true'
+        else:
+            return env_value
+    
+    def _validate_config(self):
+        """Validate critical configuration values"""
+        if not self.config.get('bot_token'):
+            raise ValueError("BOT_TOKEN is required")
+        
+        # Validate rate limiting settings
+        if self.config.get('llm_requests_per_minute', 0) <= 0:
+            self.config['llm_requests_per_minute'] = DEFAULT_CONFIG['llm_requests_per_minute']
+        
+        if self.config.get('llm_requests_per_hour', 0) <= 0:
+            self.config['llm_requests_per_hour'] = DEFAULT_CONFIG['llm_requests_per_hour']
+        
+        logger.info("Configuration validated successfully")
+    
+    def get(self, key: str, default=None):
+        """Get configuration value"""
+        return self.config.get(key, default)
+    
+    def set(self, key: str, value):
+        """Set configuration value"""
+        self.config[key] = value
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
@@ -4143,6 +3631,162 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error generating status: {e}")
                 await interaction.followup.send("Error generating status.", ephemeral=True)
 
+        @self.tree.command(name="llmdiag", description="Diagnose LLM integration issues (Admin only)")
+        async def llm_diagnostic_slash(interaction: discord.Interaction):
+            """Comprehensive LLM diagnostic"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                embed = discord.Embed(
+                    title="🔍 LLM Integration Diagnostic",
+                    description="Checking all LLM-related systems...",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                # Check API key
+                api_key = self.config.get('anthropic_api_key') or os.getenv('ANTHROPIC_API_KEY', '')
+                if not api_key.strip():
+                    embed.add_field(
+                        name="❌ API Key",
+                        value="No Anthropic API key found in config or environment",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="✅ API Key",
+                        value=f"Found (ends with: ...{api_key[-4:]})",
+                        inline=False
+                    )
+                
+                # Check LLM client initialization
+                if not self.update_batcher.llm_client:
+                    embed.add_field(
+                        name="❌ LLM Client",
+                        value="LLM client not initialized - check API key",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="✅ LLM Client",
+                        value=f"Initialized with model: {self.update_batcher.llm_model}",
+                        inline=False
+                    )
+                
+                # Check rate limits
+                rate_stats = self.update_batcher.get_rate_limit_stats()
+                rate_status = "✅" if rate_stats['requests_this_minute'] < rate_stats['minute_limit'] else "⚠️"
+                embed.add_field(
+                    name=f"{rate_status} Rate Limits",
+                    value=f"Minute: {rate_stats['requests_this_minute']}/{rate_stats['minute_limit']}\n"
+                          f"Hour: {rate_stats['requests_this_hour']}/{rate_stats['hour_limit']}\n"
+                          f"Total requests: {rate_stats['total_requests']}",
+                    inline=False
+                )
+                
+                # Check contextual features
+                contextual_status = "✅" if hasattr(self.update_batcher, 'contextual_enabled') and self.update_batcher.contextual_enabled else "❌"
+                embed.add_field(
+                    name=f"{contextual_status} Contextual AI",
+                    value=f"Enabled: {getattr(self.update_batcher, 'contextual_enabled', False)}\n"
+                          f"Has contextual_summarizer: {hasattr(self.update_batcher, 'contextual_summarizer')}",
+                    inline=False
+                )
+                
+                # Check queue status
+                highlights_queue = len(self.update_batcher.highlights_queue)
+                hourly_queue = len(self.update_batcher.hourly_queue)
+                embed.add_field(
+                    name="📊 Queue Status",
+                    value=f"Highlights queue: {highlights_queue}\n"
+                          f"Hourly queue: {hourly_queue}\n"
+                          f"Last hourly summary: {(datetime.now() - self.update_batcher.last_hourly_summary).total_seconds() / 60:.1f} minutes ago",
+                    inline=False
+                )
+                
+                # Test LLM connection if available
+                if self.update_batcher.llm_client and await self.update_batcher._can_make_llm_request():
+                    try:
+                        await self.update_batcher.rate_limiter.wait_if_needed()
+                        
+                        test_response = await asyncio.to_thread(
+                            self.update_batcher.llm_client.messages.create,
+                            model=self.update_batcher.llm_model,
+                            max_tokens=50,
+                            messages=[{
+                                "role": "user", 
+                                "content": "Respond with 'LLM TEST SUCCESSFUL' if you can read this."
+                            }]
+                        )
+                        
+                        embed.add_field(
+                            name="✅ LLM Connection Test",
+                            value=f"Response: {test_response.content[0].text}",
+                            inline=False
+                        )
+                        
+                    except Exception as e:
+                        embed.add_field(
+                            name="❌ LLM Connection Test",
+                            value=f"Failed: {str(e)}",
+                            inline=False
+                        )
+                else:
+                    embed.add_field(
+                        name="⚠️ LLM Connection Test",
+                        value="Skipped - client unavailable or rate limited",
+                        inline=False
+                    )
+                
+                # Configuration check
+                config_issues = []
+                if not self.config.get('anthropic_api_key'):
+                    config_issues.append("Missing anthropic_api_key in config")
+                if not self.config.get('enable_llm_summaries', True):
+                    config_issues.append("LLM summaries disabled in config")
+                
+                if config_issues:
+                    embed.add_field(
+                        name="⚠️ Configuration Issues",
+                        value="\n".join(config_issues),
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name="✅ Configuration",
+                        value="All LLM-related config appears correct",
+                        inline=False
+                    )
+                
+                # Add recommendations
+                recommendations = []
+                if not api_key.strip():
+                    recommendations.append("Set ANTHROPIC_API_KEY environment variable")
+                if not self.update_batcher.llm_client:
+                    recommendations.append("Restart bot after setting API key")
+                if rate_stats['requests_this_minute'] >= rate_stats['minute_limit']:
+                    recommendations.append("Wait for rate limit to reset")
+                
+                if recommendations:
+                    embed.add_field(
+                        name="🔧 Recommendations",
+                        value="\n".join(recommendations),
+                        inline=False
+                    )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in LLM diagnostic: {e}")
+                await interaction.followup.send(f"Error running diagnostic: {e}", ephemeral=True)
+
+        # Continue with all the other commands from the original code...
+        # (I'll add the remaining commands in the next part due to length constraints)
+        
         @self.tree.command(name="summary", description="Get a summary of recent Big Brother updates")
         async def summary_slash(interaction: discord.Interaction, hours: int = 24):
             """Generate a summary of updates"""
@@ -4237,32 +3881,31 @@ class BBDiscordBot(commands.Bot):
             )
             
             commands_list = [
-    ("/summary", "Get a summary of recent updates (Admin only)"),
-    ("/status", "Show bot status and statistics (Admin only)"),
-    ("/setchannel", "Set update channel (Admin only)"),
-    ("/commands", "Show this help message"),
-    ("/forcebatch", "Force send any queued updates (Admin only)"),
-    ("/testllm", "Test LLM connection (Admin only)"),
-    ("/sync", "Sync slash commands (Owner only)"),
-    ("/alliances", "Show current Big Brother alliances"),
-    ("/loyalty", "Show a houseguest's alliance history"),
-    ("/betrayals", "Show recent alliance betrayals"),
-    ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
-    ("/clearalliances", "Clear all alliance data (Owner only)"),
-    ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
-    # NEW CONTEXTUAL COMMANDS
-    ("/context", "View contextual analysis statistics (Admin only)"),
-    ("/timeline", "View season timeline events"),
-    ("/togglecontext", "Enable/disable contextual summaries (Owner only)"),
-    # Prediction commands
-    ("/createpoll", "Create a prediction poll (Admin only)"),
-    ("/predict", "Make a prediction on an active poll"),
-    ("/polls", "View active prediction polls"),
-    ("/closepoll", "Manually close a prediction poll (Admin only)"),
-    ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
-    ("/leaderboard", "View prediction leaderboards"),
-    ("/mypredictions", "View your prediction history")
-]
+                ("/summary", "Get a summary of recent updates (Admin only)"),
+                ("/status", "Show bot status and statistics (Admin only)"),
+                ("/setchannel", "Set update channel (Admin only)"),
+                ("/commands", "Show this help message"),
+                ("/forcebatch", "Force send any queued updates (Admin only)"),
+                ("/testllm", "Test LLM connection (Admin only)"),
+                ("/llmdiag", "Diagnose LLM integration issues (Admin only)"),
+                ("/sync", "Sync slash commands (Owner only)"),
+                ("/alliances", "Show current Big Brother alliances"),
+                ("/loyalty", "Show a houseguest's alliance history"),
+                ("/betrayals", "Show recent alliance betrayals"),
+                ("/removebadalliance", "Remove incorrectly detected alliance (Admin only)"),
+                ("/clearalliances", "Clear all alliance data (Owner only)"),
+                ("/zing", "Deliver a BB-style zing! (target someone, random, or self-zing)"),
+                ("/context", "View contextual analysis statistics (Admin only)"),
+                ("/timeline", "View season timeline events"),
+                ("/togglecontext", "Enable/disable contextual summaries (Owner only)"),
+                ("/createpoll", "Create a prediction poll (Admin only)"),
+                ("/predict", "Make a prediction on an active poll"),
+                ("/polls", "View active prediction polls"),
+                ("/closepoll", "Manually close a prediction poll (Admin only)"),
+                ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
+                ("/leaderboard", "View prediction leaderboards"),
+                ("/mypredictions", "View your prediction history")
+            ]
             
             for name, description in commands_list:
                 embed.add_field(name=name, value=description, inline=False)
@@ -4281,14 +3924,22 @@ class BBDiscordBot(commands.Bot):
                 
                 await interaction.response.defer(ephemeral=True)
                 
-                queue_size = len(self.update_batcher.update_queue)
-                if queue_size == 0:
+                highlights_size = len(self.update_batcher.highlights_queue)
+                hourly_size = len(self.update_batcher.hourly_queue)
+                
+                if highlights_size == 0 and hourly_size == 0:
                     await interaction.followup.send("No updates in queue to send.", ephemeral=True)
                     return
                 
-                await self.send_batch_update()
+                # Send highlights if available
+                if highlights_size > 0:
+                    await self.send_highlights_batch()
                 
-                await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
+                # Send hourly if available
+                if hourly_size > 0:
+                    await self.send_hourly_summary()
+                
+                await interaction.followup.send(f"Force sent: {highlights_size} highlights, {hourly_size} hourly updates!", ephemeral=True)
                 
             except Exception as e:
                 logger.error(f"Error forcing batch: {e}")
@@ -4356,7 +4007,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error testing LLM: {e}")
                 await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
 
-        
         @self.tree.command(name="testhourly", description="Force test hourly summary (Admin only)")
         async def test_hourly_slash(interaction: discord.Interaction):
             """Force test hourly summary"""
@@ -4551,6 +4201,7 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error clearing alliances: {e}")
                 await interaction.followup.send("Error clearing alliance data", ephemeral=True)
+
         @self.tree.command(name="context", description="View contextual analysis statistics")
         async def context_slash(interaction: discord.Interaction):
             """Show context statistics"""
@@ -5128,10 +4779,7 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error showing user predictions: {e}")
                 await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
-
-        # I'll continue with the rest of the commands in the next step...
-        # For now, this should fix your immediate startup error
-
+    
     def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
@@ -5153,7 +4801,7 @@ class BBDiscordBot(commands.Bot):
             self.check_rss_feed.start()
             self.daily_recap_task.start()
             self.auto_close_predictions_task.start()
-            self.cleanup_context_task.start()  # ADD THIS LINE
+            self.cleanup_context_task.start()
             logger.info("RSS feed monitoring, daily recap, prediction auto-close, and context cleanup tasks started")
         except Exception as e:
             logger.error(f"Error starting background tasks: {e}")
