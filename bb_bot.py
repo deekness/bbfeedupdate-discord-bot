@@ -3211,31 +3211,31 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
     def _create_narrative_hourly_embed(self, narrative_summary: str, update_count: int) -> List[discord.Embed]:
         """Create hourly embed with narrative LLM summary"""
         current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
-        
-    embed = discord.Embed(
-        title=f"🏠 Chen Bot's House Summary - {current_hour}",  # ← Fixed!
-        description=f"**{update_count} updates this hour** • AI Narrative Analysis",
-        color=0x9b59b6,
-        timestamp=datetime.now()
-    )
-        
+    
+        embed = discord.Embed(
+            title=f"🏠 Chen Bot's House Summary - {current_hour}",
+            description=f"**{update_count} updates this hour** • AI Narrative Analysis",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+    
         # Split the narrative summary into manageable parts
         summary_parts = self._split_summary_for_embed(narrative_summary, max_length=1000)
-        
+    
         for i, part in enumerate(summary_parts):
             if i == 0:
                 field_name = "📖 This Hour's Story"
             else:
                 field_name = f"📖 Story (Part {i+1})"
-            
+        
             embed.add_field(
                 name=field_name,
                 value=part,
                 inline=False
             )
-        
+    
         embed.set_footer(text=f"Chen Bot's House Summary • {current_hour}")
-        
+    
         return [embed]
     
     def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
