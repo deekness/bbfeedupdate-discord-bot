@@ -4156,77 +4156,60 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error sending daily recap: {e}")
 
     @tasks.loop(minutes=2)
-    async def check_rss_feed(self):
-        """Check RSS feed for new updates with intelligent batching"""
-        if self.is_shutting_down:
-            return
-        
-        try:
-            feed = feedparser.parse(self.rss_url)
-            
-            if not feed.entries:
-                logger.warning("No entries returned from RSS feed")
-                return
-            
-            updates = self.process_rss_entries(feed.entries)
-            new_updates = await self.filter_duplicates(updates)  # Now async
-            
-            for update in new_updates:
-                try:
-                    categories = self.analyzer.categorize_update(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    
-                    self.db.store_update(update, importance, categories)
-                    await self.update_batcher.add_update(update)  # Now async
-                    
-                    # Check for alliance information
-                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
-                    for event in alliance_events:
-                        alliance_id = self.alliance_tracker.process_alliance_event(event)
-                        if alliance_id:
-                            logger.info(f"Alliance event processed: {event['type'].value}")
-                    
-                    self.total_updates_processed += 1
-                    
-                except Exception as e:
-                    logger.error(f"Error processing update: {e}")
-                    self.consecutive_errors += 1
-            
-            if self.update_batcher.should_send_batch():
-                await self.send_batch_update()
-            
-            self.last_successful_check = datetime.now()
-            self.consecutive_errors = 0
-            
-            if new_updates:
-                logger.info(f"Added {len(new_updates)} updates to batch queue")
-                
-        except Exception as e:
-            logger.error(f"Error in RSS check: {e}")
-            self.consecutive_errors += 1
+async def check_rss_feed(self):
+    """Check RSS feed for new updates with dual batching system"""
+    if self.is_shutting_down:
+        return
     
-    async def send_batch_update(self):
-        """Send intelligent batch summary to Discord"""
-        channel_id = self.config.get('update_channel_id')
-        if not channel_id:
-            logger.warning("Update channel not configured")
+    try:
+        feed = feedparser.parse(self.rss_url)
+        
+        if not feed.entries:
+            logger.warning("No entries returned from RSS feed")
             return
         
-        try:
-            channel = self.get_channel(channel_id)
-            if not channel:
-                logger.error(f"Channel {channel_id} not found")
-                return
+        updates = self.process_rss_entries(feed.entries)
+        new_updates = await self.filter_duplicates(updates)
+        
+        for update in new_updates:
+            try:
+                categories = self.analyzer.categorize_update(update)
+                importance = self.analyzer.analyze_strategic_importance(update)
+                
+                self.db.store_update(update, importance, categories)
+                await self.update_batcher.add_update(update)  # Adds to both queues
+                
+                # Check for alliance information
+                alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                for event in alliance_events:
+                    alliance_id = self.alliance_tracker.process_alliance_event(event)
+                    if alliance_id:
+                        logger.info(f"Alliance event processed: {event['type'].value}")
+                
+                self.total_updates_processed += 1
+                
+            except Exception as e:
+                logger.error(f"Error processing update: {e}")
+                self.consecutive_errors += 1
+        
+        # Check for highlights batch (25 updates or urgent conditions)
+        if self.update_batcher.should_send_highlights():
+            await self.send_highlights_batch()
+        
+        # Check for hourly summary (every hour)
+        if self.update_batcher.should_send_hourly_summary():
+            await self.send_hourly_summary()
+        
+        self.last_successful_check = datetime.now()
+        self.consecutive_errors = 0
+        
+        if new_updates:
+            logger.info(f"Added {len(new_updates)} updates to both batching queues")
+            logger.info(f"Queue status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
             
-            embeds = await self.update_batcher.create_batch_summary()
-            
-            for embed in embeds[:10]:  # Discord limit
-                await channel.send(embed=embed)
-            
-            logger.info(f"Sent batch update with {len(embeds)} embeds")
-            
-        except Exception as e:
-            logger.error(f"Error sending batch update: {e}")
+    except Exception as e:
+        logger.error(f"Error in RSS check: {e}")
+        self.consecutive_errors += 1
 
 # Create bot instance
 bot = BBDiscordBot()
