@@ -2171,12 +2171,18 @@ class UpdateBatcher:
         return False
     
     def should_send_hourly_summary(self) -> bool:
-        """Check if we should send hourly summary"""
-        time_elapsed = (datetime.now() - self.last_hourly_summary).total_seconds() / 60
+        """Check if we should send hourly summary at the top of each hour"""
+        now = datetime.now()
         
-        # Send every hour if we have updates
-        if time_elapsed >= 60 and len(self.hourly_queue) > 0:
-            return True
+        # Check if we're at the beginning of a new hour (within first 2 minutes)
+        if now.minute <= 2:
+            # Check if we haven't sent a summary this hour yet
+            last_summary_hour = self.last_hourly_summary.replace(minute=0, second=0, microsecond=0)
+            current_hour = now.replace(minute=0, second=0, microsecond=0)
+            
+            # Send if it's a new hour and we have updates
+            if current_hour > last_summary_hour and len(self.hourly_queue) > 0:
+                return True
         
         return False
     
