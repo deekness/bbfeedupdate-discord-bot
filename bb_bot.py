@@ -2238,41 +2238,41 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-    """Create comprehensive hourly summary using structured format (force contextual structure)"""
-    if not self.hourly_queue:
-        logger.warning("No updates in hourly queue for summary")
-        return []
-
-    logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
-
-    embeds = []
-
-    try:
-        # ALWAYS try structured contextual format first, even with no context
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                logger.info("Using structured contextual format for hourly summary")
-                embeds = await self._create_forced_structured_summary("hourly_summary")
-            except Exception as e:
-                logger.error(f"Structured summary failed: {e}")
-                # Fallback to narrative LLM summary
-                embeds = await self._create_llm_hourly_summary_fallback()
-        else:
-            # No LLM available, use enhanced pattern-based
-            logger.info("Using enhanced pattern-based hourly summary")
+        """Create comprehensive hourly summary using structured format (force contextual structure)"""
+        if not self.hourly_queue:
+            logger.warning("No updates in hourly queue for summary")
+            return []
+    
+        logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
+    
+        embeds = []
+    
+        try:
+            # ALWAYS try structured contextual format first, even with no context
+            if self.llm_client and await self._can_make_llm_request():
+                try:
+                    logger.info("Using structured contextual format for hourly summary")
+                    embeds = await self._create_forced_structured_summary("hourly_summary")
+                except Exception as e:
+                    logger.error(f"Structured summary failed: {e}")
+                    # Fallback to narrative LLM summary
+                    embeds = await self._create_llm_hourly_summary_fallback()
+            else:
+                # No LLM available, use enhanced pattern-based
+                logger.info("Using enhanced pattern-based hourly summary")
+                embeds = self._create_enhanced_pattern_hourly_summary()
+    
+        except Exception as e:
+            logger.error(f"All hourly summary methods failed: {e}")
             embeds = self._create_enhanced_pattern_hourly_summary()
-
-    except Exception as e:
-        logger.error(f"All hourly summary methods failed: {e}")
-        embeds = self._create_enhanced_pattern_hourly_summary()
-
-    # Clear hourly queue after processing
-    processed_count = len(self.hourly_queue)
-    self.hourly_queue.clear()
-    self.last_hourly_summary = datetime.now()
-
-    logger.info(f"Created hourly summary from {processed_count} updates")
-    return embeds
+    
+        # Clear hourly queue after processing
+        processed_count = len(self.hourly_queue)
+        self.hourly_queue.clear()
+        self.last_hourly_summary = datetime.now()
+    
+        logger.info(f"Created hourly summary from {processed_count} updates")
+        return embeds
 
 async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
     """Create structured summary with forced contextual format (even without prior context)"""
