@@ -2945,22 +2945,31 @@ Be selective - these should be the updates that a superfan would want to know ab
             
             for highlight in highlights_data['highlights'][:10]:
                 title = highlight.get('title', 'Update')
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                # FIXED: More thorough time removal from title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*(PST|EST|CST|MST)?\s*[-–—]\s*', '', title, flags=re.IGNORECASE)
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–—]\s*', '', title, flags=re.IGNORECASE)
+                title = re.sub(r'^\d{1,2}:\d{2}\s*[-–—]\s*', '', title)
+                
+                # Get clean time for field name
+                time_str = highlight.get('time', 'Time')
+                # FIXED: Clean up time format for consistency
+                time_str = re.sub(r'\s*(PST|EST|CST|MST)\s*', '', time_str, flags=re.IGNORECASE)
                 
                 if highlight.get('reason') and highlight['reason'].strip():
                     embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
                         value=f"{title}\n*{highlight['reason']}*",
                         inline=False
                     )
                 else:
                     embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
                         value=title,
                         inline=False
                     )
             
-            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
+            # FIXED: Better footer text
+            embed.set_footer(text=f"Chen Bot's Highlights • {len(self.highlights_queue)} updates processed")
             return [embed]
             
         except Exception as e:
@@ -3703,7 +3712,7 @@ Be selective - these should be the updates that a superfan would want to know ab
                         )
                 
                 # Enhanced footer
-                footer_text = f"Highlights • {len(self.highlights_queue)} updates processed"
+                footer_text = f"Chen Bot's Highlights • {len(self.highlights_queue)} updates processed"
                 if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
                     try:
                         context_stats = self.contextual_summarizer.get_context_stats()
