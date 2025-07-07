@@ -860,9 +860,9 @@ class ContextualSummarizer:
         return "\n".join(relevant_arcs)
     
     def _format_updates(self, updates: List[BBUpdate]) -> str:
-    """Format updates for the prompt in chronological order"""
-    # FIXED: Sort updates chronologically before formatting
-    sorted_updates = sorted(updates, key=lambda x: x.pub_date)
+        """Format updates for the prompt in chronological order"""
+        # FIXED: Sort updates chronologically before formatting
+        sorted_updates = sorted(updates, key=lambda x: x.pub_date)
     
     formatted = []
     for i, update in enumerate(sorted_updates, 1):
