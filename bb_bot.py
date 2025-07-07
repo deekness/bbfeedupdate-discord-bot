@@ -3150,20 +3150,6 @@ Write this as a flowing narrative summary (2-3 paragraphs) that captures the ess
 CRITICAL: Present events in chronological order (earliest first, latest last). Do NOT reverse the timeline.
 
 Make it engaging and insightful, as if you are explaining to a friend who missed this hour of feeds, walking them through the events as they actually happened."""
-
-{updates_text}
-
-Create a narrative summary that tells the story of this hour in the Big Brother house. Focus on:
-
-1. **Major Developments**: What were the most significant events?
-2. **Strategic Gameplay**: Any alliance talk, targeting, or game moves?
-3. **Social Dynamics**: Relationship developments, conflicts, or bonding moments?
-4. **Entertainment Value**: Funny moments, drama, or memorable interactions?
-
-Write this as a flowing narrative summary (1-2 paragraphs) that captures the essence of this hour for Big Brother fans. Do Not just list events - tell the story of what happened.
-
-Make it engaging and insightful, as if you are explaining to a friend who missed this hour of feeds."""
-
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model=self.llm_model,
