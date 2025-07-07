@@ -3361,65 +3361,65 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
         return [embed]
     
     async def _create_contextual_structured_summary(self, summary_type: str) -> List[discord.Embed]:
-    """Create contextual summary with structured format"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Get contextual information
-    recent_context = self.contextual_summarizer._build_recent_context()
-    relevant_timeline = self.contextual_summarizer._get_relevant_timeline_events(self.hourly_queue, self.analyzer)
-    relevant_arcs = self.contextual_summarizer._get_relevant_houseguest_arcs(self.hourly_queue, self.analyzer)
-    formatted_updates = self.contextual_summarizer._format_updates(self.hourly_queue)
-    current_day = self.contextual_summarizer._calculate_current_day()
-    
-    # Build enhanced prompt with structured format requirement
-    prompt = self.contextual_summarizer._build_contextual_prompt(
-        recent_context, relevant_timeline, relevant_arcs, 
-        formatted_updates, summary_type, current_day
-    )
-    
-    # Call LLM with context-aware prompt
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model="claude-3-haiku-20240307",
-        max_tokens=1200,  # Increased for structured format
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    response_text = response.content[0].text
-    
-    try:
-        # Parse JSON response
-        analysis_data = self._parse_structured_llm_response(response_text)
+        """Create contextual summary with structured format"""
+        await self.rate_limiter.wait_if_needed()
         
-        # Create structured embed using the contextual summarizer method
-        embeds = self.contextual_summarizer._create_contextual_summary_embed(
-            analysis_data, len(self.hourly_queue), summary_type
+        # Get contextual information
+        recent_context = self.contextual_summarizer._build_recent_context()
+        relevant_timeline = self.contextual_summarizer._get_relevant_timeline_events(self.hourly_queue, self.analyzer)
+        relevant_arcs = self.contextual_summarizer._get_relevant_houseguest_arcs(self.hourly_queue, self.analyzer)
+        formatted_updates = self.contextual_summarizer._format_updates(self.hourly_queue)
+        current_day = self.contextual_summarizer._calculate_current_day()
+        
+        # Build enhanced prompt with structured format requirement
+        prompt = self.contextual_summarizer._build_contextual_prompt(
+            recent_context, relevant_timeline, relevant_arcs, 
+            formatted_updates, summary_type, current_day
         )
         
-        # Store this summary for future context
-        summary_text = f"Headline: {analysis_data.get('headline', 'No headline')}"
-        for key in ['strategic_analysis', 'alliance_dynamics', 'entertainment_highlights', 'showmance_updates', 'house_culture']:
-            content = analysis_data.get(key)
-            if content and content.strip() and content.lower() != 'null':
-                summary_text += f"\n{key.replace('_', ' ').title()}: {content[:100]}..."
+        # Call LLM with context-aware prompt
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model="claude-3-haiku-20240307",
+            max_tokens=1200,  # Increased for structured format
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
         
-        await self.contextual_summarizer._store_summary_context(summary_text, summary_type, self.hourly_queue, current_day, self.analyzer)
+        response_text = response.content[0].text
         
-        # Extract and store timeline events from this summary
-        await self.contextual_summarizer._extract_and_store_timeline_events(summary_text, self.hourly_queue, current_day, self.analyzer)
-        
-        # Update houseguest arcs based on this summary
-        await self.contextual_summarizer._update_houseguest_arcs(summary_text, self.hourly_queue, self.analyzer)
-        
-        logger.info(f"Created contextual structured {summary_type} summary with {len(self.hourly_queue)} updates")
-        return embeds
-        
-    except Exception as e:
-        logger.error(f"Failed to parse structured response: {e}")
-        logger.error(f"Raw response: {response_text}")
-        # Fallback to pattern-based summary
-        return self._create_pattern_hourly_summary()
+        try:
+            # Parse JSON response
+            analysis_data = self._parse_structured_llm_response(response_text)
+            
+            # Create structured embed using the contextual summarizer method
+            embeds = self.contextual_summarizer._create_contextual_summary_embed(
+                analysis_data, len(self.hourly_queue), summary_type
+            )
+            
+            # Store this summary for future context
+            summary_text = f"Headline: {analysis_data.get('headline', 'No headline')}"
+            for key in ['strategic_analysis', 'alliance_dynamics', 'entertainment_highlights', 'showmance_updates', 'house_culture']:
+                content = analysis_data.get(key)
+                if content and content.strip() and content.lower() != 'null':
+                    summary_text += f"\n{key.replace('_', ' ').title()}: {content[:100]}..."
+            
+            await self.contextual_summarizer._store_summary_context(summary_text, summary_type, self.hourly_queue, current_day, self.analyzer)
+            
+            # Extract and store timeline events from this summary
+            await self.contextual_summarizer._extract_and_store_timeline_events(summary_text, self.hourly_queue, current_day, self.analyzer)
+            
+            # Update houseguest arcs based on this summary
+            await self.contextual_summarizer._update_houseguest_arcs(summary_text, self.hourly_queue, self.analyzer)
+            
+            logger.info(f"Created contextual structured {summary_type} summary with {len(self.hourly_queue)} updates")
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"Failed to parse structured response: {e}")
+            logger.error(f"Raw response: {response_text}")
+            # Fallback to pattern-based summary
+            return self._create_pattern_hourly_summary()
     
     def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
         """Create pattern-based hourly summary when LLM unavailable"""
