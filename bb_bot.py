@@ -4362,26 +4362,26 @@ class BBDiscordBot(commands.Bot):
                 await interaction.followup.send("Error generating alliance map.")
 
         @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
-@discord.app_commands.describe(houseguest="Select a houseguest to view their loyalty information")
-@discord.app_commands.choices(houseguest=[
-    discord.app_commands.Choice(name=name, value=name) for name in BB_HOUSEGUESTS
-])
-async def loyalty_slash(interaction: discord.Interaction, 
-                       houseguest: discord.app_commands.Choice[str]):
-    """Show loyalty information for a houseguest"""
-    try:
-        await interaction.response.defer()
-        
-        # Use the choice value (which is the houseguest name)
-        houseguest_name = houseguest.value
-        
-        embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest_name)
-        await interaction.followup.send(embed=embed)
-        
-    except Exception as e:
-        logger.error(f"Error showing loyalty: {e}")
-        logger.error(traceback.format_exc())
-        await interaction.followup.send("Error generating loyalty information.")
+        @discord.app_commands.describe(houseguest="Select a houseguest to view their loyalty information")
+        @discord.app_commands.choices(houseguest=[
+            discord.app_commands.Choice(name=name, value=name) for name in BB_HOUSEGUESTS
+        ])
+        async def loyalty_slash(interaction: discord.Interaction, 
+                               houseguest: discord.app_commands.Choice[str]):
+            """Show loyalty information for a houseguest"""
+            try:
+                await interaction.response.defer()
+                
+                # Use the choice value (which is the houseguest name)
+                houseguest_name = houseguest.value
+                
+                embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest_name)
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing loyalty: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating loyalty information.")
 
         @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
         async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
