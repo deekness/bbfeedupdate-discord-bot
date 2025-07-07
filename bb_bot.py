@@ -4169,17 +4169,17 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error sending daily recap: {e}")
 
     @tasks.loop(minutes=2)
-async def check_rss_feed(self):
-    """Check RSS feed for new updates with dual batching system"""
-    if self.is_shutting_down:
-        return
-
-    try:
-        feed = feedparser.parse(self.rss_url)
-        
-        if not feed.entries:
-            logger.warning("No entries returned from RSS feed")
+    async def check_rss_feed(self):
+        """Check RSS feed for new updates with dual batching system"""
+        if self.is_shutting_down:
             return
+
+        try:
+            feed = feedparser.parse(self.rss_url)
+        
+            if not feed.entries:
+                logger.warning("No entries returned from RSS feed")
+                return
         
         updates = self.process_rss_entries(feed.entries)
         new_updates = await self.filter_duplicates(updates)
