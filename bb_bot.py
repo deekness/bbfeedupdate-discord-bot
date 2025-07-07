@@ -3210,7 +3210,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical."""
                     inline=False
                 )
             
-            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
+            embed.set_footer(text=f"Chen Bot's Highlights • Pattern Analysis • {len(selected_updates)} key moments")
             
             return embed
             
