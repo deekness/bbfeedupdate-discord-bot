@@ -2950,9 +2950,10 @@ Be selective - these should be the updates that a superfan would want to know ab
                 title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–—]\s*', '', title, flags=re.IGNORECASE)
                 title = re.sub(r'^\d{1,2}:\d{2}\s*[-–—]\s*', '', title)
                 
-               # Get clean time for field name
-                time_str = highlight.get('time', 'Time')
-                # FIXED: Remove duplicate time pattern but keep PST
+               time_str = highlight.get('time', 'Time')
+                # Simple fix for duplicate times like "08:10 PM - 08:10 PM PST"
+                if ' - ' in time_str:
+                    time_str = time_str.split(' - ')[-1]  # Take the last part (keeps "08:10 PM PST")
                 
                 # Remove "- XX:XX PM PST" duplicate pattern, keeping just the first time
                 time_str = re.sub(r'\s*-\s*\d{1,2}:\d{2}\s*(AM|PM)\s*(PST|EST|CST|MST)?\s*', '', time_str, flags=re.IGNORECASE)
