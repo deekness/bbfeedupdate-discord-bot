@@ -3226,12 +3226,12 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
         """Create hourly embed with narrative LLM summary"""
         current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
         
-        embed = discord.Embed(
-            embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} ")
-            description=f"**{update_count} updates this hour** • AI Narrative Analysis",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
+    embed = discord.Embed(
+        title=f"🏠 Chen Bot's House Summary - {current_hour}",  # ← Fixed!
+        description=f"**{update_count} updates this hour** • AI Narrative Analysis",
+        color=0x9b59b6,
+        timestamp=datetime.now()
+    )
         
         # Split the narrative summary into manageable parts
         summary_parts = self._split_summary_for_embed(narrative_summary, max_length=1000)
