@@ -2945,15 +2945,35 @@ Be selective - these should be the updates that a superfan would want to know ab
             
             for highlight in highlights_data['highlights'][:10]:
                 title = highlight.get('title', 'Update')
-                # FIXED: More thorough time removal from title
+                # Remove time from title if it appears at the beginning
                 title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*(PST|EST|CST|MST)?\s*[-–—]\s*', '', title, flags=re.IGNORECASE)
                 title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–—]\s*', '', title, flags=re.IGNORECASE)
                 title = re.sub(r'^\d{1,2}:\d{2}\s*[-–—]\s*', '', title)
                 
                 time_str = highlight.get('time', 'Time')
-                # Fix duplicate times like "08:10 PM - 08:10 PM PST" -> "08:10 PM PST"
-                if ' - ' in time_str and time_str.count(':') > 1:
-                    time_str = time_str.split(' - ')[-1]
+                # FIXED: Clean up duplicate times like "08:10 PM - 08:10 PM PST" -> "08:10 PM PST"
+                if ' - ' in time_str:
+                    # Split by ' - ' and take the last part (which should have timezone)
+                    parts = time_str.split(' - ')
+                    if len(parts) > 1:
+                        # If we have multiple parts, take the last one
+                        time_str = parts[-1].strip()
+                
+                # Also clean up any remaining duplicate time patterns
+                time_str = re.sub(r'(\d{1,2}:\d{2}\s*[AP]M)\s*-\s*\1', r'\1', time_str, flags=re.IGNORECASE)
+                
+                if highlight.get('reason') and highlight['reason'].strip():
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
+                        value=f"{title}\n*{highlight['reason']}*",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
+                        value=title,
+                        inline=False
+                    )
 
                 
                 if highlight.get('reason') and highlight['reason'].strip():
