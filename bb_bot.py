@@ -4972,93 +4972,93 @@ self.POLL_TEMPLATES = {
 }
     
     class HouseguestSelector(discord.ui.View):
-    def __init__(self, poll_data, bot_instance):
-        super().__init__(timeout=300)
-        self.poll_data = poll_data
-        self.bot_instance = bot_instance
+        def __init__(self, poll_data, bot_instance):
+            super().__init__(timeout=300)
+            self.poll_data = poll_data
+            self.bot_instance = bot_instance
+            
+            select = discord.ui.Select(
+                placeholder="Choose houseguests for this poll...",
+                min_values=2,
+                max_values=min(len(bot_instance.CURRENT_HOUSEGUESTS), 25),
+                options=[
+                    discord.SelectOption(
+                        label=hg,
+                        value=hg,
+                        description=f"Include {hg} in the poll"
+                    ) for hg in bot_instance.CURRENT_HOUSEGUESTS
+                ]
+            )
+            select.callback = self.select_callback
+            self.add_item(select)
         
-        select = discord.ui.Select(
-            placeholder="Choose houseguests for this poll...",
-            min_values=2,
-            max_values=min(len(bot_instance.CURRENT_HOUSEGUESTS), 25),
-            options=[
-                discord.SelectOption(
-                    label=hg,
-                    value=hg,
-                    description=f"Include {hg} in the poll"
-                ) for hg in bot_instance.CURRENT_HOUSEGUESTS
-            ]
-        )
-        select.callback = self.select_callback
-        self.add_item(select)
-    
-    async def select_callback(self, interaction: discord.Interaction):
-        selected_houseguests = interaction.data['values']
-        
-        try:
-            pred_type = PredictionType(self.poll_data['prediction_type'])
-            prediction_id = self.bot_instance.prediction_manager.create_prediction(
-                title=self.poll_data['title'],
-                description=self.poll_data['description'],
-                prediction_type=pred_type,
-                options=selected_houseguests,
-                created_by=interaction.user.id,
-                guild_id=interaction.guild.id,
-                duration_hours=self.poll_data['duration_hours'],
-                week_number=self.poll_data.get('week_number')
-            )
+        async def select_callback(self, interaction: discord.Interaction):
+            selected_houseguests = interaction.data['values']
             
-            embed = discord.Embed(
-                title="✅ Poll Created Successfully!",
-                description=f"**{self.poll_data['title']}**\n{self.poll_data['description']}",
-                color=0x2ecc71,
-                timestamp=datetime.now()
-            )
-            
-            embed.add_field(
-                name="📋 Selected Houseguests",
-                value=" • ".join(selected_houseguests),
-                inline=False
-            )
-            
-            embed.add_field(
-                name="🎯 Poll ID", 
-                value=str(prediction_id),
-                inline=True
-            )
-            
-            embed.add_field(
-                name="💡 How to Vote",
-                value=f"`/predict {prediction_id} <houseguest>`",
-                inline=False
-            )
-            
-            await interaction.response.edit_message(embed=embed, view=None)
-            
-            # Announce in main channel
-            if self.bot_instance.config.get('update_channel_id'):
-                channel = self.bot_instance.get_channel(self.bot_instance.config.get('update_channel_id'))
-                if channel:
-                    prediction_data = {
-                        'id': prediction_id,
-                        'title': self.poll_data['title'],
-                        'description': self.poll_data['description'],
-                        'type': self.poll_data['prediction_type'],
-                        'options': selected_houseguests,
-                        'closes_at': datetime.now() + timedelta(hours=self.poll_data['duration_hours']),
-                        'week_number': self.poll_data.get('week_number')
-                    }
-                    
-                    announce_embed = self.bot_instance.prediction_manager.create_prediction_embed(prediction_data)
-                    announce_embed.title = f"🗳️ New Prediction Poll - {self.poll_data['title']}"
-                    await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
-            
-        except Exception as e:
-            logger.error(f"Error creating poll: {e}")
-            await interaction.response.edit_message(
-                content="❌ Error creating poll. Please try again.",
-                view=None
-            )
+            try:
+                pred_type = PredictionType(self.poll_data['prediction_type'])
+                prediction_id = self.bot_instance.prediction_manager.create_prediction(
+                    title=self.poll_data['title'],
+                    description=self.poll_data['description'],
+                    prediction_type=pred_type,
+                    options=selected_houseguests,
+                    created_by=interaction.user.id,
+                    guild_id=interaction.guild.id,
+                    duration_hours=self.poll_data['duration_hours'],
+                    week_number=self.poll_data.get('week_number')
+                )
+                
+                embed = discord.Embed(
+                    title="✅ Poll Created Successfully!",
+                    description=f"**{self.poll_data['title']}**\n{self.poll_data['description']}",
+                    color=0x2ecc71,
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(
+                    name="📋 Selected Houseguests",
+                    value=" • ".join(selected_houseguests),
+                    inline=False
+                )
+                
+                embed.add_field(
+                    name="🎯 Poll ID", 
+                    value=str(prediction_id),
+                    inline=True
+                )
+                
+                embed.add_field(
+                    name="💡 How to Vote",
+                    value=f"`/predict {prediction_id} <houseguest>`",
+                    inline=False
+                )
+                
+                await interaction.response.edit_message(embed=embed, view=None)
+                
+                # Announce in main channel
+                if self.bot_instance.config.get('update_channel_id'):
+                    channel = self.bot_instance.get_channel(self.bot_instance.config.get('update_channel_id'))
+                    if channel:
+                        prediction_data = {
+                            'id': prediction_id,
+                            'title': self.poll_data['title'],
+                            'description': self.poll_data['description'],
+                            'type': self.poll_data['prediction_type'],
+                            'options': selected_houseguests,
+                            'closes_at': datetime.now() + timedelta(hours=self.poll_data['duration_hours']),
+                            'week_number': self.poll_data.get('week_number')
+                        }
+                        
+                        announce_embed = self.bot_instance.prediction_manager.create_prediction_embed(prediction_data)
+                        announce_embed.title = f"🗳️ New Prediction Poll - {self.poll_data['title']}"
+                        await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+                
+            except Exception as e:
+                logger.error(f"Error creating poll: {e}")
+                await interaction.response.edit_message(
+                    content="❌ Error creating poll. Please try again.",
+                    view=None
+                )
 
     def setup_commands(self):
         """Setup all slash commands"""
