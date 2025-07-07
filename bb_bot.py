@@ -4050,10 +4050,11 @@ class BBDiscordBot(commands.Bot):
         self.setup_commands()
     
     def setup_commands(self):
-        """Setup all slash commands"""
+    """Setup all slash commands"""
     
-    @self.tree.command(name="status", description="Show bot status and statistics")
+    @self.tree.command(name="status", description="Show bot status and statistics")  # ✅ CORRECT LOCATION
     async def status_slash(interaction: discord.Interaction):
+        # ...
         """Show bot status"""
         try:
             if not interaction.user.guild_permissions.administrator:
