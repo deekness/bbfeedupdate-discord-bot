@@ -4168,6 +4168,52 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error sending daily recap: {e}")
 
+    async def send_highlights_batch(self):
+        """Send highlights batch (every 25 updates)"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured for highlights")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                return
+            
+            embeds = await self.update_batcher.create_highlights_batch()
+            
+            for embed in embeds:
+                await channel.send(embed=embed)
+            
+            logger.info(f"Sent highlights batch with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending highlights batch: {e}")
+
+    async def send_hourly_summary(self):
+        """Send hourly comprehensive summary"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            logger.warning("Update channel not configured for hourly summary")
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found")
+                return
+            
+            embeds = await self.update_batcher.create_hourly_summary()
+            
+            for embed in embeds:
+                await channel.send(embed=embed)
+            
+            logger.info(f"Sent hourly summary with {len(embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"Error sending hourly summary: {e}")
+    
     @tasks.loop(minutes=2)
     async def check_rss_feed(self):
         """Check RSS feed for new updates with dual batching system"""
