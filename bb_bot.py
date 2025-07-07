@@ -4050,7 +4050,7 @@ class BBDiscordBot(commands.Bot):
         self.setup_commands()
     
     def setup_commands(self):
-    """Setup all slash commands"""
+        """Setup all slash commands"""
     
     @self.tree.command(name="status", description="Show bot status and statistics")
     async def status_slash(interaction: discord.Interaction):
