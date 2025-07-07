@@ -3515,6 +3515,578 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error in sync command: {e}")
                 await interaction.followup.send("Error syncing commands.", ephemeral=True)
 
+        @self.tree.command(name="alliances", description="Show current Big Brother alliances")
+        async def alliances_slash(interaction: discord.Interaction):
+            """Show current alliance map"""
+            try:
+                await interaction.response.defer()
+                
+                logger.info(f"Alliance command called by {interaction.user}")
+                
+                embed = self.alliance_tracker.create_alliance_map_embed()
+                
+                logger.info(f"Alliance embed created with {len(embed.fields)} fields")
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing alliances: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating alliance map.")
+
+        @self.tree.command(name="loyalty", description="Show a houseguest's alliance history")
+        async def loyalty_slash(interaction: discord.Interaction, houseguest: str):
+            """Show loyalty information for a houseguest"""
+            try:
+                await interaction.response.defer()
+                
+                # Capitalize the name properly
+                houseguest = houseguest.strip().title()
+                
+                embed = self.alliance_tracker.get_houseguest_loyalty_embed(houseguest)
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing loyalty: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating loyalty information.")
+
+        @self.tree.command(name="betrayals", description="Show recent alliance betrayals")
+        async def betrayals_slash(interaction: discord.Interaction, days: int = 7):
+            """Show recent betrayals"""
+            try:
+                await interaction.response.defer()
+                
+                if days < 1 or days > 30:
+                    await interaction.followup.send("Days must be between 1 and 30")
+                    return
+                
+                betrayals = self.alliance_tracker.get_recent_betrayals(days)
+                
+                embed = discord.Embed(
+                    title="💔 Recent Alliance Betrayals",
+                    description=f"Betrayals in the last {days} days",
+                    color=0xe74c3c,
+                    timestamp=datetime.now()
+                )
+                
+                if not betrayals:
+                    embed.add_field(
+                        name="No Betrayals",
+                        value="No alliance betrayals detected in this time period",
+                        inline=False
+                    )
+                else:
+                    for i, betrayal in enumerate(betrayals[:10], 1):
+                        time_ago = datetime.now() - datetime.fromisoformat(betrayal['timestamp'])
+                        hours_ago = int(time_ago.total_seconds() / 3600)
+                        time_str = f"{hours_ago}h ago" if hours_ago < 24 else f"{hours_ago//24}d ago"
+                        
+                        embed.add_field(
+                            name=f"⚡ {time_str}",
+                            value=betrayal['description'],
+                            inline=False
+                        )
+                
+                embed.set_footer(text="Based on live feed updates")
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing betrayals: {e}")
+                logger.error(traceback.format_exc())
+                await interaction.followup.send("Error generating betrayal list.")
+
+        @self.tree.command(name="removebadalliance", description="Remove incorrectly detected alliance (Admin only)")
+        async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
+            """Remove a bad alliance"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                    
+                await interaction.response.defer(ephemeral=True)
+                
+                # Mark alliance as dissolved
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    UPDATE alliances 
+                    SET status = 'dissolved', confidence_level = 0 
+                    WHERE name = ?
+                """, (alliance_name,))
+                
+                affected = cursor.rowcount
+                conn.commit()
+                conn.close()
+                
+                if affected > 0:
+                    await interaction.followup.send(f"✅ Removed alliance: **{alliance_name}**", ephemeral=True)
+                    logger.info(f"Removed bad alliance: {alliance_name}")
+                else:
+                    await interaction.followup.send(f"❌ Alliance '{alliance_name}' not found", ephemeral=True)
+                    
+            except Exception as e:
+                logger.error(f"Error removing alliance: {e}")
+                await interaction.followup.send("Error removing alliance", ephemeral=True)
+
+        @self.tree.command(name="clearalliances", description="Clear all alliance data (Owner only)")
+        async def clear_alliances(interaction: discord.Interaction):
+            """Clear all alliance data - owner only"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                conn = self.alliance_tracker.get_connection()
+                cursor = conn.cursor()
+                
+                # Clear all alliance data
+                cursor.execute("DELETE FROM alliance_events")
+                cursor.execute("DELETE FROM alliance_members")
+                cursor.execute("DELETE FROM alliances")
+                
+                conn.commit()
+                conn.close()
+                
+                await interaction.followup.send("✅ All alliance data has been cleared", ephemeral=True)
+                logger.info("Alliance data cleared by owner")
+                
+            except Exception as e:
+                logger.error(f"Error clearing alliances: {e}")
+                await interaction.followup.send("Error clearing alliance data", ephemeral=True)
+
+        @self.tree.command(name="zing", description="Deliver a Big Brother style zing!")
+        @discord.app_commands.describe(
+            zing_type="Choose your zing type",
+            target="Only required for targeted zings (leave blank for random/self)"
+        )
+        @discord.app_commands.choices(zing_type=[
+            discord.app_commands.Choice(name="Targeted Zing", value="targeted"),
+            discord.app_commands.Choice(name="Random Zing", value="random"),
+            discord.app_commands.Choice(name="Self Zing", value="self")
+        ])
+        async def zing_slash(interaction: discord.Interaction, 
+                            zing_type: discord.app_commands.Choice[str],
+                            target: discord.Member = None):
+            """Deliver a zing to someone"""
+            try:
+                zing_choice = zing_type.value
+                
+                # Determine the actual target based on choice
+                if zing_choice == "targeted":
+                    if not target:
+                        await interaction.response.send_message("Please specify a target for a targeted zing!", ephemeral=True)
+                        return
+                    final_target = target
+                elif zing_choice == "random":
+                    if target:
+                        await interaction.response.send_message("Random zing doesn't need a target - it will pick someone automatically!", ephemeral=True)
+                        return
+                    # Get all members in the server (excluding bots) - INCLUDE the command user
+                    members = [m for m in interaction.guild.members if not m.bot]
+                    if not members:
+                        await interaction.response.send_message("No valid members to zing!", ephemeral=True)
+                        return
+                    import random as rand_module
+                    final_target = rand_module.choice(members)
+                elif zing_choice == "self":
+                    if target:
+                        await interaction.response.send_message("Self zing doesn't need a target - you're zinging yourself!", ephemeral=True)
+                        return
+                    # Self-zing
+                    final_target = interaction.user
+                else:
+                    await interaction.response.send_message("Invalid zing type!", ephemeral=True)
+                    return
+                
+                # Select a random zing
+                import random as rand_module
+                zing = rand_module.choice(ALL_ZINGS)
+                
+                # Replace {target} with the actual mention
+                zing_text = zing.replace("{target}", final_target.mention)
+                
+                # If the zing contains [name], replace it with a random other member's name
+                if "[name]" in zing_text:
+                    other_members = [m for m in interaction.guild.members if not m.bot and m.id != final_target.id]
+                    if other_members:
+                        other_member = rand_module.choice(other_members)
+                        zing_text = zing_text.replace("[name]", other_member.display_name)
+                    else:
+                        # Fallback if no other members
+                        zing_text = zing_text.replace("[name]", "someone")
+                
+                # Create the embed
+                embed = discord.Embed(
+                    title="🎯 ZING!",
+                    description=zing_text,
+                    color=0xff1744 if final_target == interaction.user else 0xff9800
+                )
+                
+                # Add Zingbot style footer
+                zingbot_phrases = [
+                    "ZING! That's what I'm programmed for!",
+                    "Another successful zing delivered!",
+                    "Zingbot 3000 strikes again!",
+                    "I came, I saw, I ZINGED!",
+                    "My circuits are buzzing with that zing!",
+                    "Zing executed successfully!",
+                    "Target acquired and zinged!",
+                    "Maximum zing efficiency achieved!"
+                ]
+                
+                embed.set_footer(text=rand_module.choice(zingbot_phrases))
+                
+                # Add special effects for self-zings
+                if final_target == interaction.user:
+                    embed.add_field(
+                        name="😅 Self-Zing Award",
+                        value="You zinged yourself! That takes guts... or poor decision making!",
+                        inline=False
+                    )
+                
+                await interaction.response.send_message(embed=embed)
+                
+                # Log the zing
+                logger.info(f"Zing delivered: {interaction.user} zinged {final_target}")
+                
+            except Exception as e:
+                logger.error(f"Error delivering zing: {e}")
+                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
+
+        # PREDICTION SYSTEM COMMANDS
+        @self.tree.command(name="createpoll", description="Create a prediction poll (Admin only)")
+        @discord.app_commands.describe(
+            prediction_type="Type of prediction",
+            title="Poll title",
+            description="Poll description",
+            options="All options separated by | (e.g., 'Alice|Bob|Charlie|David')",
+            duration_hours="How long the poll stays open (hours)",
+            week_number="Week number (for weekly predictions)"
+        )
+        @discord.app_commands.choices(prediction_type=[
+            discord.app_commands.Choice(name="👑 Season Winner", value="season_winner"),
+            discord.app_commands.Choice(name="🏆 Weekly HOH", value="weekly_hoh"),
+            discord.app_commands.Choice(name="💎 Weekly Veto", value="weekly_veto"),
+            discord.app_commands.Choice(name="🚪 Weekly Eviction", value="weekly_eviction")
+        ])
+        async def createpoll_slash(interaction: discord.Interaction, 
+                                  prediction_type: discord.app_commands.Choice[str],
+                                  title: str,
+                                  description: str,
+                                  options: str,
+                                  duration_hours: int,
+                                  week_number: int = None):
+            """Create a prediction poll"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
+                    return
+                
+                if duration_hours < 1 or duration_hours > 168:  # Max 1 week
+                    await interaction.response.send_message("Duration must be between 1 and 168 hours.", ephemeral=True)
+                    return
+                
+                # Parse options from the pipe-separated string
+                option_list = [opt.strip() for opt in options.split('|') if opt.strip()]
+                
+                if len(option_list) < 2:
+                    await interaction.response.send_message("You need at least 2 options. Separate them with | (e.g., 'Alice|Bob|Charlie')", ephemeral=True)
+                    return
+                
+                if len(option_list) > 25:  # Discord embed field limit
+                    await interaction.response.send_message("Maximum 25 options allowed.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                try:
+                    pred_type = PredictionType(prediction_type.value)
+                    prediction_id = self.prediction_manager.create_prediction(
+                        title=title,
+                        description=description,
+                        prediction_type=pred_type,
+                        options=option_list,
+                        created_by=interaction.user.id,
+                        guild_id=interaction.guild.id,
+                        duration_hours=duration_hours,
+                        week_number=week_number
+                    )
+                    
+                    # Create embed to show the created poll
+                    prediction_data = {
+                        'id': prediction_id,
+                        'title': title,
+                        'description': description,
+                        'type': prediction_type.value,
+                        'options': option_list,
+                        'closes_at': datetime.now() + timedelta(hours=duration_hours),
+                        'week_number': week_number
+                    }
+                    
+                    embed = self.prediction_manager.create_prediction_embed(prediction_data)
+                    embed.color = 0x2ecc71  # Green for newly created
+                    embed.title = f"✅ Poll Created - {embed.title}"
+                    
+                    await interaction.followup.send(
+                        f"Poll created successfully! ID: {prediction_id}",
+                        embed=embed,
+                        ephemeral=True
+                    )
+                    
+                    # Optionally announce in the main channel
+                    if self.config.get('update_channel_id'):
+                        channel = self.get_channel(self.config.get('update_channel_id'))
+                        if channel:
+                            announce_embed = self.prediction_manager.create_prediction_embed(prediction_data)
+                            announce_embed.title = f"🗳️ New Prediction Poll - {title}"
+                            await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+                    
+                except Exception as e:
+                    logger.error(f"Error creating poll: {e}")
+                    await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in createpoll command: {e}")
+                if not interaction.response.is_done():
+                    await interaction.response.send_message("Error creating poll.", ephemeral=True)
+
+        @self.tree.command(name="predict", description="Make a prediction on an active poll")
+        @discord.app_commands.describe(
+            prediction_id="ID of the prediction poll",
+            option="Your prediction choice"
+        )
+        async def predict_slash(interaction: discord.Interaction, prediction_id: int, option: str):
+            """Make a prediction"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                success = self.prediction_manager.make_prediction(
+                    user_id=interaction.user.id,
+                    prediction_id=prediction_id,
+                    option=option
+                )
+                
+                if success:
+                    await interaction.followup.send(
+                        f"✅ Prediction recorded: **{option}**\n"
+                        f"You can change your prediction anytime before the poll closes.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "❌ Could not record prediction. The poll may be closed, invalid, or your option is not valid.",
+                        ephemeral=True
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error making prediction: {e}")
+                await interaction.followup.send("Error making prediction.", ephemeral=True)
+
+        @self.tree.command(name="polls", description="View active prediction polls")
+        async def polls_slash(interaction: discord.Interaction):
+            """View active polls"""
+            try:
+                await interaction.response.defer()
+                
+                active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
+                
+                if not active_predictions:
+                    embed = discord.Embed(
+                        title="📊 Active Prediction Polls",
+                        description="No active polls right now.",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                # Show up to 5 active polls
+                for prediction in active_predictions[:5]:
+                    user_prediction = self.prediction_manager.get_user_prediction(
+                        interaction.user.id, prediction['id']
+                    )
+                    
+                    embed = self.prediction_manager.create_prediction_embed(prediction, user_prediction)
+                    await interaction.followup.send(embed=embed)
+                
+                if len(active_predictions) > 5:
+                    await interaction.followup.send(
+                        f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict <id> <option>` to vote.*"
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error showing polls: {e}")
+                await interaction.followup.send("Error retrieving polls.")
+
+        @self.tree.command(name="closepoll", description="Manually close a prediction poll (Admin only)")
+        @discord.app_commands.describe(prediction_id="ID of the poll to close")
+        async def closepoll_slash(interaction: discord.Interaction, prediction_id: int):
+            """Manually close a poll"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to close polls.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                success = self.prediction_manager.close_prediction(prediction_id, interaction.user.id)
+                
+                if success:
+                    await interaction.followup.send(f"✅ Poll {prediction_id} has been closed.", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"❌ Could not close poll {prediction_id}. It may not exist or already be closed.", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error closing poll: {e}")
+                await interaction.followup.send("Error closing poll.", ephemeral=True)
+
+        @self.tree.command(name="resolvepoll", description="Resolve a poll and award points (Admin only)")
+        @discord.app_commands.describe(
+            prediction_id="ID of the poll to resolve",
+            correct_option="The correct answer"
+        )
+        async def resolvepoll_slash(interaction: discord.Interaction, prediction_id: int, correct_option: str):
+            """Resolve a poll and award points"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to resolve polls.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                success, correct_users = self.prediction_manager.resolve_prediction(
+                    prediction_id, correct_option, interaction.user.id
+                )
+                
+                if success:
+                    embed = discord.Embed(
+                        title="✅ Poll Resolved",
+                        description=f"Poll {prediction_id} has been resolved.\n"
+                                   f"**Correct Answer:** {correct_option}\n"
+                                   f"**Winners:** {correct_users} users got it right!",
+                        color=0x2ecc71,
+                        timestamp=datetime.now()
+                    )
+                    
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    
+                    # Announce resolution in main channel
+                    if self.config.get('update_channel_id'):
+                        channel = self.get_channel(self.config.get('update_channel_id'))
+                        if channel:
+                            public_embed = discord.Embed(
+                                title="🎯 Poll Results",
+                                description=f"**Correct Answer:** {correct_option}\n"
+                                           f"🎉 **{correct_users} users** predicted correctly and earned points!",
+                                color=0x2ecc71
+                            )
+                            await channel.send(embed=public_embed)
+                else:
+                    await interaction.followup.send(f"❌ Could not resolve poll {prediction_id}.", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error resolving poll: {e}")
+                await interaction.followup.send("Error resolving poll.", ephemeral=True)
+
+        @self.tree.command(name="leaderboard", description="View prediction leaderboards")
+        @discord.app_commands.describe(
+            leaderboard_type="Type of leaderboard to view",
+            week_number="Week number for weekly leaderboard"
+        )
+        @discord.app_commands.choices(leaderboard_type=[
+            discord.app_commands.Choice(name="🏆 Season Leaderboard", value="season"),
+            discord.app_commands.Choice(name="📅 Weekly Leaderboard", value="weekly")
+        ])
+        async def leaderboard_slash(interaction: discord.Interaction, 
+                                   leaderboard_type: discord.app_commands.Choice[str],
+                                   week_number: int = None):
+            """View leaderboards"""
+            try:
+                await interaction.response.defer()
+                
+                if leaderboard_type.value == "season":
+                    leaderboard = self.prediction_manager.get_season_leaderboard(interaction.guild.id)
+                    embed = self.prediction_manager.create_leaderboard_embed(
+                        leaderboard, interaction.guild, "Season"
+                    )
+                else:
+                    leaderboard = self.prediction_manager.get_weekly_leaderboard(
+                        interaction.guild.id, week_number
+                    )
+                    week_text = f"Week {week_number}" if week_number else "Current Week"
+                    embed = self.prediction_manager.create_leaderboard_embed(
+                        leaderboard, interaction.guild, week_text
+                    )
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing leaderboard: {e}")
+                await interaction.followup.send("Error retrieving leaderboard.")
+
+        @self.tree.command(name="mypredictions", description="View your prediction history")
+        async def mypredictions_slash(interaction: discord.Interaction):
+            """View user's prediction history"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                history = self.prediction_manager.get_user_predictions_history(
+                    interaction.user.id, interaction.guild.id
+                )
+                
+                if not history:
+                    embed = discord.Embed(
+                        title="📊 Your Prediction History",
+                        description="You haven't made any predictions yet!",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Calculate user stats
+                total_predictions = len(history)
+                correct_predictions = sum(1 for h in history if h['is_correct'])
+                total_points = sum(h['points_earned'] for h in history)
+                accuracy = (correct_predictions / total_predictions * 100) if total_predictions > 0 else 0
+                
+                embed = discord.Embed(
+                    title="📊 Your Prediction History",
+                    description=f"**Total Points:** {total_points}\n"
+                               f"**Accuracy:** {correct_predictions}/{total_predictions} ({accuracy:.1f}%)",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                # Show recent predictions
+                history_text = []
+                for pred in history[:10]:  # Show last 10
+                    status_emoji = "✅" if pred['is_correct'] else "❌" if pred['is_correct'] is False else "⏳"
+                    points_text = f"(+{pred['points_earned']} pts)" if pred['points_earned'] > 0 else ""
+                    
+                    history_text.append(
+                        f"{status_emoji} **{pred['title']}**\n"
+                        f"   Your pick: {pred['user_option']} {points_text}"
+                    )
+                
+                if history_text:
+                    embed.add_field(
+                        name="Recent Predictions",
+                        value="\n\n".join(history_text),
+                        inline=False
+                    )
+                
+                embed.set_footer(text="Only showing last 10 predictions")
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error showing user predictions: {e}")
+                await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
+
         # I'll continue with the rest of the commands in the next step...
         # For now, this should fix your immediate startup error
 
