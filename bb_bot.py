@@ -4157,7 +4157,7 @@ class BBDiscordBot(commands.Bot):
 
     @tasks.loop(minutes=2)
     async def check_rss_feed(self):
-    """Check RSS feed for new updates with dual batching system"""
+        """Check RSS feed for new updates with dual batching system"""
         if self.is_shutting_down:
             return
     
