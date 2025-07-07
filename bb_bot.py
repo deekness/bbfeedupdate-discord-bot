@@ -3587,117 +3587,134 @@ class EnhancedUpdateBatcher(UpdateBatcher):
         logger.info(f"Enhanced UpdateBatcher initialized - Contextual: {'Enabled' if self.contextual_enabled else 'Disabled'}")
     
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-        """Create highlights using contextual LLM analysis"""
-        if not self.llm_client or not self.contextual_enabled:
-            return await super()._create_llm_highlights_only()
+    """Create highlights using contextual LLM analysis"""
+    if not self.llm_client:
+        return [self._create_pattern_highlights_embed()]
+    
+    # For highlights, we want to use the ORIGINAL method but with context awareness
+    # Don't use the narrative summarizer for highlights
+    
+    try:
+        await self.rate_limiter.wait_if_needed()
         
+        # Get context for better selection, but don't use the narrative summarizer
+        context_info = ""
+        if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
+            try:
+                context_stats = self.contextual_summarizer.get_context_stats()
+                if context_stats['recent_summaries_count'] > 0:
+                    # Get a brief context to help with selection
+                    recent_context = list(self.contextual_summarizer.recent_context)[-2:]  # Last 2 summaries
+                    context_info = f"\n\nCONTEXT: Recent significant events include: {' '.join([s[:100] + '...' for s in recent_context])}"
+            except Exception as e:
+                logger.debug(f"Context retrieval failed: {e}")
+        
+        # Prepare update data (SAME AS ORIGINAL)
+        updates_text = "\n".join([
+            f"{self._extract_correct_time(u)} - {u.title}"
+            for u in self.highlights_queue
+        ])
+        
+        # Enhanced prompt with optional context
+        prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.{context_info}
+
+{updates_text}
+
+Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+
+HIGHLIGHT-WORTHY updates include:
+- Competition wins (HOH, POV, etc.)
+- Major strategic moves or betrayals
+- Dramatic fights or confrontations  
+- Romantic moments (first kiss, breakup, etc.)
+- Hilarious or memorable incidents
+- Game-changing twists revealed
+- Eviction results or surprise votes
+- Alliance formations or breaks
+
+For each selected update, provide:
+{{
+    "highlights": [
+        {{
+            "time": "exact time from update",
+            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
+            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+        }}
+    ]
+}}
+
+Be selective - these should be the updates that a superfan would want to know about from this batch."""
+
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=800,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Parse and create embed (SAME AS ORIGINAL)
         try:
-            await self.rate_limiter.wait_if_needed()
+            highlights_data = self._parse_llm_response(response.content[0].text)
             
-            # Use contextual summarizer for highlights
-            contextual_summary = await self.contextual_summarizer.create_contextual_summary(
-                updates=self.highlights_queue,
-                summary_type="highlights",
-                analyzer=self.analyzer,
-                llm_client=self.llm_client
-            )
+            if not highlights_data.get('highlights'):
+                logger.warning("No highlights in LLM response, using pattern fallback")
+                return [self._create_pattern_highlights_embed()]
             
-            # Create embed with contextual summary
             embed = discord.Embed(
                 title="🎯 Feed Highlights - What Just Happened",
-                description=f"Contextual analysis of {len(self.highlights_queue)} recent updates",
+                description=f"Key moments from the last {len(self.highlights_queue)} updates",
                 color=0xe74c3c,
                 timestamp=datetime.now()
             )
             
-            # Split long summaries into multiple fields
-            summary_parts = self._split_summary_for_embed(contextual_summary)
+            # Add context indicator if available
+            if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
+                try:
+                    context_stats = self.contextual_summarizer.get_context_stats()
+                    if context_stats['recent_summaries_count'] > 0:
+                        embed.description += f" • Building on season narrative"
+                except:
+                    pass
             
-            for i, part in enumerate(summary_parts):
-                field_name = "📋 Analysis" if i == 0 else f"📋 Analysis (cont'd {i+1})"
-                embed.add_field(
-                    name=field_name,
-                    value=part,
-                    inline=False
-                )
-            
-            # Add context indicator
-            context_stats = self.contextual_summarizer.get_context_stats()
-            embed.add_field(
-                name="🧠 Context Awareness",
-                value=f"Building on {context_stats['recent_summaries_count']} recent summaries "
-                      f"and {context_stats['timeline_events_count']} timeline events",
-                inline=False
-            )
-            
-            embed.set_footer(text=f"Contextual Highlights • {len(self.highlights_queue)} updates processed • Day {context_stats['latest_day']}")
-            
-            return [embed]
-            
-        except Exception as e:
-            logger.error(f"Contextual highlights failed: {e}")
-            # Fallback to original method
-            return await super()._create_llm_highlights_only()
-    
-    async def _create_llm_hourly_summary(self) -> List[discord.Embed]:
-        """Create hourly summary using contextual analysis"""
-        if not self.llm_client or not self.contextual_enabled:
-            return await super()._create_llm_hourly_summary()
-        
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            # Use contextual summarizer for hourly summary
-            contextual_summary = await self.contextual_summarizer.create_contextual_summary(
-                updates=self.hourly_queue,
-                summary_type="hourly",
-                analyzer=self.analyzer,
-                llm_client=self.llm_client
-            )
-            
-            # Create enhanced hourly summary embed
-            current_hour = datetime.now().strftime("%I %p")
-            context_stats = self.contextual_summarizer.get_context_stats()
-            
-            embed = discord.Embed(
-                title=f"📊 Contextual Hourly Digest - {current_hour}",
-                description=f"**{len(self.hourly_queue)} updates this hour** • Day {context_stats['latest_day']} Analysis",
-                color=0x9b59b6,
-                timestamp=datetime.now()
-            )
-            
-            # Split summary into digestible parts
-            summary_parts = self._split_summary_for_embed(contextual_summary, max_length=900)
-            
-            for i, part in enumerate(summary_parts):
-                if i == 0:
-                    field_name = "📈 Contextual Analysis"
-                else:
-                    field_name = f"📈 Analysis (Part {i+1})"
+            for highlight in highlights_data['highlights'][:10]:
+                title = highlight.get('title', 'Update')
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
                 
-                embed.add_field(
-                    name=field_name,
-                    value=part,
-                    inline=False
-                )
+                if highlight.get('reason') and highlight['reason'].strip():
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=f"{title}\n*{highlight['reason']}*",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=title,
+                        inline=False
+                    )
             
-            # Add context indicators
-            embed.add_field(
-                name="🧠 Context Foundation",
-                value=f"Analysis builds on {context_stats['recent_summaries_count']} recent summaries\n"
-                      f"Timeline: {context_stats['timeline_events_count']} significant events tracked\n"
-                      f"Houseguests: {context_stats['tracked_houseguests_count']} story arcs maintained",
-                inline=False
-            )
+            # Enhanced footer
+            footer_text = f"Highlights • {len(self.highlights_queue)} updates processed"
+            if self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
+                try:
+                    context_stats = self.contextual_summarizer.get_context_stats()
+                    footer_text += f" • Day {context_stats['latest_day']}"
+                except:
+                    pass
             
-            embed.set_footer(text=f"Contextual Hourly Digest • {current_hour} • AI Narrative Building")
-            
+            embed.set_footer(text=footer_text)
             return [embed]
             
         except Exception as e:
-            logger.error(f"Contextual hourly summary failed: {e}")
-            # Fallback to original method
-            return await super()._create_llm_hourly_summary()
+            logger.error(f"Failed to parse highlights response: {e}")
+            return [self._create_pattern_highlights_embed()]
+            
+    except Exception as e:
+        logger.error(f"Contextual highlights failed: {e}")
+        # Fallback to original method
+        return await super()._create_llm_highlights_only()
     
     async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
         """Create contextual daily recap"""
