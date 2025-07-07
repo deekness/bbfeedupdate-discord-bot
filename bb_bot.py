@@ -4326,6 +4326,30 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error testing LLM: {e}")
                 await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
 
+        
+        @self.tree.command(name="testhourly", description="Force test hourly summary (Admin only)")
+        async def test_hourly_slash(interaction: discord.Interaction):
+            """Force test hourly summary"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                if len(self.update_batcher.hourly_queue) == 0:
+                    await interaction.followup.send("No updates in hourly queue to summarize.", ephemeral=True)
+                    return
+                
+                # Force send hourly summary
+                await self.send_hourly_summary()
+                
+                await interaction.followup.send(f"✅ Test hourly summary sent! ({len(self.update_batcher.hourly_queue)} updates processed)", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error testing hourly summary: {e}")
+                await interaction.followup.send("Error testing hourly summary.", ephemeral=True)
+        
         @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
         async def sync_slash(interaction: discord.Interaction):
             """Manually sync slash commands"""
