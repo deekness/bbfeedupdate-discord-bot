@@ -1166,112 +1166,112 @@ CRITICAL INSTRUCTIONS:
         current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
         current_day = self._calculate_current_day()
         
-            # Determine embed color based on importance
-    importance = analysis_data.get('overall_importance', 5)
-    if importance >= 9:
-        color = 0xff1744  # Red for explosive days
-    elif importance >= 7:
-        color = 0xff9800  # Orange for high activity
-    elif importance >= 4:
-        color = 0x3498db  # Blue for moderate activity
-    else:
-        color = 0x95a5a6  # Gray for quiet days
+        # Determine embed color based on importance
+        importance = analysis_data.get('overall_importance', 5)
+        if importance >= 9:
+            color = 0xff1744  # Red for explosive days
+        elif importance >= 7:
+            color = 0xff9800  # Orange for high activity
+        elif importance >= 4:
+            color = 0x3498db  # Blue for moderate activity
+        else:
+            color = 0x95a5a6  # Gray for quiet days
         
-            # Create main embed with appropriate title based on summary type
-            if summary_type == "hourly_summary":
-                title = f"🏠 Chen Bot's House Summary - {current_hour}"
-                description = f"**{update_count} updates this hour** • AI Contextual Analysis"
-                footer_text = f"Chen Bot's House Summary • {current_hour} • Contextual AI"
-            elif summary_type == "daily_recap":
-                title = f"📖 Day {current_day} Recap - Big Brother House"
-                description = f"**{update_count} total updates** • Complete day narrative with contextual AI"
-                footer_text = f"Day {current_day} Daily Recap • 8:01 AM PT • Contextual AI"
+        # Create main embed with appropriate title based on summary type
+        if summary_type == "hourly_summary":
+            title = f"🏠 Chen Bot's House Summary - {current_hour}"
+            description = f"**{update_count} updates this hour** • AI Contextual Analysis"
+            footer_text = f"Chen Bot's House Summary • {current_hour} • Contextual AI"
+        elif summary_type == "daily_recap":
+            title = f"📖 Day {current_day} Recap - Big Brother House"
+            description = f"**{update_count} total updates** • Complete day narrative with contextual AI"
+            footer_text = f"Day {current_day} Daily Recap • 8:01 AM PT • Contextual AI"
+        else:
+            title = f"🏠 Chen Bot's Update Summary"
+            description = f"**{update_count} updates** • AI Contextual Analysis"
+            footer_text = "Chen Bot's Summary • Contextual AI"
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Add headline as first field
+        headline = analysis_data.get('headline', 'Big Brother Update')
+        embed.add_field(
+            name="📰 Headline",
+            value=headline,
+            inline=False
+        )
+        
+        # Add structured sections only if they have content
+        sections = [
+            ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
+            ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
+            ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
+            ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
+            ("🏠 House Culture", analysis_data.get('house_culture'))
+        ]
+        
+        for section_name, content in sections:
+            if content and content.strip() and content.lower() != 'null':
+                # Split long content if needed
+                if len(content) > 1000:
+                    content = content[:997] + "..."
+                embed.add_field(
+                    name=section_name,
+                    value=content,
+                    inline=False
+                )
+        
+        # Add key players
+        key_players = analysis_data.get('key_players', [])
+        if key_players:
+            # Format key players nicely
+            if len(key_players) <= 6:
+                players_text = " • ".join([f"**{player}**" for player in key_players])
             else:
-                title = f"🏠 Chen Bot's Update Summary"
-                description = f"**{update_count} updates** • AI Contextual Analysis"
-                footer_text = "Chen Bot's Summary • Contextual AI"
+                players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
         
-            embed = discord.Embed(
-                title=title,
-                description=description,
-                color=color,
-                timestamp=datetime.now()
-            )
-        
-            # Add headline as first field
-            headline = analysis_data.get('headline', 'Big Brother Update')
             embed.add_field(
-                name="📰 Headline",
-                value=headline,
+                name="⭐ Key Players",
+                value=players_text,
                 inline=False
             )
         
-            # Add structured sections only if they have content
-            sections = [
-                ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
-                ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
-                ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
-                ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
-                ("🏠 House Culture", analysis_data.get('house_culture'))
-            ]
+        # Add importance rating with explanation
+        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+        importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
         
-            for section_name, content in sections:
-                if content and content.strip() and content.lower() != 'null':
-                    # Split long content if needed
-                    if len(content) > 1000:
-                        content = content[:997] + "..."
-                    embed.add_field(
-                        name=section_name,
-                        value=content,
-                        inline=False
-                    )
+        importance_text = f"{importance_icon} **{importance}/10**"
+        explanation = analysis_data.get('importance_explanation', '')
+        if explanation:
+            importance_text += f"\n*{explanation}*"
         
-            # Add key players
-            key_players = analysis_data.get('key_players', [])
-            if key_players:
-                # Format key players nicely
-                if len(key_players) <= 6:
-                    players_text = " • ".join([f"**{player}**" for player in key_players])
-                else:
-                    players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
-            
-                embed.add_field(
-                    name="⭐ Key Players",
-                    value=players_text,
-                    inline=False
-                )
+        embed.add_field(
+            name="📊 Overall Importance",
+            value=importance_text,
+            inline=False
+        )
         
-            # Add importance rating with explanation
-            importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-            importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
-        
-            importance_text = f"{importance_icon} **{importance}/10**"
-            explanation = analysis_data.get('importance_explanation', '')
-            if explanation:
-                importance_text += f"\n*{explanation}*"
-        
+        # Add context information for contextual summaries
+        try:
+            context_stats = self.get_context_stats()
             embed.add_field(
-                name="📊 Overall Importance",
-                value=importance_text,
+                name="🧠 Context Awareness",
+                value=f"Building on {context_stats['recent_summaries_count']} recent summaries\n"
+                      f"Season Day {context_stats['latest_day']} • {context_stats['timeline_events_count']} timeline events tracked",
                 inline=False
             )
+        except Exception as e:
+            logger.debug(f"Context stats failed: {e}")
         
-            # Add context information for contextual summaries
-            try:
-                context_stats = self.get_context_stats()
-                embed.add_field(
-                    name="🧠 Context Awareness",
-                    value=f"Building on {context_stats['recent_summaries_count']} recent summaries\n"
-                          f"Season Day {context_stats['latest_day']} • {context_stats['timeline_events_count']} timeline events tracked",
-                    inline=False
-                )
-            except Exception as e:
-                logger.debug(f"Context stats failed: {e}")
+        # Set footer
+        embed.set_footer(text=footer_text)
         
-            # Set footer
-            embed.set_footer(text=footer_text)
-        
-            return [embed]
+        return [embed]
 
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights and social dynamics"""
