@@ -1167,15 +1167,15 @@ CRITICAL INSTRUCTIONS:
         current_day = self._calculate_current_day()
         
             # Determine embed color based on importance
-            importance = analysis_data.get('overall_importance', 5)
-            if importance >= 9:
-                color = 0xff1744  # Red for explosive days
-            elif importance >= 7:
-                color = 0xff9800  # Orange for high activity
-            elif importance >= 4:
-                color = 0x3498db  # Blue for moderate activity
-            else:
-                color = 0x95a5a6  # Gray for quiet days
+    importance = analysis_data.get('overall_importance', 5)
+    if importance >= 9:
+        color = 0xff1744  # Red for explosive days
+    elif importance >= 7:
+        color = 0xff9800  # Orange for high activity
+    elif importance >= 4:
+        color = 0x3498db  # Blue for moderate activity
+    else:
+        color = 0x95a5a6  # Gray for quiet days
         
             # Create main embed with appropriate title based on summary type
             if summary_type == "hourly_summary":
