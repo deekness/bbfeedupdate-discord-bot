@@ -3160,7 +3160,7 @@ Create a narrative summary that tells the story of this hour in the Big Brother 
 3. **Social Dynamics**: Relationship developments, conflicts, or bonding moments?
 4. **Entertainment Value**: Funny moments, drama, or memorable interactions?
 
-Write this as a flowing narrative summary (2-3 paragraphs) that captures the essence of this hour for Big Brother fans. Don't just list events - tell the story of what happened.
+Write this as a flowing narrative summary (1-2 paragraphs) that captures the essence of this hour for Big Brother fans. Do Not just list events - tell the story of what happened.
 
 Make it engaging and insightful, as if you're explaining to a friend who missed this hour of feeds."""
 
