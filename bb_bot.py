@@ -2113,13 +2113,18 @@ class PredictionManager:
         return embed
 
 class UpdateBatcher:
-    """Groups and analyzes updates like a BB superfan using LLM intelligence"""
+    """Enhanced batching system with dual rhythms - Highlights + Hourly Summary"""
     
     def __init__(self, analyzer: BBAnalyzer, config: Config):
         self.analyzer = analyzer
         self.config = config
-        self.update_queue = []
+        
+        # Two separate queues for different batching strategies
+        self.highlights_queue = []  # For 25-update highlights
+        self.hourly_queue = []      # For hourly summaries
+        
         self.last_batch_time = datetime.now()
+        self.last_hourly_summary = datetime.now()
         
         # Replace the set with LRU cache
         max_hashes = config.get('max_processed_hashes', 10000)
@@ -2151,26 +2156,28 @@ class UpdateBatcher:
             logger.error(f"Failed to initialize LLM: {e}")
             self.llm_client = None
     
-    def should_send_batch(self) -> bool:
-        """Determine if we should send a batch now"""
-        if not self.update_queue:
-            return False
-            
+    def should_send_highlights(self) -> bool:
+        """Check if we should send highlights (25 updates)"""
+        if len(self.highlights_queue) >= 25:
+            return True
+        
+        # Also send if we have some urgent updates and it's been a while
+        has_urgent = any(self._is_urgent(update) for update in self.highlights_queue)
         time_elapsed = (datetime.now() - self.last_batch_time).total_seconds() / 60
         
-        # Check for urgent updates
-        has_urgent = any(self._is_urgent(update) for update in self.update_queue)
-        if has_urgent and len(self.update_queue) >= 2:
+        if has_urgent and len(self.highlights_queue) >= 10 and time_elapsed >= 15:
             return True
         
-        # High activity mode: 10+ updates or 15 minutes
-        if len(self.update_queue) >= 10 or time_elapsed >= 15:
+        return False
+    
+    def should_send_hourly_summary(self) -> bool:
+        """Check if we should send hourly summary"""
+        time_elapsed = (datetime.now() - self.last_hourly_summary).total_seconds() / 60
+        
+        # Send every hour if we have updates
+        if time_elapsed >= 60 and len(self.hourly_queue) > 0:
             return True
-            
-        # Normal mode: 5+ updates or 30 minutes
-        if len(self.update_queue) >= 5 or time_elapsed >= 30:
-            return True
-            
+        
         return False
     
     def _is_urgent(self, update: BBUpdate) -> bool:
@@ -2179,10 +2186,11 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
-        """Add update to queue if not already processed"""
-        # Use async method for thread safety
+        """Add update to both queues if not already processed"""
         if not await self.processed_hashes_cache.contains(update.content_hash):
-            self.update_queue.append(update)
+            # Add to both queues
+            self.highlights_queue.append(update)
+            self.hourly_queue.append(update)
             await self.processed_hashes_cache.add(update.content_hash)
             
             # Log cache stats periodically
@@ -2190,9 +2198,15 @@ class UpdateBatcher:
             if cache_stats['size'] % 1000 == 0:  # Log every 1000 entries
                 logger.info(f"Hash cache stats: {cache_stats}")
     
-    async def create_batch_summary(self) -> List[discord.Embed]:
-        """Create intelligent summary embeds using LLM if available"""
-        if not self.update_queue:
+    async def _can_make_llm_request(self) -> bool:
+        """Check if we can make an LLM request without hitting rate limits"""
+        stats = self.rate_limiter.get_stats()
+        return (stats['requests_this_minute'] < stats['minute_limit'] and 
+                stats['requests_this_hour'] < stats['hour_limit'])
+    
+    async def create_highlights_batch(self) -> List[discord.Embed]:
+        """Create highlights embed from current highlights queue"""
+        if not self.highlights_queue:
             return []
         
         embeds = []
@@ -2200,109 +2214,65 @@ class UpdateBatcher:
         # Use LLM if available and rate limits allow
         if self.llm_client and await self._can_make_llm_request():
             try:
-                embeds = await self._create_llm_summary()
+                embeds = await self._create_llm_highlights_only()
             except Exception as e:
-                logger.error(f"LLM summary failed: {e}")
-                embeds = self._create_pattern_summary_with_explanation("LLM analysis failed")
+                logger.error(f"LLM highlights failed: {e}")
+                embeds = [self._create_pattern_highlights_embed()]
         else:
             reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
-            embeds = self._create_pattern_summary_with_explanation(reason)
+            logger.info(f"Using pattern highlights: {reason}")
+            embeds = [self._create_pattern_highlights_embed()]
         
-        # Clear queue after processing
-        self.update_queue.clear()
+        # Clear highlights queue after processing
+        processed_count = len(self.highlights_queue)
+        self.highlights_queue.clear()
         self.last_batch_time = datetime.now()
         
+        logger.info(f"Created highlights batch from {processed_count} updates")
         return embeds
     
-    async def _can_make_llm_request(self) -> bool:
-        """Check if we can make an LLM request without hitting rate limits"""
-        stats = self.rate_limiter.get_stats()
-        return (stats['requests_this_minute'] < stats['minute_limit'] and 
-                stats['requests_this_hour'] < stats['hour_limit'])
+    async def create_hourly_summary(self) -> List[discord.Embed]:
+        """Create comprehensive hourly summary from hourly queue"""
+        if not self.hourly_queue:
+            return []
+        
+        embeds = []
+        
+        # Use LLM if available and rate limits allow
+        if self.llm_client and await self._can_make_llm_request():
+            try:
+                embeds = await self._create_llm_hourly_summary()
+            except Exception as e:
+                logger.error(f"LLM hourly summary failed: {e}")
+                embeds = self._create_pattern_hourly_summary()
+        else:
+            reason = "LLM unavailable" if not self.llm_client else "Rate limit reached"
+            logger.info(f"Using pattern hourly summary: {reason}")
+            embeds = self._create_pattern_hourly_summary()
+        
+        # Clear hourly queue after processing
+        processed_count = len(self.hourly_queue)
+        self.hourly_queue.clear()
+        self.last_hourly_summary = datetime.now()
+        
+        logger.info(f"Created hourly summary from {processed_count} updates")
+        return embeds
     
-    async def _create_llm_summary(self) -> List[discord.Embed]:
-        """Use Claude to create intelligent summaries with rate limiting"""
-        # Wait for rate limit if needed
+    async def _create_llm_highlights_only(self) -> List[discord.Embed]:
+        """Create just highlights using LLM"""
         await self.rate_limiter.wait_if_needed()
         
-        # Prepare update data for LLM
-        updates_data = []
-        for update in self.update_queue:
-            time_str = update.pub_date.strftime('%I:%M %p')
-            updates_data.append({
-                'time': time_str,
-                'title': update.title,
-                'description': update.description[:200] if update.description != update.title else ""
-            })
+        # Prepare update data
+        updates_text = "\n".join([
+            f"{self._extract_correct_time(u)} - {u.title}"
+            for u in self.highlights_queue
+        ])
         
-        # Create LLM prompt (single prompt for all scenarios)
-        prompt = self._create_llm_prompt(updates_data)
-        
-        try:
-            # Make LLM request
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=1200,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse response
-            analysis = self._parse_llm_response(response.content[0].text)
-            
-            # Create main embed
-            embeds = self._create_embeds_from_analysis(analysis)
-            
-            # Add highlights embed for batches with 7+ updates if rate limits allow
-            if len(self.update_queue) >= 7:
-                logger.info(f"Creating highlights embed for {len(self.update_queue)} updates")
-                try:
-                    # Check if we can make another LLM call
-                    if await self._can_make_llm_request():
-                        highlights_embed = await self._create_llm_highlights_embed(analysis.get('game_phase', 'current'))
-                        if highlights_embed:
-                            embeds.append(highlights_embed)
-                            logger.info("Added LLM-curated highlights embed")
-                        else:
-                            logger.warning("LLM highlights embed creation returned None")
-                    else:
-                        logger.warning("Rate limit reached - creating pattern-based highlights embed")
-                        highlights_embed = self._create_pattern_highlights_embed()
-                        if highlights_embed:
-                            embeds.append(highlights_embed)
-                            logger.info("Added pattern-based highlights embed")
-                except Exception as e:
-                    logger.error(f"Error creating highlights embed: {e}")
-                    # Fallback to pattern-based highlights
-                    highlights_embed = self._create_pattern_highlights_embed()
-                    if highlights_embed:
-                        embeds.append(highlights_embed)
-                        logger.info("Added fallback highlights embed")
-            
-            return embeds
-            
-        except Exception as e:
-            logger.error(f"LLM request failed: {e}")
-            raise
-    
-    async def _create_llm_highlights_embed(self, game_phase: str) -> Optional[discord.Embed]:
-        """Create a highlights embed using LLM to curate the most important moments"""
-        try:
-            # Wait for rate limit if needed
-            await self.rate_limiter.wait_if_needed()
-            
-            # Prepare update data
-            updates_text = "\n".join([
-                f"{self._extract_correct_time(u)} - {u.title}"
-                for u in self.update_queue
-            ])
-            
-            prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.update_queue)} updates.
+        prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
 
 {updates_text}
 
-Select 5-8 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing. 
+Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
 
 HIGHLIGHT-WORTHY updates include:
 - Competition wins (HOH, POV, etc.)
@@ -2313,12 +2283,6 @@ HIGHLIGHT-WORTHY updates include:
 - Game-changing twists revealed
 - Eviction results or surprise votes
 - Alliance formations or breaks
-
-NOT highlights (unless part of something bigger):
-- Single jury votes (unless it's a crucial swing vote)
-- Routine conversations
-- Minor game talk
-- Regular daily activities
 
 For each selected update, provide:
 {{
@@ -2332,99 +2296,108 @@ For each selected update, provide:
     ]
 }}
 
-Be selective - these should be the updates that a superfan would want to know about if they could only see 5-8 things from this time period."""
+Be selective - these should be the updates that a superfan would want to know about from this batch."""
 
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=800,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=800,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Parse and create embed
+        try:
+            highlights_data = self._parse_llm_response(response.content[0].text)
+            
+            if not highlights_data.get('highlights'):
+                logger.warning("No highlights in LLM response, using pattern fallback")
+                return [self._create_pattern_highlights_embed()]
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Key moments from the last {len(self.highlights_queue)} updates",
+                color=0xe74c3c,
+                timestamp=datetime.now()
             )
             
-            # Parse response
-            try:
-                highlights_data = self._parse_llm_response(response.content[0].text)
+            for highlight in highlights_data['highlights'][:10]:
+                title = highlight.get('title', 'Update')
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
                 
-                if not highlights_data.get('highlights'):
-                    logger.warning("No highlights in LLM response")
-                    return self._create_pattern_highlights_embed()
-                
-                embed = discord.Embed(
-                    title="🎯 Feed Highlights - What Mattered",
-                    description=f"Chen Bot's key moments ({len(highlights_data['highlights'])} of {len(self.update_queue)} updates)",
-                    color=0xe74c3c if game_phase == "final_weeks" else 0xf39c12 if game_phase == "jury_phase" else 0x3498db,
-                    timestamp=datetime.now()
-                )
-                
-                for highlight in highlights_data['highlights'][:8]:  # Max 8
-                    # Clean the title - remove time if it appears at the beginning
-                    title = highlight.get('title', 'Update')
-                    # Remove time pattern from the beginning of the title
-                    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-                    
-                    # Only add reason if it exists and isn't empty
-                    if highlight.get('reason') and highlight['reason'].strip():
-                        embed.add_field(
-                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                            value=f"{title}\n*{highlight['reason']}*",
-                            inline=False
-                        )
-                    else:
-                        embed.add_field(
-                            name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                            value=title,
-                            inline=False
-                        )
-                
-                embed.set_footer(text=f"Chen Bot's Highlights • {game_phase.replace('_', ' ').title()}")
-                
-                return embed
-                
-            except Exception as e:
-                logger.error(f"Failed to parse highlights response: {e}")
-                return self._create_pattern_highlights_embed()
-                
+                if highlight.get('reason') and highlight['reason'].strip():
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=f"{title}\n*{highlight['reason']}*",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=title,
+                        inline=False
+                    )
+            
+            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
+            return [embed]
+            
         except Exception as e:
-            logger.error(f"LLM highlights creation failed: {e}")
-            return self._create_pattern_highlights_embed()
+            logger.error(f"Failed to parse highlights response: {e}")
+            return [self._create_pattern_highlights_embed()]
     
-    def _create_llm_prompt(self, updates_data: List[Dict]) -> str:
-        """Create LLM prompt for all scenarios"""
+    async def _create_llm_hourly_summary(self) -> List[discord.Embed]:
+        """Create comprehensive hourly summary using LLM"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Prepare update data
+        updates_data = []
+        for update in self.hourly_queue:
+            time_str = self._extract_correct_time(update)
+            updates_data.append({
+                'time': time_str,
+                'title': update.title,
+                'description': update.description[:200] if update.description != update.title else ""
+            })
+        
         updates_text = "\n".join([
             f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
             for u in updates_data
         ])
         
-        return f"""You are the ultimate Big Brother superfan - part Taran Armstrong's strategic genius, part live feed obsessive who loves ALL aspects of the BB experience.
+        prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
 
-Analyze these {len(updates_data)} Big Brother live feed updates:
+Analyze these {len(self.hourly_queue)} updates from the past hour:
 
 {updates_text}
 
-As a complete Big Brother superfan, provide analysis covering BOTH strategic gameplay AND social dynamics:
+Provide a thorough analysis covering both strategic and social aspects:
 
 {{
-    "headline": "Compelling headline that captures the most significant development (strategic OR social)",
-    "summary": "3-4 sentence summary balancing strategic implications with social dynamics and entertainment value",
+    "headline": "Compelling headline that captures the hour's most significant development",
+    "summary": "4-5 sentence summary of the hour's key developments and overall narrative",
     "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning, voting plans",
-    "social_dynamics": "Alliance formations, alliance shifts, trust levels, betrayals, strategic partnerships",
-    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes, or unique interactions",
-    "key_players": ["houseguests", "involved", "in", "strategic", "and", "social", "moments"],
+    "social_dynamics": "Alliance formations, shifts, trust levels, betrayals, strategic partnerships",
+    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes",
+    "key_players": ["houseguests", "involved", "in", "major", "moments"],
     "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
     "strategic_importance": 7,
-    "house_culture": "Inside jokes, daily routines, house traditions, or quirky moments that define this group",
-    "relationship_updates": "Showmance developments, romantic connections, dating situations, or relationship changes"
+    "house_culture": "Inside jokes, routines, traditions, or quirky moments from this hour",
+    "relationship_updates": "Showmance developments, romantic connections, relationship changes"
 }}
 
-Remember: Big Brother superfans want strategic depth BUT also love the social experiment aspects. Include:
-- Strategic gameplay and voting plans
-- Alliance dynamics and strategic partnerships
-- Entertainment value and memorable moments
-- House culture and personality interactions
-- Showmance and romantic developments
+This is an HOURLY DIGEST so be comprehensive and analytical."""
 
-Focus Social Dynamics on ALLIANCES and strategic relationships, while Relationship Updates covers SHOWMANCES and romantic connections."""
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=1500,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        # Parse response and create embed
+        analysis = self._parse_llm_response(response.content[0].text)
+        return self._create_hourly_summary_embed(analysis, len(self.hourly_queue))
     
     def _parse_llm_response(self, response_text: str) -> dict:
         """Parse LLM response with fallback handling"""
@@ -2464,181 +2437,188 @@ Focus Social Dynamics on ALLIANCES and strategic relationships, while Relationsh
         
         return analysis
     
-    def _create_embeds_from_analysis(self, analysis: dict) -> List[discord.Embed]:
-        """Create Discord embeds from LLM analysis"""
-        game_phase_colors = {
-            "early_game": 0x3498db,
-            "jury_phase": 0xf39c12,
-            "final_weeks": 0xe74c3c,
-            "finale_night": 0xffd700
-        }
+    def _create_hourly_summary_embed(self, analysis: dict, update_count: int) -> List[discord.Embed]:
+        """Create hourly summary embed"""
+        current_hour = datetime.now().strftime("%I %p")
         
-        color = game_phase_colors.get(analysis.get('game_phase', 'early_game'), 0x3498db)
-        
-        main_embed = discord.Embed(
-            title=f"🎭 {analysis['headline']}",
-            description=f"**{len(self.update_queue)} feed updates** • {analysis.get('game_phase', 'Current Phase').replace('_', ' ').title()}\n\n{analysis['summary']}",
-            color=color,
+        embed = discord.Embed(
+            title=f"📊 Hourly Digest - {current_hour}",
+            description=f"**{update_count} updates this hour** • {analysis.get('headline', 'Hourly Summary')}\n\n{analysis.get('summary', 'Summary not available')}",
+            color=0x9b59b6,  # Purple for hourly summaries
             timestamp=datetime.now()
         )
         
-        # Add strategic analysis
+        # Add comprehensive sections
         if analysis.get('strategic_analysis'):
-            main_embed.add_field(
-                name="🎯 Strategic Analysis",
+            embed.add_field(
+                name="🎯 Strategic Developments",
                 value=analysis['strategic_analysis'],
                 inline=False
             )
         
-        # Add regular season fields
         if analysis.get('social_dynamics'):
-            main_embed.add_field(
-                name="🤝 Alliance Dynamics",
+            embed.add_field(
+                name="🤝 Alliance & Social Dynamics",
                 value=analysis['social_dynamics'],
                 inline=False
             )
         
         if analysis.get('entertainment_highlights'):
-            main_embed.add_field(
-                name="🎬 Entertainment Highlights",
+            embed.add_field(
+                name="🎬 Entertainment & Drama",
                 value=analysis['entertainment_highlights'],
                 inline=False
             )
         
         if analysis.get('relationship_updates'):
-            main_embed.add_field(
+            embed.add_field(
                 name="💕 Showmance Updates",
                 value=analysis['relationship_updates'],
                 inline=False
             )
         
         if analysis.get('house_culture'):
-            main_embed.add_field(
+            embed.add_field(
                 name="🏠 House Culture",
                 value=analysis['house_culture'],
                 inline=False
             )
         
-        # Add common fields
-        self._add_common_fields(main_embed, analysis)
-        
-        return [main_embed]
-    
-    def _add_common_fields(self, embed: discord.Embed, analysis: dict):
-        """Add common fields to embed"""
-        # Key players
+        # Add key players and importance
         if analysis.get('key_players'):
             players = analysis['key_players'][:8]
             embed.add_field(
-                name="⭐ Key Players",
+                name="⭐ Key Players This Hour",
                 value=" • ".join(players),
                 inline=False
             )
         
-        # Strategic importance
         importance = analysis.get('strategic_importance', 5)
         importance_bar = "🔥" * min(importance, 10)
         embed.add_field(
-            name="🎲 Overall Importance",
+            name="📈 Hour Importance",
             value=f"{importance_bar} {importance}/10",
             inline=True
         )
         
-        # Footer
-        embed.set_footer(text="Chen Bot's Observations")
-    
-    def _create_pattern_summary_with_explanation(self, reason: str) -> List[discord.Embed]:
-        """Enhanced pattern-based summary with explanation"""
-        grouped = self._group_updates_pattern()
+        embed.set_footer(text=f"Hourly Digest • {current_hour} • Chen Bot Analysis")
         
-        total_updates = sum(len(updates) for updates in grouped.values())
-        headline = self._get_headline_pattern(grouped)
+        return [embed]
+    
+    def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
+        """Create pattern-based hourly summary when LLM unavailable"""
+        # Group updates by categories
+        categories = defaultdict(list)
+        for update in self.hourly_queue:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        current_hour = datetime.now().strftime("%I %p")
         
         embed = discord.Embed(
-            title=f"🎭 {headline}",
-            description=f"**{total_updates} updates** from the last batch period\n\n*{reason} - Using pattern analysis*",
-            color=self._get_batch_color_pattern(grouped),
+            title=f"📊 Hourly Digest - {current_hour}",
+            description=f"**{len(self.hourly_queue)} updates this hour** • Pattern-based analysis",
+            color=0x9b59b6,
             timestamp=datetime.now()
         )
         
-        # Add grouped summaries
-        for category, updates in grouped.items():
+        # Add top categories
+        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True)[:5]:
             if updates:
-                summary = self._create_category_summary(category, updates)
+                top_update = max(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x))
                 embed.add_field(
-                    name=f"{self._get_category_emoji(category)} {category.title()} ({len(updates)})",
-                    value=summary,
+                    name=f"{category} ({len(updates)} updates)",
+                    value=f"• {top_update.title[:100]}..." if len(top_update.title) > 100 else f"• {top_update.title}",
                     inline=False
                 )
         
+        embed.set_footer(text=f"Hourly Digest • {current_hour} • Pattern Analysis")
+        
         return [embed]
-
+    
+    def _create_pattern_highlights_embed(self) -> discord.Embed:
+        """Create highlights embed using pattern matching when LLM unavailable"""
+        try:
+            # Sort updates by importance score
+            updates_with_importance = [
+                (update, self.analyzer.analyze_strategic_importance(update))
+                for update in self.highlights_queue
+            ]
+            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top 6-10 most important updates
+            selected_updates = updates_with_importance[:min(10, len(updates_with_importance))]
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Key moments from this batch ({len(selected_updates)} of {len(self.highlights_queue)} updates)",
+                color=0x95a5a6,  # Gray for pattern-based
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, (update, importance) in enumerate(selected_updates, 1):
+                # Extract correct time from content rather than pub_date
+                time_str = self._extract_correct_time(update)
+                
+                # Clean the title - remove time if it appears at the beginning
+                title = update.title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                
+                # Only truncate if extremely long
+                if len(title) > 1000:
+                    title = title[:997] + "..."
+                
+                # Add importance indicators
+                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                
+                embed.add_field(
+                    name=f"{importance_emoji} {time_str}",
+                    value=title,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Pattern highlights creation failed: {e}")
+            # Return a basic embed if everything fails
+            return discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Recent updates from the feed ({len(self.highlights_queue)} updates)",
+                color=0x95a5a6
+            )
+    
+    def _extract_correct_time(self, update: BBUpdate) -> str:
+        """Extract the correct time from the update content rather than pub_date"""
+        # Look for time patterns in the title like "07:56 PM PST"
+        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
+        
+        # First try the title
+        match = re.search(time_pattern, update.title)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Then try the description
+        match = re.search(time_pattern, update.description)
+        if match:
+            time_str = match.group(1)
+            ampm = match.group(2)
+            return f"{time_str} {ampm}"
+        
+        # Fallback to pub_date if no time found in content
+        return update.pub_date.strftime("%I:%M %p")
+    
     def get_rate_limit_stats(self) -> Dict[str, int]:
         """Get current rate limiting statistics"""
         return self.rate_limiter.get_stats()
     
-    def _group_updates_pattern(self) -> Dict[str, List[BBUpdate]]:
-        """Pattern-based grouping when LLM unavailable"""
-        groups = defaultdict(list)
-        
-        for update in self.update_queue:
-            content = f"{update.title} {update.description}".lower()
-            
-            if 'vote' in content or 'voting' in content:
-                groups['votes'].append(update)
-            elif any(word in content for word in ['wins', 'won', 'hoh', 'pov', 'veto']):
-                groups['competitions'].append(update)
-            elif any(word in content for word in ['nominat', 'ceremony']):
-                groups['nominations'].append(update)
-            else:
-                groups['general'].append(update)
-        
-        return groups
-    
-    def _get_headline_pattern(self, grouped: Dict[str, List[BBUpdate]]) -> str:
-        """Generate headline without LLM"""
-        if grouped.get('votes'):
-            return "Jury Votes Revealed!"
-        elif grouped.get('competitions'):
-            return "Competition Results!"
-        elif grouped.get('nominations'):
-            return "Nomination Ceremony!"
-        else:
-            return "Big Brother Update"
-    
-    def _get_batch_color_pattern(self, grouped: Dict[str, List[BBUpdate]]) -> int:
-        """Determine color without LLM"""
-        if grouped.get('votes'):
-            return 0xe74c3c  # Red
-        elif grouped.get('competitions'):
-            return 0xf39c12  # Orange
-        else:
-            return 0x3498db  # Blue
-    
-    def _create_category_summary(self, category: str, updates: List[BBUpdate]) -> str:
-        """Create better category summaries"""
-        if len(updates) <= 3:
-            return "\n".join([
-                f"• {u.title[:80]}..." if len(u.title) > 80 else f"• {u.title}"
-                for u in updates
-            ])
-        else:
-            return (f"• {updates[0].title[:80]}...\n"
-                   f"• {updates[1].title[:80]}...\n"
-                   f"• And {len(updates)-2} more updates")
-    
-    def _get_category_emoji(self, category: str) -> str:
-        """Get emoji for category"""
-        emoji_map = {
-            'votes': '🗳️',
-            'competitions': '🏆',
-            'nominations': '🎯',
-            'general': '📝',
-            'strategy': '🧠',
-            'drama': '💥'
-        }
-        return emoji_map.get(category, '📝')
-    
+    # Keep the daily recap methods from the original class
     async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
         """Create a comprehensive daily recap from all updates"""
         if not updates:
@@ -2972,82 +2952,6 @@ Focus on creating a cohesive daily story from these summaries."""
         embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
         
         return [embed]
-
-    def _extract_correct_time(self, update: BBUpdate) -> str:
-        """Extract the correct time from the update content rather than pub_date"""
-        # Look for time patterns in the title like "07:56 PM PST"
-        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
-        
-        # First try the title
-        match = re.search(time_pattern, update.title)
-        if match:
-            time_str = match.group(1)
-            ampm = match.group(2)
-            return f"{time_str} {ampm}"
-        
-        # Then try the description
-        match = re.search(time_pattern, update.description)
-        if match:
-            time_str = match.group(1)
-            ampm = match.group(2)
-            return f"{time_str} {ampm}"
-        
-        # Fallback to pub_date if no time found in content
-        return update.pub_date.strftime("%I:%M %p")
-
-    def _create_pattern_highlights_embed(self) -> Optional[discord.Embed]:
-        """Create highlights embed using pattern matching when LLM unavailable"""
-        try:
-            # Sort updates by importance score
-            updates_with_importance = [
-                (update, self.analyzer.analyze_strategic_importance(update))
-                for update in self.update_queue
-            ]
-            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-            
-            # Select top 5-8 most important updates
-            selected_updates = updates_with_importance[:min(8, len(updates_with_importance))]
-            
-            if not selected_updates:
-                return None
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Mattered",
-                description=f"Key moments from this period ({len(selected_updates)} of {len(self.update_queue)} updates)",
-                color=0x95a5a6,
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights
-            for i, (update, importance) in enumerate(selected_updates, 1):
-                # Extract correct time from content rather than pub_date
-                time_str = self._extract_correct_time(update)
-                
-                # Clean the title - remove time if it appears at the beginning
-                title = update.title
-                # Remove time pattern from the beginning of the title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-                
-                # Only truncate if extremely long (Discord field limit is 1024 chars)
-                if len(title) > 1000:
-                    title = title[:997] + "..."
-                
-                # Add importance indicators
-                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-                
-                embed.add_field(
-                    name=f"{importance_emoji} {time_str}",
-                    value=title,
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Chen Bot's Pattern Analysis • {len(selected_updates)} key moments selected")
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"Pattern highlights creation failed: {e}")
-            return None
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
