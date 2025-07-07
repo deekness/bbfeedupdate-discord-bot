@@ -4181,8 +4181,6 @@ class BBDiscordBot(commands.Bot):
                 color=0x3498db
             )
             
-)
-            
             commands_list = [
     ("/summary", "Get a summary of recent updates (Admin only)"),
     ("/status", "Show bot status and statistics (Admin only)"),
