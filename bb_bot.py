@@ -5055,24 +5055,24 @@ class BBDiscordBot(commands.Bot):
         asyncio.create_task(self.close())
     
     async def on_ready(self):
-    """Bot startup event"""
-    logger.info(f'{self.user} has connected to Discord!')
-    logger.info(f'Bot is in {len(self.guilds)} guilds')
+        """Bot startup event"""
+        logger.info(f'{self.user} has connected to Discord!')
+        logger.info(f'Bot is in {len(self.guilds)} guilds')
     
-    try:
-        synced = await self.tree.sync()
-        logger.info(f"Synced {len(synced)} slash command(s)")
-    except Exception as e:
-        logger.error(f"Failed to sync commands: {e}")
+        try:
+            synced = await self.tree.sync()
+            logger.info(f"Synced {len(synced)} slash command(s)")
+        except Exception as e:
+            logger.error(f"Failed to sync commands: {e}")
     
-    try:
-        self.check_rss_feed.start()
-        self.daily_recap_task.start()
-        self.auto_close_predictions_task.start()
-        self.cleanup_context_task.start()  # ADD THIS LINE
-        logger.info("RSS feed monitoring, daily recap, prediction auto-close, and context cleanup tasks started")
-    except Exception as e:
-        logger.error(f"Error starting background tasks: {e}")
+        try:
+            self.check_rss_feed.start()
+            self.daily_recap_task.start()
+            self.auto_close_predictions_task.start()
+            self.cleanup_context_task.start()  # ADD THIS LINE
+            logger.info("RSS feed monitoring, daily recap, prediction auto-close, and context cleanup tasks started")
+        except Exception as e:
+            logger.error(f"Error starting background tasks: {e}")
     
     def create_content_hash(self, title: str, description: str) -> str:
         """Create a unique hash for content deduplication"""
