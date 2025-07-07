@@ -4947,7 +4947,119 @@ class BBDiscordBot(commands.Bot):
         
         self.remove_command('help')
         self.setup_commands()
+        self.CURRENT_HOUSEGUESTS = [
+    "Chelsie", "Cam", "Makensy", "Leah", "Quinn", "Tucker", "Joseph", 
+    "Rubina", "Angela", "Kimo", "T'kor", "Brooklyn", "Cedric", "Lisa"
+]
+
+self.POLL_TEMPLATES = {
+    "season_winner": {
+        "title": "Pick the Big Brother 27 Season Winner",
+        "description": "Who will win Big Brother 27? Correct prediction awards 20 points!"
+    },
+    "weekly_hoh": {
+        "title": "Pick the HoH Winner", 
+        "description": "Who will win Head of Household this week? Correct prediction awards 5 points!"
+    },
+    "weekly_veto": {
+        "title": "Pick the Veto Winner",
+        "description": "Who will win the Power of Veto this week? Correct prediction awards 3 points!"
+    },
+    "weekly_eviction": {
+        "title": "Pick who will be evicted",
+        "description": "Who will be evicted this week? Correct prediction awards 2 points!"
+    }
+}
     
+    class HouseguestSelector(discord.ui.View):
+    def __init__(self, poll_data, bot_instance):
+        super().__init__(timeout=300)
+        self.poll_data = poll_data
+        self.bot_instance = bot_instance
+        
+        select = discord.ui.Select(
+            placeholder="Choose houseguests for this poll...",
+            min_values=2,
+            max_values=min(len(bot_instance.CURRENT_HOUSEGUESTS), 25),
+            options=[
+                discord.SelectOption(
+                    label=hg,
+                    value=hg,
+                    description=f"Include {hg} in the poll"
+                ) for hg in bot_instance.CURRENT_HOUSEGUESTS
+            ]
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+    
+    async def select_callback(self, interaction: discord.Interaction):
+        selected_houseguests = interaction.data['values']
+        
+        try:
+            pred_type = PredictionType(self.poll_data['prediction_type'])
+            prediction_id = self.bot_instance.prediction_manager.create_prediction(
+                title=self.poll_data['title'],
+                description=self.poll_data['description'],
+                prediction_type=pred_type,
+                options=selected_houseguests,
+                created_by=interaction.user.id,
+                guild_id=interaction.guild.id,
+                duration_hours=self.poll_data['duration_hours'],
+                week_number=self.poll_data.get('week_number')
+            )
+            
+            embed = discord.Embed(
+                title="✅ Poll Created Successfully!",
+                description=f"**{self.poll_data['title']}**\n{self.poll_data['description']}",
+                color=0x2ecc71,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(
+                name="📋 Selected Houseguests",
+                value=" • ".join(selected_houseguests),
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🎯 Poll ID", 
+                value=str(prediction_id),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="💡 How to Vote",
+                value=f"`/predict {prediction_id} <houseguest>`",
+                inline=False
+            )
+            
+            await interaction.response.edit_message(embed=embed, view=None)
+            
+            # Announce in main channel
+            if self.bot_instance.config.get('update_channel_id'):
+                channel = self.bot_instance.get_channel(self.bot_instance.config.get('update_channel_id'))
+                if channel:
+                    prediction_data = {
+                        'id': prediction_id,
+                        'title': self.poll_data['title'],
+                        'description': self.poll_data['description'],
+                        'type': self.poll_data['prediction_type'],
+                        'options': selected_houseguests,
+                        'closes_at': datetime.now() + timedelta(hours=self.poll_data['duration_hours']),
+                        'week_number': self.poll_data.get('week_number')
+                    }
+                    
+                    announce_embed = self.bot_instance.prediction_manager.create_prediction_embed(prediction_data)
+                    announce_embed.title = f"🗳️ New Prediction Poll - {self.poll_data['title']}"
+                    await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+            
+        except Exception as e:
+            logger.error(f"Error creating poll: {e}")
+            await interaction.response.edit_message(
+                content="❌ Error creating poll. Please try again.",
+                view=None
+            )
+
     def setup_commands(self):
         """Setup all slash commands"""
         
@@ -5498,96 +5610,208 @@ class BBDiscordBot(commands.Bot):
                 await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
 
         # PREDICTION SYSTEM COMMANDS
+        # STEP 1: Find your BBDiscordBot class __init__ method (around line 2244)
+# Add these constants RIGHT AFTER this line: self.setup_commands()
+
+def __init__(self):
+    # ... your existing init code ...
+    self.setup_commands()
+    
+    # ADD THESE CONSTANTS HERE:
+    self.CURRENT_HOUSEGUESTS = [
+        "Chelsie", "Cam", "Makensy", "Leah", "Quinn", "Tucker", "Joseph", 
+        "Rubina", "Angela", "Kimo", "T'kor", "Brooklyn", "Cedric", "Lisa"
+    ]
+
+    self.POLL_TEMPLATES = {
+        "season_winner": {
+            "title": "Pick the Big Brother 27 Season Winner",
+            "description": "Who will win Big Brother 27? Correct prediction awards 20 points!"
+        },
+        "weekly_hoh": {
+            "title": "Pick the HoH Winner", 
+            "description": "Who will win Head of Household this week? Correct prediction awards 5 points!"
+        },
+        "weekly_veto": {
+            "title": "Pick the Veto Winner",
+            "description": "Who will win the Power of Veto this week? Correct prediction awards 3 points!"
+        },
+        "weekly_eviction": {
+            "title": "Pick who will be evicted",
+            "description": "Who will be evicted this week? Correct prediction awards 2 points!"
+        }
+    }
+
+# STEP 2: Add this class RIGHT BEFORE your setup_commands method (around line 2301)
+
+class HouseguestSelector(discord.ui.View):
+    def __init__(self, poll_data, bot_instance):
+        super().__init__(timeout=300)
+        self.poll_data = poll_data
+        self.bot_instance = bot_instance
+        
+        select = discord.ui.Select(
+            placeholder="Choose houseguests for this poll...",
+            min_values=2,
+            max_values=min(len(bot_instance.CURRENT_HOUSEGUESTS), 25),
+            options=[
+                discord.SelectOption(
+                    label=hg,
+                    value=hg,
+                    description=f"Include {hg} in the poll"
+                ) for hg in bot_instance.CURRENT_HOUSEGUESTS
+            ]
+        )
+        select.callback = self.select_callback
+        self.add_item(select)
+    
+    async def select_callback(self, interaction: discord.Interaction):
+        selected_houseguests = interaction.data['values']
+        
+        try:
+            pred_type = PredictionType(self.poll_data['prediction_type'])
+            prediction_id = self.bot_instance.prediction_manager.create_prediction(
+                title=self.poll_data['title'],
+                description=self.poll_data['description'],
+                prediction_type=pred_type,
+                options=selected_houseguests,
+                created_by=interaction.user.id,
+                guild_id=interaction.guild.id,
+                duration_hours=self.poll_data['duration_hours'],
+                week_number=self.poll_data.get('week_number')
+            )
+            
+            embed = discord.Embed(
+                title="✅ Poll Created Successfully!",
+                description=f"**{self.poll_data['title']}**\n{self.poll_data['description']}",
+                color=0x2ecc71,
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(
+                name="📋 Selected Houseguests",
+                value=" • ".join(selected_houseguests),
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🎯 Poll ID", 
+                value=str(prediction_id),
+                inline=True
+            )
+            
+            embed.add_field(
+                name="💡 How to Vote",
+                value=f"`/predict {prediction_id} <houseguest>`",
+                inline=False
+            )
+            
+            await interaction.response.edit_message(embed=embed, view=None)
+            
+            # Announce in main channel
+            if self.bot_instance.config.get('update_channel_id'):
+                channel = self.bot_instance.get_channel(self.bot_instance.config.get('update_channel_id'))
+                if channel:
+                    prediction_data = {
+                        'id': prediction_id,
+                        'title': self.poll_data['title'],
+                        'description': self.poll_data['description'],
+                        'type': self.poll_data['prediction_type'],
+                        'options': selected_houseguests,
+                        'closes_at': datetime.now() + timedelta(hours=self.poll_data['duration_hours']),
+                        'week_number': self.poll_data.get('week_number')
+                    }
+                    
+                    announce_embed = self.bot_instance.prediction_manager.create_prediction_embed(prediction_data)
+                    announce_embed.title = f"🗳️ New Prediction Poll - {self.poll_data['title']}"
+                    await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+            
+        except Exception as e:
+            logger.error(f"Error creating poll: {e}")
+            await interaction.response.edit_message(
+                content="❌ Error creating poll. Please try again.",
+                view=None
+            )
+
+# STEP 3: Find your existing createpoll command and REPLACE IT
+# Look for this in your setup_commands method:
+# @self.tree.command(name="createpoll", description="Create a prediction poll (Admin only)")
+
+# REPLACE the entire function with this:
+
         @self.tree.command(name="createpoll", description="Create a prediction poll (Admin only)")
         @discord.app_commands.describe(
-            prediction_type="Type of prediction",
-            title="Poll title",
-            description="Poll description",
-            options="All options separated by | (e.g., 'Alice|Bob|Charlie|David')",
+            prediction_type="Type of prediction (title & description auto-populated)",
             duration_hours="How long the poll stays open (hours)",
             week_number="Week number (for weekly predictions)"
         )
         @discord.app_commands.choices(prediction_type=[
-            discord.app_commands.Choice(name="👑 Season Winner", value="season_winner"),
-            discord.app_commands.Choice(name="🏆 Weekly HOH", value="weekly_hoh"),
-            discord.app_commands.Choice(name="💎 Weekly Veto", value="weekly_veto"),
-            discord.app_commands.Choice(name="🚪 Weekly Eviction", value="weekly_eviction")
+            discord.app_commands.Choice(name="👑 Season Winner (20 pts)", value="season_winner"),
+            discord.app_commands.Choice(name="🏆 Weekly HOH (5 pts)", value="weekly_hoh"),
+            discord.app_commands.Choice(name="💎 Weekly Veto (3 pts)", value="weekly_veto"),
+            discord.app_commands.Choice(name="🚪 Weekly Eviction (2 pts)", value="weekly_eviction")
         ])
         async def createpoll_slash(interaction: discord.Interaction, 
                                   prediction_type: discord.app_commands.Choice[str],
-                                  title: str,
-                                  description: str,
-                                  options: str,
                                   duration_hours: int,
                                   week_number: int = None):
-            """Create a prediction poll"""
+            """Create a prediction poll with auto-populated titles and descriptions"""
             try:
                 if not interaction.user.guild_permissions.administrator:
                     await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
                     return
                 
-                if duration_hours < 1 or duration_hours > 168:  # Max 1 week
+                if duration_hours < 1 or duration_hours > 168:
                     await interaction.response.send_message("Duration must be between 1 and 168 hours.", ephemeral=True)
                     return
                 
-                # Parse options from the pipe-separated string
-                option_list = [opt.strip() for opt in options.split('|') if opt.strip()]
-                
-                if len(option_list) < 2:
-                    await interaction.response.send_message("You need at least 2 options. Separate them with | (e.g., 'Alice|Bob|Charlie')", ephemeral=True)
+                # Get the template for this prediction type
+                template = self.POLL_TEMPLATES.get(prediction_type.value)
+                if not template:
+                    await interaction.response.send_message("Invalid prediction type.", ephemeral=True)
                     return
                 
-                if len(option_list) > 25:  # Discord embed field limit
-                    await interaction.response.send_message("Maximum 25 options allowed.", ephemeral=True)
-                    return
+                # Auto-populate poll data with template
+                poll_data = {
+                    'prediction_type': prediction_type.value,
+                    'title': template['title'],
+                    'description': template['description'],
+                    'duration_hours': duration_hours,
+                    'week_number': week_number
+                }
                 
-                await interaction.response.defer(ephemeral=True)
+                embed = discord.Embed(
+                    title="🗳️ Create Prediction Poll",
+                    description=f"**{template['title']}**\n{template['description']}\n\nSelect which houseguests to include in this poll:",
+                    color=0x3498db
+                )
                 
-                try:
-                    pred_type = PredictionType(prediction_type.value)
-                    prediction_id = self.prediction_manager.create_prediction(
-                        title=title,
-                        description=description,
-                        prediction_type=pred_type,
-                        options=option_list,
-                        created_by=interaction.user.id,
-                        guild_id=interaction.guild.id,
-                        duration_hours=duration_hours,
-                        week_number=week_number
+                embed.add_field(
+                    name="📋 Available Houseguests",
+                    value=" • ".join(self.CURRENT_HOUSEGUESTS),
+                    inline=False
+                )
+                
+                embed.add_field(
+                    name="⏰ Poll Duration",
+                    value=f"{duration_hours} hours",
+                    inline=True
+                )
+                
+                if week_number:
+                    embed.add_field(
+                        name="📅 Week",
+                        value=f"Week {week_number}",
+                        inline=True
                     )
-                    
-                    # Create embed to show the created poll
-                    prediction_data = {
-                        'id': prediction_id,
-                        'title': title,
-                        'description': description,
-                        'type': prediction_type.value,
-                        'options': option_list,
-                        'closes_at': datetime.now() + timedelta(hours=duration_hours),
-                        'week_number': week_number
-                    }
-                    
-                    embed = self.prediction_manager.create_prediction_embed(prediction_data)
-                    embed.color = 0x2ecc71  # Green for newly created
-                    embed.title = f"✅ Poll Created - {embed.title}"
-                    
-                    await interaction.followup.send(
-                        f"Poll created successfully! ID: {prediction_id}",
-                        embed=embed,
-                        ephemeral=True
-                    )
-                    
-                    # Optionally announce in the main channel
-                    if self.config.get('update_channel_id'):
-                        channel = self.get_channel(self.config.get('update_channel_id'))
-                        if channel:
-                            announce_embed = self.prediction_manager.create_prediction_embed(prediction_data)
-                            announce_embed.title = f"🗳️ New Prediction Poll - {title}"
-                            await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
-                    
-                except Exception as e:
-                    logger.error(f"Error creating poll: {e}")
-                    await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
+                
+                view = HouseguestSelector(poll_data, self)
+                
+                await interaction.response.send_message(
+                    embed=embed,
+                    view=view,
+                    ephemeral=True
+                )
                 
             except Exception as e:
                 logger.error(f"Error in createpoll command: {e}")
