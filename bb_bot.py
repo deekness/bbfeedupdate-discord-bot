@@ -1163,7 +1163,7 @@ CRITICAL INSTRUCTIONS:
     def _create_contextual_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
             """Create structured summary embed from contextual analysis"""
             pacific_tz = pytz.timezone('US/Pacific')
-            current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')  # Remove leading zero
+            current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
             current_day = self._calculate_current_day()
         
             # Determine embed color based on importance
