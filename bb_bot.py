@@ -3859,68 +3859,68 @@ async def _create_contextual_structured_summary(self, summary_type: str) -> List
             # Fallback to pattern-based summary
             return self._create_pattern_hourly_summary()
     
-    def _parse_structured_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response expecting JSON format"""
-        try:
-            # Try to extract JSON
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start != -1 and json_end != -1:
-                json_text = response_text[json_start:json_end]
-                analysis_data = json.loads(json_text)
-                
-                # Validate required fields
-                if 'headline' not in analysis_data:
-                    analysis_data['headline'] = "Big Brother Update"
-                if 'key_players' not in analysis_data:
-                    analysis_data['key_players'] = []
-                if 'overall_importance' not in analysis_data:
-                    analysis_data['overall_importance'] = 5
-                
-                return analysis_data
-            else:
-                raise ValueError("No JSON found in response")
-                
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"JSON parsing failed: {e}, creating fallback analysis")
-            # Create fallback analysis from the text
-            return self._create_fallback_analysis(response_text)
+        def _parse_structured_llm_response(self, response_text: str) -> dict:
+            """Parse LLM response expecting JSON format"""
+            try:
+                # Try to extract JSON
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                if json_start != -1 and json_end != -1:
+                    json_text = response_text[json_start:json_end]
+                    analysis_data = json.loads(json_text)
+                    
+                    # Validate required fields
+                    if 'headline' not in analysis_data:
+                        analysis_data['headline'] = "Big Brother Update"
+                    if 'key_players' not in analysis_data:
+                        analysis_data['key_players'] = []
+                    if 'overall_importance' not in analysis_data:
+                        analysis_data['overall_importance'] = 5
+                    
+                    return analysis_data
+                else:
+                    raise ValueError("No JSON found in response")
+                    
+            except (json.JSONDecodeError, ValueError) as e:
+                logger.warning(f"JSON parsing failed: {e}, creating fallback analysis")
+                # Create fallback analysis from the text
+                return self._create_fallback_analysis(response_text)
     
-    def _create_fallback_analysis(self, response_text: str) -> dict:
-        """Create fallback analysis when JSON parsing fails"""
-        analysis = {
-            "headline": "Big Brother House Activity",
-            "strategic_analysis": None,
-            "alliance_dynamics": None,
-            "entertainment_highlights": None,
-            "showmance_updates": None,
-            "house_culture": None,
-            "key_players": [],
-            "overall_importance": 5,
-            "importance_explanation": "Moderate activity detected"
-        }
-        
-        # Try to extract some information from the text
-        try:
-            # Look for houseguest names
-            names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
-            analysis['key_players'] = [name for name in names if name not in EXCLUDE_WORDS][:6]
+        def _create_fallback_analysis(self, response_text: str) -> dict:
+            """Create fallback analysis when JSON parsing fails"""
+            analysis = {
+                "headline": "Big Brother House Activity",
+                "strategic_analysis": None,
+                "alliance_dynamics": None,
+                "entertainment_highlights": None,
+                "showmance_updates": None,
+                "house_culture": None,
+                "key_players": [],
+                "overall_importance": 5,
+                "importance_explanation": "Moderate activity detected"
+            }
             
-            # Create a simple headline from the first sentence
-            sentences = response_text.split('.')
-            if sentences:
-                first_sentence = sentences[0].strip()
-                if len(first_sentence) > 10 and len(first_sentence) < 100:
-                    analysis['headline'] = first_sentence
-            
-            # Use the response as general entertainment content
-            if len(response_text) > 50:
-                analysis['entertainment_highlights'] = response_text[:300] + "..." if len(response_text) > 300 else response_text
+            # Try to extract some information from the text
+            try:
+                # Look for houseguest names
+                names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
+                analysis['key_players'] = [name for name in names if name not in EXCLUDE_WORDS][:6]
                 
-        except Exception as e:
-            logger.debug(f"Fallback analysis error: {e}")
-        
-        return analysis
+                # Create a simple headline from the first sentence
+                sentences = response_text.split('.')
+                if sentences:
+                    first_sentence = sentences[0].strip()
+                    if len(first_sentence) > 10 and len(first_sentence) < 100:
+                        analysis['headline'] = first_sentence
+                
+                # Use the response as general entertainment content
+                if len(response_text) > 50:
+                    analysis['entertainment_highlights'] = response_text[:300] + "..." if len(response_text) > 300 else response_text
+                    
+            except Exception as e:
+                logger.debug(f"Fallback analysis error: {e}")
+            
+            return analysis
 
 class Config:
     """Enhanced configuration management with validation"""
