@@ -888,7 +888,7 @@ class ContextualSummarizer:
     def _build_contextual_prompt(self, recent_context: str, relevant_timeline: str,
                                 relevant_arcs: str, formatted_updates: str,
                                 summary_type: str, current_day: int) -> str:
-        """Build the context-aware prompt"""
+        """Build the context-aware prompt with structured format"""
         prompt = f"""You are a Big Brother superfan analyst creating a {summary_type} summary for Day {current_day}.
 
 RECENT CONTEXT FROM PREVIOUS SUMMARIES:
@@ -903,15 +903,30 @@ RELEVANT HOUSEGUEST STORY ARCS:
 NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
 {formatted_updates}
 
-Create a comprehensive summary that:
-1. Builds on the existing narrative established in previous summaries
-2. References relevant past events when they provide important context
-3. Shows how current developments connect to ongoing storylines
-4. Maintains continuity with the established season narrative
-5. Highlights any significant shifts or developments in ongoing stories
+Create a comprehensive summary that builds on the existing narrative and references relevant past events for context. Present events in chronological order as they happened.
 
-CRITICAL: Present events in chronological order as they actually happened. Do NOT reverse the timeline or put the most recent events first. Tell the story as it unfolded from earliest to latest.
-Focus on both strategic gameplay and social dynamics, ensuring the summary flows naturally from the established context while highlighting what's new and significant about these particular updates."""
+Provide your analysis in this EXACT JSON format:
+
+{{
+    "headline": "Brief headline summarizing the most important development",
+    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
+    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
+    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
+    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
+    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
+    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "today's", "developments"],
+    "overall_importance": 8,
+    "importance_explanation": "Brief explanation of why this summary received this importance score (1-10 scale)"
+}}
+
+CRITICAL INSTRUCTIONS:
+- ONLY include sections where there are actual meaningful developments
+- Use null for any section that doesn't have substantial content
+- Present events chronologically (earliest to latest)
+- Build on established context and reference past events when relevant
+- Key players should be the houseguests most central to the day's events
+- Overall importance: 1-3 (quiet day), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+- Don't force content into sections - be selective and only include what's truly noteworthy"""
 
         return prompt
     
@@ -1144,6 +1159,118 @@ Focus on both strategic gameplay and social dynamics, ensuring the summary flows
             conn.rollback()
         finally:
             conn.close()
+
+    def _create_contextual_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
+            """Create structured summary embed from contextual analysis"""
+            current_hour = datetime.now().strftime("%I %p").lstrip('0')  # Remove leading zero
+            current_day = self._calculate_current_day()
+        
+            # Determine embed color based on importance
+            importance = analysis_data.get('overall_importance', 5)
+            if importance >= 9:
+                color = 0xff1744  # Red for explosive days
+            elif importance >= 7:
+                color = 0xff9800  # Orange for high activity
+            elif importance >= 4:
+                color = 0x3498db  # Blue for moderate activity
+            else:
+                color = 0x95a5a6  # Gray for quiet days
+        
+            # Create main embed with appropriate title based on summary type
+            if summary_type == "hourly_summary":
+                title = f"🏠 Chen Bot's House Summary - {current_hour}"
+                description = f"**{update_count} updates this hour** • AI Contextual Analysis"
+                footer_text = f"Chen Bot's House Summary • {current_hour} • Contextual AI"
+            elif summary_type == "daily_recap":
+                title = f"📖 Day {current_day} Recap - Big Brother House"
+                description = f"**{update_count} total updates** • Complete day narrative with contextual AI"
+                footer_text = f"Day {current_day} Daily Recap • 8:01 AM PT • Contextual AI"
+            else:
+                title = f"🏠 Chen Bot's Update Summary"
+                description = f"**{update_count} updates** • AI Contextual Analysis"
+                footer_text = "Chen Bot's Summary • Contextual AI"
+        
+            embed = discord.Embed(
+                title=title,
+                description=description,
+                color=color,
+                timestamp=datetime.now()
+            )
+        
+            # Add headline as first field
+            headline = analysis_data.get('headline', 'Big Brother Update')
+            embed.add_field(
+                name="📰 Headline",
+                value=headline,
+                inline=False
+            )
+        
+            # Add structured sections only if they have content
+            sections = [
+                ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
+                ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
+                ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
+                ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
+                ("🏠 House Culture", analysis_data.get('house_culture'))
+            ]
+        
+            for section_name, content in sections:
+                if content and content.strip() and content.lower() != 'null':
+                    # Split long content if needed
+                    if len(content) > 1000:
+                        content = content[:997] + "..."
+                    embed.add_field(
+                        name=section_name,
+                        value=content,
+                        inline=False
+                    )
+        
+            # Add key players
+            key_players = analysis_data.get('key_players', [])
+            if key_players:
+                # Format key players nicely
+                if len(key_players) <= 6:
+                    players_text = " • ".join([f"**{player}**" for player in key_players])
+                else:
+                    players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
+            
+                embed.add_field(
+                    name="⭐ Key Players",
+                    value=players_text,
+                    inline=False
+                )
+        
+            # Add importance rating with explanation
+            importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+            importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
+        
+            importance_text = f"{importance_icon} **{importance}/10**"
+            explanation = analysis_data.get('importance_explanation', '')
+            if explanation:
+                importance_text += f"\n*{explanation}*"
+        
+            embed.add_field(
+                name="📊 Overall Importance",
+                value=importance_text,
+                inline=False
+            )
+        
+            # Add context information for contextual summaries
+            try:
+                context_stats = self.get_context_stats()
+                embed.add_field(
+                    name="🧠 Context Awareness",
+                    value=f"Building on {context_stats['recent_summaries_count']} recent summaries\n"
+                          f"Season Day {context_stats['latest_day']} • {context_stats['timeline_events_count']} timeline events tracked",
+                    inline=False
+                )
+            except Exception as e:
+                logger.debug(f"Context stats failed: {e}")
+        
+            # Set footer
+            embed.set_footer(text=footer_text)
+        
+            return [embed]
 
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights and social dynamics"""
@@ -3052,7 +3179,7 @@ class EnhancedUpdateBatcher(UpdateBatcher):
         logger.info(f"Enhanced UpdateBatcher initialized - Contextual: {'Enabled' if self.contextual_enabled else 'Disabled'}")
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary using contextual AI"""
+        """Create comprehensive hourly summary using contextual AI with structured format"""
         if not self.hourly_queue:
             logger.warning("No updates in hourly queue for summary")
             return []
@@ -3076,14 +3203,8 @@ class EnhancedUpdateBatcher(UpdateBatcher):
             # THIRD: Try contextual summary if enabled
             elif self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
                 try:
-                    logger.info("Using contextual AI for hourly summary")
-                    contextual_summary = await self.contextual_summarizer.create_contextual_summary(
-                        updates=self.hourly_queue,
-                        summary_type="hourly_summary",
-                        analyzer=self.analyzer,
-                        llm_client=self.llm_client
-                    )
-                    embeds = self._create_contextual_hourly_embed(contextual_summary, len(self.hourly_queue))
+                    logger.info("Using contextual AI for structured hourly summary")
+                    embeds = await self._create_contextual_structured_summary("hourly_summary")
                 except Exception as e:
                     logger.error(f"Contextual hourly summary failed: {e}")
                     # Fallback to regular LLM summary
@@ -3324,145 +3445,144 @@ Make it engaging and insightful, as if you are explaining to a friend who missed
         }
 
 async def create_daily_recap(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-    """Create comprehensive daily recap using contextual AI"""
-    if not daily_updates:
-        logger.warning("No updates provided for daily recap")
-        return []
-    
-    logger.info(f"Creating daily recap for Day {day_number} with {len(daily_updates)} updates")
-    
-    embeds = []
-    
-    try:
-        # FIRST: Check if we have LLM client
-        if not self.llm_client:
-            logger.warning("No LLM client available, using pattern-based daily recap")
-            embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+        """Create comprehensive daily recap using contextual AI with structured format"""
+        if not daily_updates:
+            logger.warning("No updates provided for daily recap")
+            return []
         
-        # SECOND: Check rate limits
-        elif not await self._can_make_llm_request():
-            stats = self.rate_limiter.get_stats()
-            logger.warning(f"Rate limit reached for daily recap: {stats['requests_this_minute']}/{stats['minute_limit']} per minute")
-            embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+        logger.info(f"Creating daily recap for Day {day_number} with {len(daily_updates)} updates")
         
-        # THIRD: Try contextual summary if enabled
-        elif self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
-            try:
-                logger.info("Using contextual AI for daily recap")
-                contextual_summary = await self.contextual_summarizer.create_contextual_summary(
-                    updates=daily_updates,
-                    summary_type="daily_recap",
-                    analyzer=self.analyzer,
-                    llm_client=self.llm_client
-                )
-                embeds = self._create_contextual_daily_embed(contextual_summary, daily_updates, day_number)
-            except Exception as e:
-                logger.error(f"Contextual daily recap failed: {e}")
-                # Fallback to regular LLM summary
-                embeds = await self._create_llm_daily_recap_fallback(daily_updates, day_number)
+        embeds = []
         
-        # FOURTH: Regular LLM summary
-        else:
-            logger.info("Using regular LLM for daily recap")
-            embeds = await self._create_llm_daily_recap_fallback(daily_updates, day_number)
+        try:
+            # FIRST: Check if we have LLM client
+            if not self.llm_client:
+                logger.warning("No LLM client available, using pattern-based daily recap")
+                embeds = self._create_pattern_daily_recap(daily_updates, day_number)
             
-    except Exception as e:
-        logger.error(f"All daily recap methods failed: {e}")
-        embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+            # SECOND: Check rate limits
+            elif not await self._can_make_llm_request():
+                stats = self.rate_limiter.get_stats()
+                logger.warning(f"Rate limit reached for daily recap: {stats['requests_this_minute']}/{stats['minute_limit']} per minute")
+                embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+            
+            # THIRD: Try contextual summary if enabled
+            elif self.contextual_enabled and hasattr(self, 'contextual_summarizer'):
+                try:
+                    logger.info("Using contextual AI for structured daily recap")
+                    embeds = await self._create_contextual_daily_structured_summary(daily_updates, day_number)
+                except Exception as e:
+                    logger.error(f"Contextual daily recap failed: {e}")
+                    # Fallback to regular LLM summary
+                    embeds = await self._create_llm_daily_recap_fallback(daily_updates, day_number)
+            
+            # FOURTH: Regular LLM summary
+            else:
+                logger.info("Using regular LLM for daily recap")
+                embeds = await self._create_llm_daily_recap_fallback(daily_updates, day_number)
+                
+        except Exception as e:
+            logger.error(f"All daily recap methods failed: {e}")
+            embeds = self._create_pattern_daily_recap(daily_updates, day_number)
+        
+        logger.info(f"Created daily recap for Day {day_number} with {len(embeds)} embeds")
+        return embeds
     
-    logger.info(f"Created daily recap for Day {day_number} with {len(embeds)} embeds")
-    return embeds
-
-async def _create_llm_daily_recap_fallback(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-    """Create regular LLM daily recap as fallback"""
-    try:
+    async def _create_contextual_daily_structured_summary(self, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create contextual daily recap with structured format"""
         await self.rate_limiter.wait_if_needed()
         
-        # Sort updates chronologically (earliest first)
-        sorted_updates = sorted(daily_updates, key=lambda x: x.pub_date)
+        # Temporarily store daily updates in hourly queue for processing
+        temp_queue = self.hourly_queue.copy()
+        self.hourly_queue = daily_updates
         
-        # Group updates by time periods for better analysis
-        morning_updates = []
-        afternoon_updates = []
-        evening_updates = []
-        night_updates = []
-        
-        for update in sorted_updates:
-            hour = update.pub_date.hour
-            if 6 <= hour < 12:
-                morning_updates.append(update)
-            elif 12 <= hour < 18:
-                afternoon_updates.append(update)
-            elif 18 <= hour < 24:
-                evening_updates.append(update)
-            else:  # 0-6
-                night_updates.append(update)
-        
-        # Create time-period summaries
-        time_periods = [
-            ("Morning", morning_updates),
-            ("Afternoon", afternoon_updates), 
-            ("Evening", evening_updates),
-            ("Late Night", night_updates)
-        ]
-        
-        # Format all updates with timestamps for the prompt
-        all_updates_text = []
-        for update in sorted_updates:
-            time_str = self._extract_correct_time(update)
-            title = update.title
-            # Clean title of timestamp if present
-            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
+        try:
+            # Get contextual information
+            recent_context = self.contextual_summarizer._build_recent_context()
+            relevant_timeline = self.contextual_summarizer._get_relevant_timeline_events(daily_updates, self.analyzer)
+            relevant_arcs = self.contextual_summarizer._get_relevant_houseguest_arcs(daily_updates, self.analyzer)
+            formatted_updates = self.contextual_summarizer._format_updates(daily_updates)
             
-            all_updates_text.append(f"{time_str} - {title}")
-        
-        updates_text = "\n".join(all_updates_text)
-        
-        # Calculate strategic importance for context
-        high_importance_count = sum(1 for u in daily_updates if self.analyzer.analyze_strategic_importance(u) >= 7)
-        
-        prompt = f"""You are a Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
+            # Build enhanced prompt for daily recap
+            prompt = f"""You are a Big Brother superfan analyst creating a comprehensive DAILY RECAP for Day {day_number}.
 
-Analyze these {len(daily_updates)} updates from the entire day in CHRONOLOGICAL ORDER (earliest to latest):
+RECENT CONTEXT FROM PREVIOUS SUMMARIES:
+{recent_context}
 
-{updates_text}
+RELEVANT SEASON TIMELINE EVENTS:
+{relevant_timeline}
 
-Create a complete narrative that tells the story of Day {day_number} in the Big Brother house. This should be more comprehensive and analytical than an hourly summary.
+RELEVANT HOUSEGUEST STORY ARCS:
+{relevant_arcs}
 
-Structure your analysis as follows:
+NEW UPDATES TO ANALYZE (Day {day_number}) - IN CHRONOLOGICAL ORDER (earliest first):
+{formatted_updates}
 
-**THE DAY'S STORY**: Write a flowing narrative (3-4 paragraphs) that chronicles the major developments throughout the day. Present events chronologically as they happened, showing how the day unfolded from morning to night.
+Create a comprehensive daily recap that builds on the existing narrative and shows the complete story of Day {day_number}. Present events chronologically as they happened throughout the day.
 
-**KEY STRATEGIC DEVELOPMENTS**: Analyze the most important game moves, alliance discussions, targeting decisions, and strategic positioning that occurred.
+Provide your analysis in this EXACT JSON format:
 
-**SOCIAL DYNAMICS**: Examine relationship developments, conflicts, bonding moments, and how the social game evolved throughout the day.
+{{
+    "headline": "Compelling headline summarizing Day {day_number}'s biggest story",
+    "strategic_analysis": "Comprehensive analysis of game moves, alliance discussions, targeting decisions, and strategic positioning throughout the day. Only include if there are meaningful strategic developments - otherwise use null.",
+    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes throughout the day. Only include if there are meaningful alliance developments - otherwise use null.",
+    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content from the day. Only include if there are entertaining moments - otherwise use null.",
+    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments from the day. Only include if there are romance-related developments - otherwise use null.",
+    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere changes. Only include if there are meaningful cultural/social developments - otherwise use null.",
+    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "Day", "{day_number}", "developments"],
+    "overall_importance": 8,
+    "importance_explanation": "Brief explanation of why Day {day_number} received this importance score"
+}}
 
-**MAJOR HIGHLIGHTS**: Identify the 3-5 most significant moments that Big Brother superfans would want to know about from this day.
+CRITICAL INSTRUCTIONS:
+- This is a DAILY recap - be more comprehensive and analytical than hourly summaries
+- ONLY include sections where there are actual meaningful developments
+- Use null for any section that doesn't have substantial content  
+- Present events chronologically showing how the day progressed
+- Build on established context and reference past events when relevant
+- Key players should be houseguests most central to Day {day_number}'s events
+- Overall importance: 1-3 (quiet day), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+- Show the progression and evolution throughout the entire day"""
 
-CRITICAL REQUIREMENTS:
-- Present ALL events in chronological order (earliest first, latest last)
-- Show progression throughout the day
-- Be comprehensive but focus on the biggest moments
-- Analyze the strategic and social implications
-- Write as if explaining Day {day_number} to a superfan who missed the feeds
-
-This is a DAILY recap - be more detailed and analytical than hourly summaries while maintaining the engaging narrative style."""
-
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=1500,  # More tokens for daily recap
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Create embed with the comprehensive daily narrative
-        return self._create_narrative_daily_embed(response.content[0].text, daily_updates, day_number)
-        
-    except Exception as e:
-        logger.error(f"LLM daily recap fallback failed: {e}")
-        return self._create_pattern_daily_recap(daily_updates, day_number)
+            # Call LLM
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=1500,  # More tokens for daily recap
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = response.content[0].text
+            
+            # Parse response
+            analysis_data = self._parse_structured_llm_response(response_text)
+            
+            # Create structured embed
+            embeds = self.contextual_summarizer._create_contextual_summary_embed(
+                analysis_data, len(daily_updates), "daily_recap"
+            )
+            
+            # Store context information
+            summary_text = f"Day {day_number} Headline: {analysis_data.get('headline', 'No headline')}"
+            for key in ['strategic_analysis', 'alliance_dynamics', 'entertainment_highlights', 'showmance_updates', 'house_culture']:
+                content = analysis_data.get(key)
+                if content and content.strip() and content.lower() != 'null':
+                    summary_text += f"\n{key.replace('_', ' ').title()}: {content[:100]}..."
+            
+            await self.contextual_summarizer._store_summary_context(summary_text, "daily_recap", daily_updates, day_number, self.analyzer)
+            await self.contextual_summarizer._extract_and_store_timeline_events(summary_text, daily_updates, day_number, self.analyzer)
+            await self.contextual_summarizer._update_houseguest_arcs(summary_text, daily_updates, self.analyzer)
+            
+            logger.info(f"Created contextual structured daily recap for Day {day_number}")
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"Failed to create contextual daily recap: {e}")
+            return self._create_pattern_daily_recap(daily_updates, day_number)
+        finally:
+            # Restore original hourly queue
+            self.hourly_queue = temp_queue
 
 def _create_contextual_daily_embed(self, contextual_summary: str, daily_updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
     """Create daily recap embed with contextual summary"""
@@ -3678,6 +3798,129 @@ def _create_pattern_daily_recap(self, daily_updates: List[BBUpdate], day_number:
     
     return [embed]
 
+async def _create_contextual_structured_summary(self, summary_type: str) -> List[discord.Embed]:
+        """Create contextual summary with structured format like the original"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Get contextual information
+        recent_context = self.contextual_summarizer._build_recent_context()
+        relevant_timeline = self.contextual_summarizer._get_relevant_timeline_events(self.hourly_queue, self.analyzer)
+        relevant_arcs = self.contextual_summarizer._get_relevant_houseguest_arcs(self.hourly_queue, self.analyzer)
+        formatted_updates = self.contextual_summarizer._format_updates(self.hourly_queue)
+        current_day = self.contextual_summarizer._calculate_current_day()
+        
+        # Build enhanced prompt with structured format requirement
+        prompt = self.contextual_summarizer._build_contextual_prompt(
+            recent_context, relevant_timeline, relevant_arcs, 
+            formatted_updates, summary_type, current_day
+        )
+        
+        # Call LLM with context-aware prompt
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model="claude-3-haiku-20240307",
+            max_tokens=1200,  # Increased for structured format
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        response_text = response.content[0].text
+        
+        try:
+            # Parse JSON response
+            analysis_data = self._parse_structured_llm_response(response_text)
+            
+            # Create structured embed using the contextual summarizer method
+            embeds = self.contextual_summarizer._create_contextual_summary_embed(
+                analysis_data, len(self.hourly_queue), summary_type
+            )
+            
+            # Store this summary for future context
+            summary_text = f"Headline: {analysis_data.get('headline', 'No headline')}"
+            for key in ['strategic_analysis', 'alliance_dynamics', 'entertainment_highlights', 'showmance_updates', 'house_culture']:
+                content = analysis_data.get(key)
+                if content and content.strip() and content.lower() != 'null':
+                    summary_text += f"\n{key.replace('_', ' ').title()}: {content[:100]}..."
+            
+            await self.contextual_summarizer._store_summary_context(summary_text, summary_type, self.hourly_queue, current_day, self.analyzer)
+            
+            # Extract and store timeline events from this summary
+            await self.contextual_summarizer._extract_and_store_timeline_events(summary_text, self.hourly_queue, current_day, self.analyzer)
+            
+            # Update houseguest arcs based on this summary
+            await self.contextual_summarizer._update_houseguest_arcs(summary_text, self.hourly_queue, self.analyzer)
+            
+            logger.info(f"Created contextual structured {summary_type} summary with {len(self.hourly_queue)} updates")
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"Failed to parse structured response: {e}")
+            logger.error(f"Raw response: {response_text}")
+            # Fallback to pattern-based summary
+            return self._create_pattern_hourly_summary()
+    
+    def _parse_structured_llm_response(self, response_text: str) -> dict:
+        """Parse LLM response expecting JSON format"""
+        try:
+            # Try to extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start != -1 and json_end != -1:
+                json_text = response_text[json_start:json_end]
+                analysis_data = json.loads(json_text)
+                
+                # Validate required fields
+                if 'headline' not in analysis_data:
+                    analysis_data['headline'] = "Big Brother Update"
+                if 'key_players' not in analysis_data:
+                    analysis_data['key_players'] = []
+                if 'overall_importance' not in analysis_data:
+                    analysis_data['overall_importance'] = 5
+                
+                return analysis_data
+            else:
+                raise ValueError("No JSON found in response")
+                
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"JSON parsing failed: {e}, creating fallback analysis")
+            # Create fallback analysis from the text
+            return self._create_fallback_analysis(response_text)
+    
+    def _create_fallback_analysis(self, response_text: str) -> dict:
+        """Create fallback analysis when JSON parsing fails"""
+        analysis = {
+            "headline": "Big Brother House Activity",
+            "strategic_analysis": None,
+            "alliance_dynamics": None,
+            "entertainment_highlights": None,
+            "showmance_updates": None,
+            "house_culture": None,
+            "key_players": [],
+            "overall_importance": 5,
+            "importance_explanation": "Moderate activity detected"
+        }
+        
+        # Try to extract some information from the text
+        try:
+            # Look for houseguest names
+            names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
+            analysis['key_players'] = [name for name in names if name not in EXCLUDE_WORDS][:6]
+            
+            # Create a simple headline from the first sentence
+            sentences = response_text.split('.')
+            if sentences:
+                first_sentence = sentences[0].strip()
+                if len(first_sentence) > 10 and len(first_sentence) < 100:
+                    analysis['headline'] = first_sentence
+            
+            # Use the response as general entertainment content
+            if len(response_text) > 50:
+                analysis['entertainment_highlights'] = response_text[:300] + "..." if len(response_text) > 300 else response_text
+                
+        except Exception as e:
+            logger.debug(f"Fallback analysis error: {e}")
+        
+        return analysis
 
 class Config:
     """Enhanced configuration management with validation"""
