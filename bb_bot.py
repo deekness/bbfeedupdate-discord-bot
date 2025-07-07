@@ -3518,7 +3518,7 @@ class BBDiscordBot(commands.Bot):
         # I'll continue with the rest of the commands in the next step...
         # For now, this should fix your immediate startup error
 
-def signal_handler(self, signum, frame):
+    def signal_handler(self, signum, frame):
         """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.is_shutting_down = True
