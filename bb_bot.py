@@ -1715,11 +1715,11 @@ class PredictionManager:
             
     
     def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
-                  points: int, was_correct: bool, participated: bool):
+                          points: int, was_correct: bool, participated: bool):
         """Update user's leaderboard stats with improved error handling"""
         max_retries = 3
         retry_delay = 0.1  # 100ms
-
+        
         for attempt in range(max_retries):
             conn = None
             try:
@@ -1794,6 +1794,8 @@ class PredictionManager:
             finally:
                 if conn:
                     conn.close()
+    
+    def get_active_predictions(self, guild_id: int) -> List[Dict]:
     
     def get_active_predictions(self, guild_id: int) -> List[Dict]:
         """Get all active predictions for a guild"""
