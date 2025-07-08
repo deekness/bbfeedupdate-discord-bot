@@ -4128,14 +4128,33 @@ class BBDiscordBot(commands.Bot):
                 
                 await interaction.response.defer(ephemeral=True)
                 
-                queue_size = len(self.update_batcher.update_queue)
-                if queue_size == 0:
-                    await interaction.followup.send("No updates in queue to send.", ephemeral=True)
+                highlights_size = len(self.update_batcher.highlights_queue)
+                hourly_size = len(self.update_batcher.hourly_queue)
+                
+                if highlights_size == 0 and hourly_size == 0:
+                    await interaction.followup.send("No updates in either queue to send.", ephemeral=True)
                     return
                 
-                await self.send_batch_update()
+                sent_embeds = 0
                 
-                await interaction.followup.send(f"Force sent batch of {queue_size} updates!", ephemeral=True)
+                # Force send highlights if any exist
+                if highlights_size > 0:
+                    await self.send_highlights_batch()
+                    sent_embeds += 1
+                
+                # Force send hourly summary if any exist
+                if hourly_size > 0:
+                    await self.send_hourly_summary()
+                    sent_embeds += 1
+                
+                response_msg = f"Force sent updates!\n"
+                if highlights_size > 0:
+                    response_msg += f"• Highlights batch: {highlights_size} updates\n"
+                if hourly_size > 0:
+                    response_msg += f"• Hourly summary: {hourly_size} updates\n"
+                response_msg += f"Total embeds sent: {sent_embeds}"
+                
+                await interaction.followup.send(response_msg, ephemeral=True)
                 
             except Exception as e:
                 logger.error(f"Error forcing batch: {e}")
