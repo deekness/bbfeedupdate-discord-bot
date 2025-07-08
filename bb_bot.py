@@ -2138,17 +2138,9 @@ class PredictionManager:
     
             if user:
                 username = user.display_name
-        else:
-            # Show last 4 digits of user ID as fallback
-            username = f"User#{str(entry['user_id'])[-4:]}"
-            
-            medal = medals[i] if i < 3 else f"{i+1}."
-            accuracy_str = f"{entry['accuracy']:.1f}%" if entry['total'] > 0 else "0%"
-            
-            leaderboard_text.append(
-                f"{medal} **{username}** - {entry['points']} pts "
-                f"({entry['correct']}/{entry['total']} - {accuracy_str})"
-            )
+            else:
+                # Show last 4 digits of user ID as fallback
+                username = f"User#{str(entry['user_id'])[-4:]}"
             
             medal = medals[i] if i < 3 else f"{i+1}."
             accuracy_str = f"{entry['accuracy']:.1f}%" if entry['total'] > 0 else "0%"
