@@ -2135,15 +2135,21 @@ class PredictionManager:
         
         for i, entry in enumerate(leaderboard[:10]):
             user = guild.get_member(entry['user_id'])
+            print(f"Debug: Looking for user ID {entry['user_id']}, found: {user}")  # Debug line
+            
             if user:
                 username = user.display_name
             else:
-                # Try to get the user from the bot's cache
-                user_obj = guild.get_member(entry['user_id'])
-                if user_obj:
-                    username = user_obj.display_name
-                else:
-                    username = f"Unknown User"  # Much cleaner than the long ID
+                # Fallback to just the last 4 digits of user ID
+                username = f"User#{str(entry['user_id'])[-4:]}"
+            
+            medal = medals[i] if i < 3 else f"{i+1}."
+            accuracy_str = f"{entry['accuracy']:.1f}%" if entry['total'] > 0 else "0%"
+            
+            leaderboard_text.append(
+                f"{medal} **{username}** - {entry['points']} pts "
+                f"({entry['correct']}/{entry['total']} - {accuracy_str})"
+            )
             
             medal = medals[i] if i < 3 else f"{i+1}."
             accuracy_str = f"{entry['accuracy']:.1f}%" if entry['total'] > 0 else "0%"
