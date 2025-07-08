@@ -1472,7 +1472,7 @@ class PredictionManager:
     # Point values for each prediction type
     POINT_VALUES = {
         PredictionType.SEASON_WINNER: 20,
-        PredictionType.FIRST_BOOT: 10,
+        PredictionType.FIRST_BOOT: 15,
         PredictionType.WEEKLY_HOH: 5,
         PredictionType.WEEKLY_VETO: 3,
         PredictionType.WEEKLY_EVICTION: 2
