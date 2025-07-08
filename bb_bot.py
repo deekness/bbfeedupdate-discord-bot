@@ -4539,100 +4539,122 @@ class BBDiscordBot(commands.Bot):
 
         # PREDICTION SYSTEM COMMANDS
         @self.tree.command(name="createpoll", description="Create a prediction poll (Admin only)")
-        @discord.app_commands.describe(
-            prediction_type="Type of prediction",
-            title="Poll title",
-            description="Poll description",
-            options="All options separated by | (e.g., 'Alice|Bob|Charlie|David')",
-            duration_hours="How long the poll stays open (hours)",
-            week_number="Week number (for weekly predictions)"
-        )
-        @discord.app_commands.choices(prediction_type=[
-            discord.app_commands.Choice(name="👑 Season Winner", value="season_winner"),
-            discord.app_commands.Choice(name="🏆 Weekly HOH", value="weekly_hoh"),
-            discord.app_commands.Choice(name="💎 Weekly Veto", value="weekly_veto"),
-            discord.app_commands.Choice(name="🚪 Weekly Eviction", value="weekly_eviction")
-        ])
-        async def createpoll_slash(interaction: discord.Interaction, 
-                                  prediction_type: discord.app_commands.Choice[str],
-                                  title: str,
-                                  description: str,
-                                  options: str,
-                                  duration_hours: int,
-                                  week_number: int = None):
-            """Create a prediction poll"""
-            try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
-                    return
-                
-                if duration_hours < 1 or duration_hours > 168:  # Max 1 week
-                    await interaction.response.send_message("Duration must be between 1 and 168 hours.", ephemeral=True)
-                    return
-                
-                # Parse options from the pipe-separated string
-                option_list = [opt.strip() for opt in options.split('|') if opt.strip()]
-                
-                if len(option_list) < 2:
-                    await interaction.response.send_message("You need at least 2 options. Separate them with | (e.g., 'Alice|Bob|Charlie')", ephemeral=True)
-                    return
-                
-                if len(option_list) > 25:  # Discord embed field limit
-                    await interaction.response.send_message("Maximum 25 options allowed.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
+            @discord.app_commands.describe(
+                prediction_type="Type of prediction",
+                options="All options separated by | (e.g., 'Alice|Bob|Charlie|David')",
+                duration_hours="How long the poll stays open (hours)",
+                week_number="Week number (required for weekly predictions, ignored for season winner)"
+            )
+            @discord.app_commands.choices(prediction_type=[
+                discord.app_commands.Choice(name="👑 Season Winner", value="season_winner"),
+                discord.app_commands.Choice(name="🏆 Weekly HOH", value="weekly_hoh"),
+                discord.app_commands.Choice(name="💎 Weekly Veto", value="weekly_veto"),
+                discord.app_commands.Choice(name="🚪 Weekly Eviction", value="weekly_eviction")
+            ])
+            async def createpoll_slash(interaction: discord.Interaction, 
+                                      prediction_type: discord.app_commands.Choice[str],
+                                      options: str,
+                                      duration_hours: int,
+                                      week_number: int = None):
+                """Create a prediction poll with auto-generated title and description"""
                 try:
-                    pred_type = PredictionType(prediction_type.value)
-                    prediction_id = self.prediction_manager.create_prediction(
-                        title=title,
-                        description=description,
-                        prediction_type=pred_type,
-                        options=option_list,
-                        created_by=interaction.user.id,
-                        guild_id=interaction.guild.id,
-                        duration_hours=duration_hours,
-                        week_number=week_number
-                    )
+                    if not interaction.user.guild_permissions.administrator:
+                        await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
+                        return
                     
-                    # Create embed to show the created poll
-                    prediction_data = {
-                        'id': prediction_id,
-                        'title': title,
-                        'description': description,
-                        'type': prediction_type.value,
-                        'options': option_list,
-                        'closes_at': datetime.now() + timedelta(hours=duration_hours),
-                        'week_number': week_number
-                    }
+                    if duration_hours < 1 or duration_hours > 168:  # Max 1 week
+                        await interaction.response.send_message("Duration must be between 1 and 168 hours.", ephemeral=True)
+                        return
                     
-                    embed = self.prediction_manager.create_prediction_embed(prediction_data)
-                    embed.color = 0x2ecc71  # Green for newly created
-                    embed.title = f"✅ Poll Created - {embed.title}"
+                    # Validate week_number for weekly predictions
+                    pred_type_value = prediction_type.value
+                    if pred_type_value != "season_winner":
+                        if week_number is None or week_number < 1:
+                            await interaction.response.send_message("Week number is required for weekly predictions and must be 1 or greater.", ephemeral=True)
+                            return
                     
-                    await interaction.followup.send(
-                        f"Poll created successfully! ID: {prediction_id}",
-                        embed=embed,
-                        ephemeral=True
-                    )
+                    # Auto-generate title and description based on prediction type
+                    if pred_type_value == "season_winner":
+                        title = "Season Winner"
+                        description = "Season 27"
+                        week_number = None  # Not applicable for season winner
+                    elif pred_type_value == "weekly_hoh":
+                        title = f"Week {week_number} HOH"
+                        description = f"Week {week_number}"
+                    elif pred_type_value == "weekly_veto":
+                        title = f"Week {week_number} Veto"
+                        description = f"Week {week_number}"
+                    elif pred_type_value == "weekly_eviction":
+                        title = f"Week {week_number} Eviction"
+                        description = f"Week {week_number}"
+                    else:
+                        await interaction.response.send_message("Invalid prediction type.", ephemeral=True)
+                        return
                     
-                    # Optionally announce in the main channel
-                    if self.config.get('update_channel_id'):
-                        channel = self.get_channel(self.config.get('update_channel_id'))
-                        if channel:
-                            announce_embed = self.prediction_manager.create_prediction_embed(prediction_data)
-                            announce_embed.title = f"🗳️ New Prediction Poll - {title}"
-                            await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+                    # Parse options from the pipe-separated string
+                    option_list = [opt.strip() for opt in options.split('|') if opt.strip()]
+                    
+                    if len(option_list) < 2:
+                        await interaction.response.send_message("You need at least 2 options. Separate them with | (e.g., 'Alice|Bob|Charlie')", ephemeral=True)
+                        return
+                    
+                    if len(option_list) > 25:  # Discord embed field limit
+                        await interaction.response.send_message("Maximum 25 options allowed.", ephemeral=True)
+                        return
+                    
+                    await interaction.response.defer(ephemeral=True)
+                    
+                    try:
+                        pred_type = PredictionType(pred_type_value)
+                        prediction_id = self.prediction_manager.create_prediction(
+                            title=title,
+                            description=description,
+                            prediction_type=pred_type,
+                            options=option_list,
+                            created_by=interaction.user.id,
+                            guild_id=interaction.guild.id,
+                            duration_hours=duration_hours,
+                            week_number=week_number
+                        )
+                        
+                        # Create embed to show the created poll
+                        prediction_data = {
+                            'id': prediction_id,
+                            'title': title,
+                            'description': description,
+                            'type': pred_type_value,
+                            'options': option_list,
+                            'closes_at': datetime.now() + timedelta(hours=duration_hours),
+                            'week_number': week_number
+                        }
+                        
+                        embed = self.prediction_manager.create_prediction_embed(prediction_data)
+                        embed.color = 0x2ecc71  # Green for newly created
+                        embed.title = f"✅ Poll Created - {embed.title}"
+                        
+                        await interaction.followup.send(
+                            f"Poll created successfully! ID: {prediction_id}\n"
+                            f"**Title:** {title}\n**Description:** {description}",
+                            embed=embed,
+                            ephemeral=True
+                        )
+                        
+                        # Optionally announce in the main channel
+                        if self.config.get('update_channel_id'):
+                            channel = self.get_channel(self.config.get('update_channel_id'))
+                            if channel:
+                                announce_embed = self.prediction_manager.create_prediction_embed(prediction_data)
+                                announce_embed.title = f"🗳️ New Prediction Poll - {title}"
+                                await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+                        
+                    except Exception as e:
+                        logger.error(f"Error creating poll: {e}")
+                        await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
                     
                 except Exception as e:
-                    logger.error(f"Error creating poll: {e}")
-                    await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error in createpoll command: {e}")
-                if not interaction.response.is_done():
-                    await interaction.response.send_message("Error creating poll.", ephemeral=True)
+                    logger.error(f"Error in createpoll command: {e}")
+                    if not interaction.response.is_done():
+                        await interaction.response.send_message("Error creating poll.", ephemeral=True)
 
         @self.tree.command(name="predict", description="Make a prediction on an active poll")
         @discord.app_commands.describe(
