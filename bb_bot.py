@@ -2435,8 +2435,90 @@ class UpdateBatcher:
         logger.info(f"Created hourly summary from {processed_count} updates")
         return embeds
 
-    # ================== MISSING METHODS - ADD THESE ==================
-    
+    async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
+        """Create structured summary with forced contextual format"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Sort updates chronologically before formatting
+        sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
+        
+        # Format updates in chronological order
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates, 1):
+            time_str = self._extract_correct_time(update)
+            # Remove leading zero from time
+            time_str = time_str.lstrip('0')
+            formatted_updates.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                # Truncate long descriptions
+                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+                formatted_updates.append(f"   {desc}")
+        
+        updates_text = "\n".join(formatted_updates)
+        
+        # Calculate current day (simplified)
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
+        
+        # Build structured prompt
+        prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
+
+NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
+{updates_text}
+
+Create a comprehensive summary that presents events chronologically as they happened.
+
+Provide your analysis in this EXACT JSON format:
+
+{{
+    "headline": "Brief headline summarizing the most important development this hour",
+    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
+    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
+    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
+    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
+    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
+    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
+    "overall_importance": 8,
+    "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
+}}
+
+CRITICAL INSTRUCTIONS:
+- ONLY include sections where there are actual meaningful developments
+- Use null for any section that doesn't have substantial content
+- Present events chronologically (earliest to latest)
+- Key players should be the houseguests most central to this hour's events
+- Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+- Don't force content into sections - be selective and only include what's truly noteworthy
+- If a section would be empty or just say "nothing happened", use null instead"""
+
+        # Call LLM
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model="claude-3-haiku-20240307",
+            max_tokens=1200,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        response_text = response.content[0].text
+        
+        try:
+            # Parse JSON response
+            analysis_data = self._parse_structured_llm_response(response_text)
+            
+            # Create structured embed
+            embeds = self._create_structured_summary_embed(
+                analysis_data, len(self.hourly_queue), summary_type
+            )
+            
+            logger.info(f"Created forced structured {summary_type} summary with {len(self.hourly_queue)} updates")
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"Failed to parse structured response: {e}")
+            logger.error(f"Raw response: {response_text}")
+            # Fallback to enhanced pattern-based
+            return self._create_enhanced_pattern_hourly_summary()
+
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
         """Create just highlights using LLM"""
         await self.rate_limiter.wait_if_needed()
@@ -2523,61 +2605,6 @@ Be selective - these should be the updates that a superfan would want to know ab
         except Exception as e:
             logger.error(f"Failed to parse highlights response: {e}")
             return [self._create_pattern_highlights_embed()]
-
-    def _create_pattern_highlights_embed(self) -> discord.Embed:
-        """Create highlights embed using pattern matching when LLM unavailable"""
-        try:
-            # Sort updates by importance score
-            updates_with_importance = [
-                (update, self.analyzer.analyze_strategic_importance(update))
-                for update in self.highlights_queue
-            ]
-            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-            
-            # Select top 6-10 most important updates
-            selected_updates = updates_with_importance[:min(10, len(updates_with_importance))]
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Key moments from this batch ({len(selected_updates)} of {len(self.highlights_queue)} updates)",
-                color=0x95a5a6,  # Gray for pattern-based
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights
-            for i, (update, importance) in enumerate(selected_updates, 1):
-                # Extract correct time from content rather than pub_date
-                time_str = self._extract_correct_time(update)
-                
-                # Clean the title - remove time if it appears at the beginning
-                title = update.title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-                
-                # Only truncate if extremely long
-                if len(title) > 1000:
-                    title = title[:997] + "..."
-                
-                # Add importance indicators
-                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-                
-                embed.add_field(
-                    name=f"{importance_emoji} {time_str}",
-                    value=title,
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"Pattern highlights creation failed: {e}")
-            # Return a basic embed if everything fails
-            return discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Recent updates from the feed ({len(self.highlights_queue)} updates)",
-                color=0x95a5a6
-            )
 
     async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
         """Create narrative LLM hourly summary as fallback"""
@@ -2676,1316 +2703,348 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         return analysis
 
-    def _extract_correct_time(self, update: BBUpdate) -> str:
-        """Extract the correct time from the update content rather than pub_date"""
-        # Look for time patterns in the title like "07:56 PM PST"
-        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
-        
-        # First try the title
-        match = re.search(time_pattern, update.title)
-        if match:
-            time_str = match.group(1)
-            ampm = match.group(2)
-            return f"{time_str} {ampm}"
-        
-        # Then try the description
-        match = re.search(time_pattern, update.description)
-        if match:
-            time_str = match.group(1)
-            ampm = match.group(2)
-            return f"{time_str} {ampm}"
-        
-        # Fallback to pub_date if no time found in content
-        return update.pub_date.strftime("%I:%M %p")
-    
-    def get_rate_limit_stats(self) -> Dict[str, int]:
-        """Get current rate limiting statistics"""
-        return self.rate_limiter.get_stats()
-
-    # ================== END OF MISSING METHODS ==================
-    
-    # ... rest of your existing methods should continue here ...
-
-async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary with forced contextual format (even without prior context)"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Sort updates chronologically before formatting
-    sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
-    
-    # Format updates in chronological order
-    formatted_updates = []
-    for i, update in enumerate(sorted_updates, 1):
-        time_str = self._extract_correct_time(update)
-        # Remove leading zero from time
-        time_str = time_str.lstrip('0')
-        formatted_updates.append(f"{i}. {time_str} - {update.title}")
-        if update.description and update.description != update.title:
-            # Truncate long descriptions
-            desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
-            formatted_updates.append(f"   {desc}")
-    
-    updates_text = "\n".join(formatted_updates)
-    
-    # Calculate current day (simplified)
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Build structured prompt (simplified without heavy context dependencies)
-    prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
-
-NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
-{updates_text}
-
-Create a comprehensive summary that presents events chronologically as they happened.
-
-Provide your analysis in this EXACT JSON format:
-
-{{
-    "headline": "Brief headline summarizing the most important development this hour",
-    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
-    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
-    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
-    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
-    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
-    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
-    "overall_importance": 8,
-    "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
-}}
-
-CRITICAL INSTRUCTIONS:
-- ONLY include sections where there are actual meaningful developments
-- Use null for any section that doesn't have substantial content
-- Present events chronologically (earliest to latest)
-- Key players should be the houseguests most central to this hour's events
-- Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
-- Don't force content into sections - be selective and only include what's truly noteworthy
-- If a section would be empty or just say "nothing happened", use null instead"""
-
-    # Call LLM
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model="claude-3-haiku-20240307",
-        max_tokens=1200,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    response_text = response.content[0].text
-    
-    try:
-        # Parse JSON response
-        analysis_data = self._parse_structured_llm_response(response_text)
-        
-        # Create structured embed
-        embeds = self._create_structured_summary_embed(
-            analysis_data, len(self.hourly_queue), summary_type
-        )
-        
-        logger.info(f"Created forced structured {summary_type} summary with {len(self.hourly_queue)} updates")
-        return embeds
-        
-    except Exception as e:
-        logger.error(f"Failed to parse structured response: {e}")
-        logger.error(f"Raw response: {response_text}")
-        # Fallback to enhanced pattern-based
-        return self._create_enhanced_pattern_hourly_summary()
-
-async def create_hourly_summary(self) -> List[discord.Embed]:
-    """Create comprehensive hourly summary using structured format (force contextual structure)"""
-    if not self.hourly_queue:
-        logger.warning("No updates in hourly queue for summary")
-        return []
-
-    logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
-
-    embeds = []
-
-    try:
-        # ALWAYS try structured contextual format first, even with no context
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                logger.info("Using structured contextual format for hourly summary")
-                embeds = await self._create_forced_structured_summary("hourly_summary")
-            except Exception as e:
-                logger.error(f"Structured summary failed: {e}")
-                # Fallback to narrative LLM summary
-                embeds = await self._create_llm_hourly_summary_fallback()
-        else:
-            # No LLM available, use enhanced pattern-based
-            logger.info("Using enhanced pattern-based hourly summary")
-            embeds = self._create_enhanced_pattern_hourly_summary()
-
-    except Exception as e:
-        logger.error(f"All hourly summary methods failed: {e}")
-        embeds = self._create_enhanced_pattern_hourly_summary()
-
-    # Clear hourly queue after processing
-    processed_count = len(self.hourly_queue)
-    self.hourly_queue.clear()
-    self.last_hourly_summary = datetime.now()
-
-    logger.info(f"Created hourly summary from {processed_count} updates")
-    return embeds
-
-async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary with forced contextual format (even without prior context)"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Sort updates chronologically before formatting
-    sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
-    
-    # Format updates in chronological order
-    formatted_updates = []
-    for i, update in enumerate(sorted_updates, 1):
-        time_str = self._extract_correct_time(update)
-        # Remove leading zero from time
-        time_str = time_str.lstrip('0')
-        formatted_updates.append(f"{i}. {time_str} - {update.title}")
-        if update.description and update.description != update.title:
-            # Truncate long descriptions
-            desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
-            formatted_updates.append(f"   {desc}")
-    
-    updates_text = "\n".join(formatted_updates)
-    
-    # Calculate current day (simplified)
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Build structured prompt (simplified without heavy context dependencies)
-    prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
-
-NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
-{updates_text}
-
-Create a comprehensive summary that presents events chronologically as they happened.
-
-Provide your analysis in this EXACT JSON format:
-
-{{
-    "headline": "Brief headline summarizing the most important development this hour",
-    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
-    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
-    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
-    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
-    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
-    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
-    "overall_importance": 8,
-    "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
-}}
-
-CRITICAL INSTRUCTIONS:
-- ONLY include sections where there are actual meaningful developments
-- Use null for any section that doesn't have substantial content
-- Present events chronologically (earliest to latest)
-- Key players should be the houseguests most central to this hour's events
-- Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
-- Don't force content into sections - be selective and only include what's truly noteworthy
-- If a section would be empty or just say "nothing happened", use null instead"""
-
-    # Call LLM
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model="claude-3-haiku-20240307",
-        max_tokens=1200,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    response_text = response.content[0].text
-    
-    try:
-        # Parse JSON response
-        analysis_data = self._parse_structured_llm_response(response_text)
-        
-        # Create structured embed
-        embeds = self._create_structured_summary_embed(
-            analysis_data, len(self.hourly_queue), summary_type
-        )
-        
-        logger.info(f"Created forced structured {summary_type} summary with {len(self.hourly_queue)} updates")
-        return embeds
-        
-    except Exception as e:
-        logger.error(f"Failed to parse structured response: {e}")
-        logger.error(f"Raw response: {response_text}")
-        # Fallback to enhanced pattern-based
-        return self._create_enhanced_pattern_hourly_summary()
-
-def _create_structured_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary embed that only includes sections with content"""
-    pacific_tz = pytz.timezone('US/Pacific')
-    current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Determine embed color based on importance
-    importance = analysis_data.get('overall_importance', 5)
-    if importance >= 9:
-        color = 0xff1744  # Red for explosive hours
-    elif importance >= 7:
-        color = 0xff9800  # Orange for high activity
-    elif importance >= 4:
-        color = 0x3498db  # Blue for moderate activity
-    else:
-        color = 0x95a5a6  # Gray for quiet hours
-    
-    # Create main embed
-    if summary_type == "hourly_summary":
-        title = f"🏠 Chen Bot's House Summary - {current_hour}"
-        description = f"**{update_count} updates this hour** • AI Structured Analysis"
-        footer_text = f"Chen Bot's House Summary • {current_hour} • Structured AI"
-    else:
-        title = f"🏠 Chen Bot's Update Summary"
-        description = f"**{update_count} updates** • AI Structured Analysis"
-        footer_text = "Chen Bot's Summary • Structured AI"
-    
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=color,
-        timestamp=datetime.now()
-    )
-    
-    # Add headline as first field
-    headline = analysis_data.get('headline', 'Big Brother Update')
-    embed.add_field(
-        name="📰 Headline",
-        value=headline,
-        inline=False
-    )
-    
-    # Add structured sections ONLY if they have content
-    sections = [
-        ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
-        ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
-        ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
-        ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
-        ("🏠 House Culture", analysis_data.get('house_culture'))
-    ]
-    
-    for section_name, content in sections:
-        # Only add section if it has actual content (not null, not empty, not "null" string)
-        if content and content.strip() and content.lower() not in ['null', 'none', 'nothing']:
-            # Split long content if needed
-            if len(content) > 1000:
-                content = content[:997] + "..."
-            embed.add_field(
-                name=section_name,
-                value=content,
-                inline=False
-            )
-    
-    # ALWAYS add key players (required)
-    key_players = analysis_data.get('key_players', [])
-    if key_players:
-        # Format key players nicely
-        if len(key_players) <= 6:
-            players_text = " • ".join([f"**{player}**" for player in key_players])
-        else:
-            players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
-    else:
-        players_text = "No specific houseguests highlighted"
-    
-    embed.add_field(
-        name="⭐ Key Players",
-        value=players_text,
-        inline=False
-    )
-    
-    # ALWAYS add importance rating (required)
-    importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-    importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
-    
-    importance_text = f"{importance_icon} **{importance}/10**"
-    explanation = analysis_data.get('importance_explanation', '')
-    if explanation:
-        importance_text += f"\n*{explanation}*"
-    
-    embed.add_field(
-        name="📊 Overall Importance",
-        value=importance_text,
-        inline=False
-    )
-    
-    # Set footer
-    embed.set_footer(text=footer_text)
-    
-    return [embed]
-
-def _create_enhanced_pattern_hourly_summary(self) -> List[discord.Embed]:
-    """Enhanced pattern-based summary as fallback when LLM unavailable"""
-    logger.info("Creating enhanced pattern-based hourly summary")
-    
-    # Group updates by categories
-    categories = defaultdict(list)
-    for update in self.hourly_queue:
-        update_categories = self.analyzer.categorize_update(update)
-        for category in update_categories:
-            categories[category].append(update)
-    
-    current_hour = datetime.now().strftime("%I %p").lstrip('0')
-    
-    embed = discord.Embed(
-        title=f"🏠 Chen Bot's House Summary - {current_hour}",
-        description=f"**{len(self.hourly_queue)} updates this hour** • Enhanced Pattern Analysis",
-        color=0x95a5a6,  # Gray for pattern-based
-        timestamp=datetime.now()
-    )
-    
-    # Add headline
-    if self.hourly_queue:
-        # Use the most important update as headline basis
-        top_update = max(self.hourly_queue, key=lambda x: self.analyzer.analyze_strategic_importance(x))
-        headline = self._create_pattern_headline(top_update, len(self.hourly_queue))
-        embed.add_field(
-            name="📰 Headline",
-            value=headline,
-            inline=False
-        )
-    
-    # Create narrative summaries for each category (only if they have content)
-    section_mapping = {
-        "🎯 Strategy": "🎯 Strategic Analysis",
-        "🤝 Alliance": "🤝 Alliance Dynamics", 
-        "🎬 Entertainment": "🎬 Entertainment Highlights",
-        "💕 Romance": "💕 Showmance Updates",
-        "📝 General": "🏠 House Culture"
-    }
-    
-    for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True):
-        if updates and len(updates) > 0:
-            narrative_summary = self._create_category_narrative(category, updates)
-            if narrative_summary and narrative_summary.strip():  # Only add if we have content
-                section_name = section_mapping.get(category, category)
-                embed.add_field(
-                    name=section_name,
-                    value=narrative_summary,
-                    inline=False
-                )
-    
-    # ALWAYS add key players
-    all_houseguests = set()
-    for update in self.hourly_queue:
-        hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
-        all_houseguests.update(hgs[:3])  # Limit per update
-    
-    if all_houseguests:
-        players_text = " • ".join([f"**{hg}**" for hg in list(all_houseguests)[:6]])
-        if len(all_houseguests) > 6:
-            players_text += f" • +{len(all_houseguests)-6} more"
-    else:
-        players_text = "No specific houseguests highlighted"
-    
-    embed.add_field(
-        name="⭐ Key Players",
-        value=players_text,
-        inline=False
-    )
-    
-    # ALWAYS add importance rating
-    total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
-    avg_importance = int(total_importance / len(self.hourly_queue)) if self.hourly_queue else 1
-    
-    importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-    importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
-    
-    if avg_importance >= 7:
-        activity_desc = "High drama and strategic activity"
-    elif avg_importance >= 5:
-        activity_desc = "Moderate activity with notable moments"
-    elif avg_importance >= 3:
-        activity_desc = "Steady house activity"
-    else:
-        activity_desc = "Quiet hour with routine activities"
-    
-    embed.add_field(
-        name="📊 Overall Importance",
-        value=f"{importance_icon} **{avg_importance}/10**\n*{activity_desc}*",
-        inline=False
-    )
-    
-    embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Enhanced Pattern Analysis")
-    
-    return [embed]
-
-def _create_pattern_headline(self, top_update: BBUpdate, total_updates: int) -> str:
-    """Create a headline from the most important update"""
-    # Clean the title
-    title = top_update.title
-    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
-    
-    # Extract key themes
-    content = title.lower()
-    if any(word in content for word in ['winner', 'wins', 'victory', 'champion']):
-        return f"Victory and Competition Results Highlight Hour"
-    elif any(word in content for word in ['finale', 'final', 'crown']):
-        return f"Finale Activities Dominate House Activity"
-    elif any(word in content for word in ['vote', 'voting', 'jury']):
-        return f"Voting Dynamics and Strategic Decisions Unfold"
-    elif any(word in content for word in ['alliance', 'strategy', 'target']):
-        return f"Strategic Gameplay and Alliance Activity"
-    elif any(word in content for word in ['drama', 'fight', 'argument']):
-        return f"House Drama and Interpersonal Tensions"
-    else:
-        return f"Big Brother House Activity Continues"
-
-async def create_hourly_summary(self) -> List[discord.Embed]:
-    """Create comprehensive hourly summary using structured format (force contextual structure)"""
-    if not self.hourly_queue:
-        logger.warning("No updates in hourly queue for summary")
-        return []
-
-    logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
-
-    embeds = []
-
-    try:
-        # ALWAYS try structured contextual format first, even with no context
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                logger.info("Using structured contextual format for hourly summary")
-                embeds = await self._create_forced_structured_summary("hourly_summary")
-            except Exception as e:
-                logger.error(f"Structured summary failed: {e}")
-                # Fallback to narrative LLM summary
-                embeds = await self._create_llm_hourly_summary_fallback()
-        else:
-            # No LLM available, use enhanced pattern-based
-            logger.info("Using enhanced pattern-based hourly summary")
-            embeds = self._create_enhanced_pattern_hourly_summary()
-
-    except Exception as e:
-        logger.error(f"All hourly summary methods failed: {e}")
-        embeds = self._create_enhanced_pattern_hourly_summary()
-
-    # Clear hourly queue after processing
-    processed_count = len(self.hourly_queue)
-    self.hourly_queue.clear()
-    self.last_hourly_summary = datetime.now()
-
-    logger.info(f"Created hourly summary from {processed_count} updates")
-    return embeds
-
-async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary with forced contextual format (even without prior context)"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Sort updates chronologically before formatting
-    sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
-    
-    # Format updates in chronological order
-    formatted_updates = []
-    for i, update in enumerate(sorted_updates, 1):
-        time_str = self._extract_correct_time(update)
-        # Remove leading zero from time
-        time_str = time_str.lstrip('0')
-        formatted_updates.append(f"{i}. {time_str} - {update.title}")
-        if update.description and update.description != update.title:
-            # Truncate long descriptions
-            desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
-            formatted_updates.append(f"   {desc}")
-    
-    updates_text = "\n".join(formatted_updates)
-    
-    # Calculate current day (simplified)
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Build structured prompt (simplified without heavy context dependencies)
-    prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
-
-NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
-{updates_text}
-
-Create a comprehensive summary that presents events chronologically as they happened.
-
-Provide your analysis in this EXACT JSON format:
-
-{{
-    "headline": "Brief headline summarizing the most important development this hour",
-    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
-    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
-    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
-    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
-    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
-    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
-    "overall_importance": 8,
-    "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
-}}
-
-CRITICAL INSTRUCTIONS:
-- ONLY include sections where there are actual meaningful developments
-- Use null for any section that doesn't have substantial content
-- Present events chronologically (earliest to latest)
-- Key players should be the houseguests most central to this hour's events
-- Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
-- Don't force content into sections - be selective and only include what's truly noteworthy
-- If a section would be empty or just say "nothing happened", use null instead"""
-
-    # Call LLM
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model="claude-3-haiku-20240307",
-        max_tokens=1200,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    response_text = response.content[0].text
-    
-    try:
-        # Parse JSON response
-        analysis_data = self._parse_structured_llm_response(response_text)
-        
-        # Create structured embed
-        embeds = self._create_structured_summary_embed(
-            analysis_data, len(self.hourly_queue), summary_type
-        )
-        
-        logger.info(f"Created forced structured {summary_type} summary with {len(self.hourly_queue)} updates")
-        return embeds
-        
-    except Exception as e:
-        logger.error(f"Failed to parse structured response: {e}")
-        logger.error(f"Raw response: {response_text}")
-        # Fallback to enhanced pattern-based
-        return self._create_enhanced_pattern_hourly_summary()
-
-def _create_structured_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary embed that only includes sections with content"""
-    pacific_tz = pytz.timezone('US/Pacific')
-    current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Determine embed color based on importance
-    importance = analysis_data.get('overall_importance', 5)
-    if importance >= 9:
-        color = 0xff1744  # Red for explosive hours
-    elif importance >= 7:
-        color = 0xff9800  # Orange for high activity
-    elif importance >= 4:
-        color = 0x3498db  # Blue for moderate activity
-    else:
-        color = 0x95a5a6  # Gray for quiet hours
-    
-    # Create main embed
-    if summary_type == "hourly_summary":
-        title = f"🏠 Chen Bot's House Summary - {current_hour}"
-        description = f"**{update_count} updates this hour** • AI Structured Analysis"
-        footer_text = f"Chen Bot's House Summary • {current_hour} • Structured AI"
-    else:
-        title = f"🏠 Chen Bot's Update Summary"
-        description = f"**{update_count} updates** • AI Structured Analysis"
-        footer_text = "Chen Bot's Summary • Structured AI"
-    
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=color,
-        timestamp=datetime.now()
-    )
-    
-    # Add headline as first field
-    headline = analysis_data.get('headline', 'Big Brother Update')
-    embed.add_field(
-        name="📰 Headline",
-        value=headline,
-        inline=False
-    )
-    
-    # Add structured sections ONLY if they have content
-    sections = [
-        ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
-        ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
-        ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
-        ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
-        ("🏠 House Culture", analysis_data.get('house_culture'))
-    ]
-    
-    for section_name, content in sections:
-        # Only add section if it has actual content (not null, not empty, not "null" string)
-        if content and content.strip() and content.lower() not in ['null', 'none', 'nothing']:
-            # Split long content if needed
-            if len(content) > 1000:
-                content = content[:997] + "..."
-            embed.add_field(
-                name=section_name,
-                value=content,
-                inline=False
-            )
-    
-    # ALWAYS add key players (required)
-    key_players = analysis_data.get('key_players', [])
-    if key_players:
-        # Format key players nicely
-        if len(key_players) <= 6:
-            players_text = " • ".join([f"**{player}**" for player in key_players])
-        else:
-            players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
-    else:
-        players_text = "No specific houseguests highlighted"
-    
-    embed.add_field(
-        name="⭐ Key Players",
-        value=players_text,
-        inline=False
-    )
-    
-    # ALWAYS add importance rating (required)
-    importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-    importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
-    
-    importance_text = f"{importance_icon} **{importance}/10**"
-    explanation = analysis_data.get('importance_explanation', '')
-    if explanation:
-        importance_text += f"\n*{explanation}*"
-    
-    embed.add_field(
-        name="📊 Overall Importance",
-        value=importance_text,
-        inline=False
-    )
-    
-    # Set footer
-    embed.set_footer(text=footer_text)
-    
-    return [embed]
-
-def _create_enhanced_pattern_hourly_summary(self) -> List[discord.Embed]:
-    """Enhanced pattern-based summary as fallback when LLM unavailable"""
-    logger.info("Creating enhanced pattern-based hourly summary")
-    
-    # Group updates by categories
-    categories = defaultdict(list)
-    for update in self.hourly_queue:
-        update_categories = self.analyzer.categorize_update(update)
-        for category in update_categories:
-            categories[category].append(update)
-    
-    current_hour = datetime.now().strftime("%I %p").lstrip('0')
-    
-    embed = discord.Embed(
-        title=f"🏠 Chen Bot's House Summary - {current_hour}",
-        description=f"**{len(self.hourly_queue)} updates this hour** • Enhanced Pattern Analysis",
-        color=0x95a5a6,  # Gray for pattern-based
-        timestamp=datetime.now()
-    )
-    
-    # Add headline
-    if self.hourly_queue:
-        # Use the most important update as headline basis
-        top_update = max(self.hourly_queue, key=lambda x: self.analyzer.analyze_strategic_importance(x))
-        headline = self._create_pattern_headline(top_update, len(self.hourly_queue))
-        embed.add_field(
-            name="📰 Headline",
-            value=headline,
-            inline=False
-        )
-    
-    # Create narrative summaries for each category (only if they have content)
-    section_mapping = {
-        "🎯 Strategy": "🎯 Strategic Analysis",
-        "🤝 Alliance": "🤝 Alliance Dynamics", 
-        "🎬 Entertainment": "🎬 Entertainment Highlights",
-        "💕 Romance": "💕 Showmance Updates",
-        "📝 General": "🏠 House Culture"
-    }
-    
-    for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True):
-        if updates and len(updates) > 0:
-            narrative_summary = self._create_category_narrative(category, updates)
-            if narrative_summary and narrative_summary.strip():  # Only add if we have content
-                section_name = section_mapping.get(category, category)
-                embed.add_field(
-                    name=section_name,
-                    value=narrative_summary,
-                    inline=False
-                )
-    
-    # ALWAYS add key players
-    all_houseguests = set()
-    for update in self.hourly_queue:
-        hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
-        all_houseguests.update(hgs[:3])  # Limit per update
-    
-    if all_houseguests:
-        players_text = " • ".join([f"**{hg}**" for hg in list(all_houseguests)[:6]])
-        if len(all_houseguests) > 6:
-            players_text += f" • +{len(all_houseguests)-6} more"
-    else:
-        players_text = "No specific houseguests highlighted"
-    
-    embed.add_field(
-        name="⭐ Key Players",
-        value=players_text,
-        inline=False
-    )
-    
-    # ALWAYS add importance rating
-    total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
-    avg_importance = int(total_importance / len(self.hourly_queue)) if self.hourly_queue else 1
-    
-    importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-    importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
-    
-    if avg_importance >= 7:
-        activity_desc = "High drama and strategic activity"
-    elif avg_importance >= 5:
-        activity_desc = "Moderate activity with notable moments"
-    elif avg_importance >= 3:
-        activity_desc = "Steady house activity"
-    else:
-        activity_desc = "Quiet hour with routine activities"
-    
-    embed.add_field(
-        name="📊 Overall Importance",
-        value=f"{importance_icon} **{avg_importance}/10**\n*{activity_desc}*",
-        inline=False
-    )
-    
-    embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Enhanced Pattern Analysis")
-    
-    return [embed]
-
-def _create_pattern_headline(self, top_update: BBUpdate, total_updates: int) -> str:
-    """Create a headline from the most important update"""
-    # Clean the title
-    title = top_update.title
-    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
-    
-    # Extract key themes
-    content = title.lower()
-    if any(word in content for word in ['winner', 'wins', 'victory', 'champion']):
-        return f"Victory and Competition Results Highlight Hour"
-    elif any(word in content for word in ['finale', 'final', 'crown']):
-        return f"Finale Activities Dominate House Activity"
-    elif any(word in content for word in ['vote', 'voting', 'jury']):
-        return f"Voting Dynamics and Strategic Decisions Unfold"
-    elif any(word in content for word in ['alliance', 'strategy', 'target']):
-        return f"Strategic Gameplay and Alliance Activity"
-    elif any(word in content for word in ['drama', 'fight', 'argument']):
-        return f"House Drama and Interpersonal Tensions"
-    else:
-        return f"Big Brother House Activity Continues"
-
-async def create_hourly_summary(self) -> List[discord.Embed]:
-    """Create comprehensive hourly summary using structured format (force contextual structure)"""
-    if not self.hourly_queue:
-        logger.warning("No updates in hourly queue for summary")
-        return []
-
-    logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
-
-    embeds = []
-
-    try:
-        # ALWAYS try structured contextual format first, even with no context
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                logger.info("Using structured contextual format for hourly summary")
-                embeds = await self._create_forced_structured_summary("hourly_summary")
-            except Exception as e:
-                logger.error(f"Structured summary failed: {e}")
-                # Fallback to narrative LLM summary
-                embeds = await self._create_llm_hourly_summary_fallback()
-        else:
-            # No LLM available, use enhanced pattern-based
-            logger.info("Using enhanced pattern-based hourly summary")
-            embeds = self._create_enhanced_pattern_hourly_summary()
-
-    except Exception as e:
-        logger.error(f"All hourly summary methods failed: {e}")
-        embeds = self._create_enhanced_pattern_hourly_summary()
-
-    # Clear hourly queue after processing
-    processed_count = len(self.hourly_queue)
-    self.hourly_queue.clear()
-    self.last_hourly_summary = datetime.now()
-
-    logger.info(f"Created hourly summary from {processed_count} updates")
-    return embeds
-
-async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary with forced contextual format (even without prior context)"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Sort updates chronologically before formatting
-    sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
-    
-    # Format updates in chronological order
-    formatted_updates = []
-    for i, update in enumerate(sorted_updates, 1):
-        time_str = self._extract_correct_time(update)
-        # Remove leading zero from time
-        time_str = time_str.lstrip('0')
-        formatted_updates.append(f"{i}. {time_str} - {update.title}")
-        if update.description and update.description != update.title:
-            # Truncate long descriptions
-            desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
-            formatted_updates.append(f"   {desc}")
-    
-    updates_text = "\n".join(formatted_updates)
-    
-    # Calculate current day (simplified)
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Build structured prompt (simplified without heavy context dependencies)
-    prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
-
-NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
-{updates_text}
-
-Create a comprehensive summary that presents events chronologically as they happened.
-
-Provide your analysis in this EXACT JSON format:
-
-{{
-    "headline": "Brief headline summarizing the most important development this hour",
-    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
-    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
-    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
-    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
-    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
-    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
-    "overall_importance": 8,
-    "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
-}}
-
-CRITICAL INSTRUCTIONS:
-- ONLY include sections where there are actual meaningful developments
-- Use null for any section that doesn't have substantial content
-- Present events chronologically (earliest to latest)
-- Key players should be the houseguests most central to this hour's events
-- Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
-- Don't force content into sections - be selective and only include what's truly noteworthy
-- If a section would be empty or just say "nothing happened", use null instead"""
-
-    # Call LLM
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model="claude-3-haiku-20240307",
-        max_tokens=1200,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    response_text = response.content[0].text
-    
-    try:
-        # Parse JSON response
-        analysis_data = self._parse_structured_llm_response(response_text)
-        
-        # Create structured embed
-        embeds = self._create_structured_summary_embed(
-            analysis_data, len(self.hourly_queue), summary_type
-        )
-        
-        logger.info(f"Created forced structured {summary_type} summary with {len(self.hourly_queue)} updates")
-        return embeds
-        
-    except Exception as e:
-        logger.error(f"Failed to parse structured response: {e}")
-        logger.error(f"Raw response: {response_text}")
-        # Fallback to enhanced pattern-based
-        return self._create_enhanced_pattern_hourly_summary()
-
-def _create_structured_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
-    """Create structured summary embed that only includes sections with content"""
-    pacific_tz = pytz.timezone('US/Pacific')
-    current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
-    current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
-    
-    # Determine embed color based on importance
-    importance = analysis_data.get('overall_importance', 5)
-    if importance >= 9:
-        color = 0xff1744  # Red for explosive hours
-    elif importance >= 7:
-        color = 0xff9800  # Orange for high activity
-    elif importance >= 4:
-        color = 0x3498db  # Blue for moderate activity
-    else:
-        color = 0x95a5a6  # Gray for quiet hours
-    
-    # Create main embed
-    if summary_type == "hourly_summary":
-        title = f"🏠 Chen Bot's House Summary - {current_hour}"
-        description = f"**{update_count} updates this hour** • AI Structured Analysis"
-        footer_text = f"Chen Bot's House Summary • {current_hour} • Structured AI"
-    else:
-        title = f"🏠 Chen Bot's Update Summary"
-        description = f"**{update_count} updates** • AI Structured Analysis"
-        footer_text = "Chen Bot's Summary • Structured AI"
-    
-    embed = discord.Embed(
-        title=title,
-        description=description,
-        color=color,
-        timestamp=datetime.now()
-    )
-    
-    # Add headline as first field
-    headline = analysis_data.get('headline', 'Big Brother Update')
-    embed.add_field(
-        name="📰 Headline",
-        value=headline,
-        inline=False
-    )
-    
-    # Add structured sections ONLY if they have content
-    sections = [
-        ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
-        ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
-        ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
-        ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
-        ("🏠 House Culture", analysis_data.get('house_culture'))
-    ]
-    
-    for section_name, content in sections:
-        # Only add section if it has actual content (not null, not empty, not "null" string)
-        if content and content.strip() and content.lower() not in ['null', 'none', 'nothing']:
-            # Split long content if needed
-            if len(content) > 1000:
-                content = content[:997] + "..."
-            embed.add_field(
-                name=section_name,
-                value=content,
-                inline=False
-            )
-    
-    # ALWAYS add key players (required)
-    key_players = analysis_data.get('key_players', [])
-    if key_players:
-        # Format key players nicely
-        if len(key_players) <= 6:
-            players_text = " • ".join([f"**{player}**" for player in key_players])
-        else:
-            players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
-    else:
-        players_text = "No specific houseguests highlighted"
-    
-    embed.add_field(
-        name="⭐ Key Players",
-        value=players_text,
-        inline=False
-    )
-    
-    # ALWAYS add importance rating (required)
-    importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-    importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
-    
-    importance_text = f"{importance_icon} **{importance}/10**"
-    explanation = analysis_data.get('importance_explanation', '')
-    if explanation:
-        importance_text += f"\n*{explanation}*"
-    
-    embed.add_field(
-        name="📊 Overall Importance",
-        value=importance_text,
-        inline=False
-    )
-    
-    # Set footer
-    embed.set_footer(text=footer_text)
-    
-    return [embed]
-
-def _create_enhanced_pattern_hourly_summary(self) -> List[discord.Embed]:
-    """Enhanced pattern-based summary as fallback when LLM unavailable"""
-    logger.info("Creating enhanced pattern-based hourly summary")
-    
-    # Group updates by categories
-    categories = defaultdict(list)
-    for update in self.hourly_queue:
-        update_categories = self.analyzer.categorize_update(update)
-        for category in update_categories:
-            categories[category].append(update)
-    
-    current_hour = datetime.now().strftime("%I %p").lstrip('0')
-    
-    embed = discord.Embed(
-        title=f"🏠 Chen Bot's House Summary - {current_hour}",
-        description=f"**{len(self.hourly_queue)} updates this hour** • Enhanced Pattern Analysis",
-        color=0x95a5a6,  # Gray for pattern-based
-        timestamp=datetime.now()
-    )
-    
-    # Add headline
-    if self.hourly_queue:
-        # Use the most important update as headline basis
-        top_update = max(self.hourly_queue, key=lambda x: self.analyzer.analyze_strategic_importance(x))
-        headline = self._create_pattern_headline(top_update, len(self.hourly_queue))
-        embed.add_field(
-            name="📰 Headline",
-            value=headline,
-            inline=False
-        )
-    
-    # Create narrative summaries for each category (only if they have content)
-    section_mapping = {
-        "🎯 Strategy": "🎯 Strategic Analysis",
-        "🤝 Alliance": "🤝 Alliance Dynamics", 
-        "🎬 Entertainment": "🎬 Entertainment Highlights",
-        "💕 Romance": "💕 Showmance Updates",
-        "📝 General": "🏠 House Culture"
-    }
-    
-    for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True):
-        if updates and len(updates) > 0:
-            narrative_summary = self._create_category_narrative(category, updates)
-            if narrative_summary and narrative_summary.strip():  # Only add if we have content
-                section_name = section_mapping.get(category, category)
-                embed.add_field(
-                    name=section_name,
-                    value=narrative_summary,
-                    inline=False
-                )
-    
-    # ALWAYS add key players
-    all_houseguests = set()
-    for update in self.hourly_queue:
-        hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
-        all_houseguests.update(hgs[:3])  # Limit per update
-    
-    if all_houseguests:
-        players_text = " • ".join([f"**{hg}**" for hg in list(all_houseguests)[:6]])
-        if len(all_houseguests) > 6:
-            players_text += f" • +{len(all_houseguests)-6} more"
-    else:
-        players_text = "No specific houseguests highlighted"
-    
-    embed.add_field(
-        name="⭐ Key Players",
-        value=players_text,
-        inline=False
-    )
-    
-    # ALWAYS add importance rating
-    total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
-    avg_importance = int(total_importance / len(self.hourly_queue)) if self.hourly_queue else 1
-    
-    importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-    importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
-    
-    if avg_importance >= 7:
-        activity_desc = "High drama and strategic activity"
-    elif avg_importance >= 5:
-        activity_desc = "Moderate activity with notable moments"
-    elif avg_importance >= 3:
-        activity_desc = "Steady house activity"
-    else:
-        activity_desc = "Quiet hour with routine activities"
-    
-    embed.add_field(
-        name="📊 Overall Importance",
-        value=f"{importance_icon} **{avg_importance}/10**\n*{activity_desc}*",
-        inline=False
-    )
-    
-    embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Enhanced Pattern Analysis")
-    
-    return [embed]
-
-def _create_pattern_headline(self, top_update: BBUpdate, total_updates: int) -> str:
-    """Create a headline from the most important update"""
-    # Clean the title
-    title = top_update.title
-    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
-    
-    # Extract key themes
-    content = title.lower()
-    if any(word in content for word in ['winner', 'wins', 'victory', 'champion']):
-        return f"Victory and Competition Results Highlight Hour"
-    elif any(word in content for word in ['finale', 'final', 'crown']):
-        return f"Finale Activities Dominate House Activity"
-    elif any(word in content for word in ['vote', 'voting', 'jury']):
-        return f"Voting Dynamics and Strategic Decisions Unfold"
-    elif any(word in content for word in ['alliance', 'strategy', 'target']):
-        return f"Strategic Gameplay and Alliance Activity"
-    elif any(word in content for word in ['drama', 'fight', 'argument']):
-        return f"House Drama and Interpersonal Tensions"
-    else:
-        return f"Big Brother House Activity Continues"
-    
-    async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-        """Create just highlights using LLM"""
-        await self.rate_limiter.wait_if_needed()
-        
-        # Prepare update data
-        updates_text = "\n".join([
-            f"{self._extract_correct_time(u)} - {u.title}"
-            for u in self.highlights_queue
-        ])
-        
-        prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-
-{updates_text}
-
-Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-
-HIGHLIGHT-WORTHY updates include:
-- Competition wins (HOH, POV, etc.)
-- Major strategic moves or betrayals
-- Dramatic fights or confrontations  
-- Romantic moments (first kiss, breakup, etc.)
-- Hilarious or memorable incidents
-- Game-changing twists revealed
-- Eviction results or surprise votes
-- Alliance formations or breaks
-
-For each selected update, provide:
-{{
-    "highlights": [
-        {{
-            "time": "exact time from update",
-            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
-            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-        }}
-    ]
-}}
-
-Be selective - these should be the updates that a superfan would want to know about from this batch."""
-
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=800,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Parse and create embed
-        try:
-            highlights_data = self._parse_llm_response(response.content[0].text)
-            
-            if not highlights_data.get('highlights'):
-                logger.warning("No highlights in LLM response, using pattern fallback")
-                return [self._create_pattern_highlights_embed()]
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Key moments from the last {len(self.highlights_queue)} updates",
-                color=0xe74c3c,
-                timestamp=datetime.now()
-            )
-            
-            for highlight in highlights_data['highlights'][:10]:
-                title = highlight.get('title', 'Update')
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-                
-                if highlight.get('reason') and highlight['reason'].strip():
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                        value=f"{title}\n*{highlight['reason']}*",
-                        inline=False
-                    )
-                else:
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                        value=title,
-                        inline=False
-                    )
-            
-            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
-            return [embed]
-            
-        except Exception as e:
-            logger.error(f"Failed to parse highlights response: {e}")
-            return [self._create_pattern_highlights_embed()]
-    
-    async def _create_llm_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary using LLM"""
-        await self.rate_limiter.wait_if_needed()
-        
-        # Prepare update data
-        updates_data = []
-        for update in self.hourly_queue:
-            time_str = self._extract_correct_time(update)
-            updates_data.append({
-                'time': time_str,
-                'title': update.title,
-                'description': update.description[:200] if update.description != update.title else ""
-            })
-        
-        updates_text = "\n".join([
-            f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
-            for u in updates_data
-        ])
-        
-        prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
-
-Analyze these {len(self.hourly_queue)} updates from the past hour:
-
-{updates_text}
-
-Provide a thorough analysis covering both strategic and social aspects:
-
-{{
-    "headline": "Compelling headline that captures the hour's most significant development",
-    "summary": "4-5 sentence summary of the hour's key developments and overall narrative",
-    "strategic_analysis": "Strategic implications - targets, power shifts, competition positioning, voting plans",
-    "social_dynamics": "Alliance formations, shifts, trust levels, betrayals, strategic partnerships",
-    "entertainment_highlights": "Funny moments, drama, memorable quotes, personality clashes",
-    "key_players": ["houseguests", "involved", "in", "major", "moments"],
-    "game_phase": "one of: early_game, jury_phase, final_weeks, finale_night",
-    "strategic_importance": 7,
-    "house_culture": "Inside jokes, routines, traditions, or quirky moments from this hour",
-    "relationship_updates": "Showmance developments, romantic connections, relationship changes"
-}}
-
-This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy."""
-
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=1500,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Parse response and create embed
-        analysis = self._parse_llm_response(response.content[0].text)
-        return self._create_hourly_summary_embed(analysis, len(self.hourly_queue))
-    
-    def _parse_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response with fallback handling"""
+    def _parse_structured_llm_response(self, response_text: str) -> dict:
+        """Parse structured LLM response with better error handling"""
         try:
             # Try to extract JSON
             json_start = response_text.find('{')
             json_end = response_text.rfind('}') + 1
             if json_start != -1 and json_end != -1:
                 json_text = response_text[json_start:json_end]
-                return json.loads(json_text)
+                data = json.loads(json_text)
+                
+                # Validate required fields
+                required_fields = ['headline', 'key_players', 'overall_importance']
+                for field in required_fields:
+                    if field not in data:
+                        if field == 'key_players':
+                            data[field] = []
+                        elif field == 'overall_importance':
+                            data[field] = 5
+                        else:
+                            data[field] = f"No {field} provided"
+                
+                return data
             else:
                 raise ValueError("No JSON found in response")
         except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"JSON parsing failed: {e}, using text response")
-            return self._parse_text_response(response_text)
-    
-    def _parse_text_response(self, response_text: str) -> dict:
-        """Parse LLM response when JSON parsing fails"""
-        # Create a basic analysis from the text response
-        analysis = {
-            "headline": "Big Brother Update",
-            "summary": response_text[:300] + "..." if len(response_text) > 300 else response_text,
-            "strategic_analysis": "Analysis available in summary above.",
-            "key_players": [],
-            "game_phase": "current",
-            "strategic_importance": 5,
-            "social_dynamics": "See summary for details.",
-            "entertainment_highlights": "Various moments occurred."
+            logger.warning(f"Structured JSON parsing failed: {e}, creating fallback")
+            return self._create_fallback_structured_response(response_text)
+
+    def _create_fallback_structured_response(self, response_text: str) -> dict:
+        """Create fallback structured response when JSON parsing fails"""
+        # Extract houseguest names from response
+        names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
+        key_players = [name for name in names if name not in EXCLUDE_WORDS][:5]
+        
+        return {
+            "headline": "Big Brother Activity Continues",
+            "strategic_analysis": None,
+            "alliance_dynamics": None,
+            "entertainment_highlights": None,
+            "showmance_updates": None,
+            "house_culture": None,
+            "key_players": key_players,
+            "overall_importance": 5,
+            "importance_explanation": "Standard house activity"
+        }
+
+    def _create_structured_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
+        """Create structured summary embed that only includes sections with content"""
+        pacific_tz = pytz.timezone('US/Pacific')
+        current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
+        
+        # Determine embed color based on importance
+        importance = analysis_data.get('overall_importance', 5)
+        if importance >= 9:
+            color = 0xff1744  # Red for explosive hours
+        elif importance >= 7:
+            color = 0xff9800  # Orange for high activity
+        elif importance >= 4:
+            color = 0x3498db  # Blue for moderate activity
+        else:
+            color = 0x95a5a6  # Gray for quiet hours
+        
+        # Create main embed
+        if summary_type == "hourly_summary":
+            title = f"🏠 Chen Bot's House Summary - {current_hour}"
+            description = f"**{update_count} updates this hour** • AI Structured Analysis"
+            footer_text = f"Chen Bot's House Summary • {current_hour} • Structured AI"
+        else:
+            title = f"🏠 Chen Bot's Update Summary"
+            description = f"**{update_count} updates** • AI Structured Analysis"
+            footer_text = "Chen Bot's Summary • Structured AI"
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Add headline as first field
+        headline = analysis_data.get('headline', 'Big Brother Update')
+        embed.add_field(
+            name="📰 Headline",
+            value=headline,
+            inline=False
+        )
+        
+        # Add structured sections ONLY if they have content
+        sections = [
+            ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
+            ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
+            ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
+            ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
+            ("🏠 House Culture", analysis_data.get('house_culture'))
+        ]
+        
+        for section_name, content in sections:
+            # Only add section if it has actual content (not null, not empty, not "null" string)
+            if content and content.strip() and content.lower() not in ['null', 'none', 'nothing']:
+                # Split long content if needed
+                if len(content) > 1000:
+                    content = content[:997] + "..."
+                embed.add_field(
+                    name=section_name,
+                    value=content,
+                    inline=False
+                )
+        
+        # ALWAYS add key players (required)
+        key_players = analysis_data.get('key_players', [])
+        if key_players:
+            # Format key players nicely
+            if len(key_players) <= 6:
+                players_text = " • ".join([f"**{player}**" for player in key_players])
+            else:
+                players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
+        else:
+            players_text = "No specific houseguests highlighted"
+        
+        embed.add_field(
+            name="⭐ Key Players",
+            value=players_text,
+            inline=False
+        )
+        
+        # ALWAYS add importance rating (required)
+        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+        importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
+        
+        importance_text = f"{importance_icon} **{importance}/10**"
+        explanation = analysis_data.get('importance_explanation', '')
+        if explanation:
+            importance_text += f"\n*{explanation}*"
+        
+        embed.add_field(
+            name="📊 Overall Importance",
+            value=importance_text,
+            inline=False
+        )
+        
+        # Set footer
+        embed.set_footer(text=footer_text)
+        
+        return [embed]
+
+    def _create_enhanced_pattern_hourly_summary(self) -> List[discord.Embed]:
+        """Enhanced pattern-based summary as fallback when LLM unavailable"""
+        logger.info("Creating enhanced pattern-based hourly summary")
+        
+        # Group updates by categories
+        categories = defaultdict(list)
+        for update in self.hourly_queue:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        current_hour = datetime.now().strftime("%I %p").lstrip('0')
+        
+        embed = discord.Embed(
+            title=f"🏠 Chen Bot's House Summary - {current_hour}",
+            description=f"**{len(self.hourly_queue)} updates this hour** • Enhanced Pattern Analysis",
+            color=0x95a5a6,  # Gray for pattern-based
+            timestamp=datetime.now()
+        )
+        
+        # Add headline
+        if self.hourly_queue:
+            # Use the most important update as headline basis
+            top_update = max(self.hourly_queue, key=lambda x: self.analyzer.analyze_strategic_importance(x))
+            headline = self._create_pattern_headline(top_update, len(self.hourly_queue))
+            embed.add_field(
+                name="📰 Headline",
+                value=headline,
+                inline=False
+            )
+        
+        # Create narrative summaries for each category (only if they have content)
+        section_mapping = {
+            "🎯 Strategy": "🎯 Strategic Analysis",
+            "🤝 Alliance": "🤝 Alliance Dynamics", 
+            "🎬 Entertainment": "🎬 Entertainment Highlights",
+            "💕 Romance": "💕 Showmance Updates",
+            "📝 General": "🏠 House Culture"
         }
         
-        # Try to extract key information
-        try:
-            names = re.findall(r'\b[A-Z][a-z]+\b', response_text)
-            analysis['key_players'] = [name for name in names if name not in EXCLUDE_WORDS][:5]
-        except Exception as e:
-            logger.debug(f"Text parsing error: {e}")
+        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True):
+            if updates and len(updates) > 0:
+                narrative_summary = self._create_category_narrative(category, updates)
+                if narrative_summary and narrative_summary.strip():  # Only add if we have content
+                    section_name = section_mapping.get(category, category)
+                    embed.add_field(
+                        name=section_name,
+                        value=narrative_summary,
+                        inline=False
+                    )
         
-        return analysis
-    
+        # ALWAYS add key players
+        all_houseguests = set()
+        for update in self.hourly_queue:
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            all_houseguests.update(hgs[:3])  # Limit per update
+        
+        if all_houseguests:
+            players_text = " • ".join([f"**{hg}**" for hg in list(all_houseguests)[:6]])
+            if len(all_houseguests) > 6:
+                players_text += f" • +{len(all_houseguests)-6} more"
+        else:
+            players_text = "No specific houseguests highlighted"
+        
+        embed.add_field(
+            name="⭐ Key Players",
+            value=players_text,
+            inline=False
+        )
+        
+        # ALWAYS add importance rating
+        total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
+        avg_importance = int(total_importance / len(self.hourly_queue)) if self.hourly_queue else 1
+        
+        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+        importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
+        
+        if avg_importance >= 7:
+            activity_desc = "High drama and strategic activity"
+        elif avg_importance >= 5:
+            activity_desc = "Moderate activity with notable moments"
+        elif avg_importance >= 3:
+            activity_desc = "Steady house activity"
+        else:
+            activity_desc = "Quiet hour with routine activities"
+        
+        embed.add_field(
+            name="📊 Overall Importance",
+            value=f"{importance_icon} **{avg_importance}/10**\n*{activity_desc}*",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Enhanced Pattern Analysis")
+        
+        return [embed]
+
+    def _create_pattern_headline(self, top_update: BBUpdate, total_updates: int) -> str:
+        """Create a headline from the most important update"""
+        # Clean the title
+        title = top_update.title
+        title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+        title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)
+        
+        # Extract key themes
+        content = title.lower()
+        if any(word in content for word in ['winner', 'wins', 'victory', 'champion']):
+            return f"Victory and Competition Results Highlight Hour"
+        elif any(word in content for word in ['finale', 'final', 'crown']):
+            return f"Finale Activities Dominate House Activity"
+        elif any(word in content for word in ['vote', 'voting', 'jury']):
+            return f"Voting Dynamics and Strategic Decisions Unfold"
+        elif any(word in content for word in ['alliance', 'strategy', 'target']):
+            return f"Strategic Gameplay and Alliance Activity"
+        elif any(word in content for word in ['drama', 'fight', 'argument']):
+            return f"House Drama and Interpersonal Tensions"
+        else:
+            return f"Big Brother House Activity Continues"
+
+    def _create_category_narrative(self, category: str, updates: List) -> str:
+        """Create narrative summary for a category"""
+        if not updates:
+            return ""
+        
+        # Get top 3 most important updates in this category
+        top_updates = sorted(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:3]
+        
+        narratives = []
+        for update in top_updates:
+            time_str = self._extract_correct_time(update)
+            # Clean title
+            title = update.title
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            
+            # Truncate if too long
+            if len(title) > 120:
+                title = title[:117] + "..."
+            
+            narratives.append(f"**{time_str}**: {title}")
+        
+        return "\n".join(narratives)
+
+    def _create_pattern_highlights_embed(self) -> discord.Embed:
+        """Create highlights embed using pattern matching when LLM unavailable"""
+        try:
+            # Sort updates by importance score
+            updates_with_importance = [
+                (update, self.analyzer.analyze_strategic_importance(update))
+                for update in self.highlights_queue
+            ]
+            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
+            
+            # Select top 6-10 most important updates
+            selected_updates = updates_with_importance[:min(10, len(updates_with_importance))]
+            
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Key moments from this batch ({len(selected_updates)} of {len(self.highlights_queue)} updates)",
+                color=0x95a5a6,  # Gray for pattern-based
+                timestamp=datetime.now()
+            )
+            
+            # Add selected highlights
+            for i, (update, importance) in enumerate(selected_updates, 1):
+                # Extract correct time from content rather than pub_date
+                time_str = self._extract_correct_time(update)
+                
+                # Clean the title - remove time if it appears at the beginning
+                title = update.title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                
+                # Only truncate if extremely long
+                if len(title) > 1000:
+                    title = title[:997] + "..."
+                
+                # Add importance indicators
+                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
+                
+                embed.add_field(
+                    name=f"{importance_emoji} {time_str}",
+                    value=title,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
+            
+            return embed
+            
+        except Exception as e:
+            logger.error(f"Pattern highlights creation failed: {e}")
+            # Return a basic embed if everything fails
+            return discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Recent updates from the feed ({len(self.highlights_queue)} updates)",
+                color=0x95a5a6
+            )
+
     def _create_hourly_summary_embed(self, analysis: dict, update_count: int) -> List[discord.Embed]:
         """Create hourly summary embed"""
         current_hour = datetime.now().strftime("%I %p")
@@ -4053,94 +3112,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         embed.set_footer(text=f"Hourly Digest • {current_hour} • Chen Bot Analysis")
         
         return [embed]
-    
-    def _create_pattern_hourly_summary(self) -> List[discord.Embed]:
-        """Create pattern-based hourly summary when LLM unavailable"""
-        # Group updates by categories
-        categories = defaultdict(list)
-        for update in self.hourly_queue:
-            update_categories = self.analyzer.categorize_update(update)
-            for category in update_categories:
-                categories[category].append(update)
-        
-        current_hour = datetime.now().strftime("%I %p")
-        
-        embed = discord.Embed(
-            title=f"📊 Hourly Digest - {current_hour}",
-            description=f"**{len(self.hourly_queue)} updates this hour** • Pattern-based analysis",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Add top categories
-        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True)[:5]:
-            if updates:
-                top_update = max(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x))
-                embed.add_field(
-                    name=f"{category} ({len(updates)} updates)",
-                    value=f"• {top_update.title[:100]}..." if len(top_update.title) > 100 else f"• {top_update.title}",
-                    inline=False
-                )
-        
-        embed.set_footer(text=f"Hourly Digest • {current_hour} • Pattern Analysis")
-        
-        return [embed]
-    
-    def _create_pattern_highlights_embed(self) -> discord.Embed:
-        """Create highlights embed using pattern matching when LLM unavailable"""
-        try:
-            # Sort updates by importance score
-            updates_with_importance = [
-                (update, self.analyzer.analyze_strategic_importance(update))
-                for update in self.highlights_queue
-            ]
-            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-            
-            # Select top 6-10 most important updates
-            selected_updates = updates_with_importance[:min(10, len(updates_with_importance))]
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Key moments from this batch ({len(selected_updates)} of {len(self.highlights_queue)} updates)",
-                color=0x95a5a6,  # Gray for pattern-based
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights
-            for i, (update, importance) in enumerate(selected_updates, 1):
-                # Extract correct time from content rather than pub_date
-                time_str = self._extract_correct_time(update)
-                
-                # Clean the title - remove time if it appears at the beginning
-                title = update.title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-                
-                # Only truncate if extremely long
-                if len(title) > 1000:
-                    title = title[:997] + "..."
-                
-                # Add importance indicators
-                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-                
-                embed.add_field(
-                    name=f"{importance_emoji} {time_str}",
-                    value=title,
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"Pattern highlights creation failed: {e}")
-            # Return a basic embed if everything fails
-            return discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Recent updates from the feed ({len(self.highlights_queue)} updates)",
-                color=0x95a5a6
-            )
-    
+
     def _extract_correct_time(self, update: BBUpdate) -> str:
         """Extract the correct time from the update content rather than pub_date"""
         # Look for time patterns in the title like "07:56 PM PST"
@@ -4166,8 +3138,8 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
     def get_rate_limit_stats(self) -> Dict[str, int]:
         """Get current rate limiting statistics"""
         return self.rate_limiter.get_stats()
-    
-    # Keep the daily recap methods from the original class
+
+    # Daily recap methods
     async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
         """Create a comprehensive daily recap from all updates"""
         if not updates:
