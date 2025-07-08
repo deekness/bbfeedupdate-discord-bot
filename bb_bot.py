@@ -2135,7 +2135,15 @@ class PredictionManager:
         
         for i, entry in enumerate(leaderboard[:10]):
             user = guild.get_member(entry['user_id'])
-            username = user.display_name if user else f"User {entry['user_id']}"
+            if user:
+                username = user.display_name
+            else:
+                # Try to get the user from the bot's cache
+                user_obj = guild.get_member(entry['user_id'])
+                if user_obj:
+                    username = user_obj.display_name
+                else:
+                    username = f"Unknown User"  # Much cleaner than the long ID
             
             medal = medals[i] if i < 3 else f"{i+1}."
             accuracy_str = f"{entry['accuracy']:.1f}%" if entry['total'] > 0 else "0%"
