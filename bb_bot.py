@@ -4951,7 +4951,14 @@ class BBDiscordBot(commands.Bot):
     "Chelsie", "Cam", "Makensy", "Leah", "Quinn", "Tucker", "Joseph", 
     "Rubina", "Angela", "Kimo", "T'kor", "Brooklyn", "Cedric", "Lisa"
 ]
-    
+
+    def signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        logger.info(f"Received signal {signum}, shutting down gracefully...")
+        self.is_shutting_down = True
+        asyncio.create_task(self.close())
+
+
 class HouseguestSelector(discord.ui.View):
     def __init__(self, poll_data, bot_instance):
         super().__init__(timeout=300)
