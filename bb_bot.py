@@ -2736,90 +2736,94 @@ CRITICAL INSTRUCTIONS:
             return self._create_enhanced_pattern_hourly_summary()
 
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-    """Create just highlights using LLM"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Prepare update data
-    updates_text = "\n".join([
-        f"{self._extract_correct_time(u)} - {u.title}"
-        for u in self.highlights_queue
-    ])
-    
-    prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-
-{updates_text}
-
-Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-
-HIGHLIGHT-WORTHY updates include:
-- Competition wins (HOH, POV, etc.)
-- Major strategic moves or betrayals
-- Dramatic fights or confrontations  
-- Romantic moments (first kiss, breakup, etc.)
-- Hilarious or memorable incidents
-- Game-changing twists revealed
-- Eviction results or surprise votes
-- Alliance formations or breaks
-
-For each selected update, provide:
-{{
-    "highlights": [
-        {{
-            "original_time": "the time from the original update (like '08:10 PM PST')",
-            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
-            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-        }}
-    ]
-}}
-
-Be selective - these should be the updates that a superfan would want to know about from this batch."""
-
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model=self.llm_model,
-        max_tokens=800,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    # Parse and create embed
-    try:
-        highlights_data = self._parse_llm_response(response.content[0].text)
+        """Create just highlights using LLM"""
+        await self.rate_limiter.wait_if_needed()
         
-        if not highlights_data.get('highlights'):
-            logger.warning("No highlights in LLM response, using pattern fallback")
-            return [self._create_pattern_highlights_embed()]
+        # Prepare update data
+        updates_text = "\n".join([
+            f"{self._extract_correct_time(u)} - {u.title}"
+            for u in self.highlights_queue
+        ])
         
-        embed = discord.Embed(
-            title="🎯 Feed Highlights - What Just Happened",
-            description=f"Key moments from the last {len(self.highlights_queue)} updates",
-            color=0xe74c3c,
-            timestamp=datetime.now()
+        prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
+    
+    {updates_text}
+    
+    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+    
+    HIGHLIGHT-WORTHY updates include:
+    - Competition wins (HOH, POV, etc.)
+    - Major strategic moves or betrayals
+    - Dramatic fights or confrontations  
+    - Romantic moments (first kiss, breakup, etc.)
+    - Hilarious or memorable incidents
+    - Game-changing twists revealed
+    - Eviction results or surprise votes
+    - Alliance formations or breaks
+    
+    For each selected update, provide:
+    {{
+        "highlights": [
+            {{
+                "original_time": "the time from the original update (like '08:10 PM PST')",
+                "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
+                "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+                "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+            }}
+        ]
+    }}
+    
+    Be selective - these should be the updates that a superfan would want to know about from this batch."""
+    
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=800,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
         )
         
-        for highlight in highlights_data['highlights'][:10]:
-            title = highlight.get('title', 'Update')
+        # Parse and create embed
+        try:
+            highlights_data = self._parse_llm_response(response.content[0].text)
             
-            # Clean title of any remaining time stamps
-            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            if not highlights_data.get('highlights'):
+                logger.warning("No highlights in LLM response, using pattern fallback")
+                return [self._create_pattern_highlights_embed()]
             
-            # Use the original time from the LLM response
-            time_str = highlight.get('original_time', 'Time')
-            
-            # Build the field content
-            field_content = title
-            if highlight.get('reason') and highlight['reason'].strip():
-                field_content += f"\n*{highlight['reason']}*"
-            
-            embed.add_field(
-                name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
-                value=field_content,
-                inline=False
+            embed = discord.Embed(
+                title="🎯 Feed Highlights - What Just Happened",
+                description=f"Key moments from the last {len(self.highlights_queue)} updates",
+                color=0xe74c3c,
+                timestamp=datetime.now()
             )
-        
-        embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
-        return [embed]
+            
+            for highlight in highlights_data['highlights'][:10]:
+                title = highlight.get('title', 'Update')
+                
+                # Clean title of any remaining time stamps
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                
+                # Use the original time from the LLM response
+                time_str = highlight.get('original_time', 'Time')
+                
+                # Build the field content
+                field_content = title
+                if highlight.get('reason') and highlight['reason'].strip():
+                    field_content += f"\n*{highlight['reason']}*"
+                
+                embed.add_field(
+                    name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
+                    value=field_content,
+                    inline=False
+                )
+            
+            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
+            return [embed]
+            
+        except Exception as e:
+            logger.error(f"Failed to parse highlights response: {e}")
+            return [self._create_pattern_highlights_embed()]
         
     except Exception as e:
         logger.error(f"Failed to parse highlights response: {e}")
