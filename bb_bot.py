@@ -1703,13 +1703,22 @@ class PredictionManager:
         finally:
             conn.close()
     
-    def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
-                          points: int, was_correct: bool, participated: bool):
-        """Update user's leaderboard stats"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        
+    # Replace the _update_leaderboard method in PredictionManager class with this improved version
+
+def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
+                      points: int, was_correct: bool, participated: bool):
+    """Update user's leaderboard stats with better database lock handling"""
+    max_retries = 3
+    retry_delay = 0.1
+    
+    for attempt in range(max_retries):
+        conn = None
         try:
+            conn = self.get_connection()
+            # Set busy timeout to handle locks
+            conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+            cursor = conn.cursor()
+            
             # Get current stats
             cursor.execute("""
                 SELECT season_points, weekly_points, correct_predictions, total_predictions
@@ -1735,6 +1744,8 @@ class PredictionManager:
                     WHERE user_id = ? AND guild_id = ? AND week_number = ?
                 """, (new_season_points, new_weekly_points, new_correct, new_total,
                       user_id, guild_id, week_number))
+                
+                logger.info(f"Updated leaderboard for user {user_id}: {new_season_points} points")
             else:
                 # Create new record
                 cursor.execute("""
@@ -1744,14 +1755,219 @@ class PredictionManager:
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (user_id, guild_id, week_number, points, points,
                       1 if was_correct else 0, 1 if participated else 0))
+                
+                logger.info(f"Created new leaderboard entry for user {user_id}: {points} points")
             
             conn.commit()
+            logger.info(f"Leaderboard update successful for user {user_id}")
+            break  # Success, exit retry loop
             
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            else:
+                logger.error(f"Database error after {attempt + 1} attempts: {e}")
+                if conn:
+                    conn.rollback()
+                raise
         except Exception as e:
             logger.error(f"Error updating leaderboard: {e}")
-            conn.rollback()
+            if conn:
+                conn.rollback()
+            raise
         finally:
+            if conn:
+                conn.close()
+
+# Also improve the resolve_prediction method to handle the database better
+
+# Replace the _update_leaderboard method in PredictionManager class with this improved version
+
+def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
+                      points: int, was_correct: bool, participated: bool):
+    """Update user's leaderboard stats with better database lock handling"""
+    max_retries = 3
+    retry_delay = 0.1
+    
+    for attempt in range(max_retries):
+        conn = None
+        try:
+            conn = self.get_connection()
+            # Set busy timeout to handle locks
+            conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+            cursor = conn.cursor()
+            
+            # Get current stats
+            cursor.execute("""
+                SELECT season_points, weekly_points, correct_predictions, total_predictions
+                FROM prediction_leaderboard 
+                WHERE user_id = ? AND guild_id = ? AND week_number = ?
+            """, (user_id, guild_id, week_number))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # Update existing record
+                season_points, weekly_points, correct_preds, total_preds = result
+                new_season_points = season_points + points
+                new_weekly_points = weekly_points + points
+                new_correct = correct_preds + (1 if was_correct else 0)
+                new_total = total_preds + (1 if participated else 0)
+                
+                cursor.execute("""
+                    UPDATE prediction_leaderboard 
+                    SET season_points = ?, weekly_points = ?, 
+                        correct_predictions = ?, total_predictions = ?,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND guild_id = ? AND week_number = ?
+                """, (new_season_points, new_weekly_points, new_correct, new_total,
+                      user_id, guild_id, week_number))
+                
+                logger.info(f"Updated leaderboard for user {user_id}: {new_season_points} points")
+            else:
+                # Create new record
+                cursor.execute("""
+                    INSERT INTO prediction_leaderboard 
+                    (user_id, guild_id, week_number, season_points, weekly_points, 
+                     correct_predictions, total_predictions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, guild_id, week_number, points, points,
+                      1 if was_correct else 0, 1 if participated else 0))
+                
+                logger.info(f"Created new leaderboard entry for user {user_id}: {points} points")
+            
+            conn.commit()
+            logger.info(f"Leaderboard update successful for user {user_id}")
+            break  # Success, exit retry loop
+            
+        except sqlite3.OperationalError as e:
+            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s...")
+                time.sleep(retry_delay)
+                retry_delay *= 2  # Exponential backoff
+                continue
+            else:
+                logger.error(f"Database error after {attempt + 1} attempts: {e}")
+                if conn:
+                    conn.rollback()
+                raise
+        except Exception as e:
+            logger.error(f"Error updating leaderboard: {e}")
+            if conn:
+                conn.rollback()
+            raise
+        finally:
+            if conn:
+                conn.close()
+
+# Also improve the resolve_prediction method to handle the database better
+
+def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int]:
+    """Resolve a prediction and award points with better error handling"""
+    conn = None
+    try:
+        conn = self.get_connection()
+        conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
+        cursor = conn.cursor()
+        
+        # Get prediction details
+        cursor.execute("""
+            SELECT prediction_type, options, status, guild_id, week_number
+            FROM predictions WHERE prediction_id = ?
+        """, (prediction_id,))
+        
+        result = cursor.fetchone()
+        if not result:
+            return False, 0
+        
+        pred_type, options_json, status, guild_id, week_number = result
+        options = json.loads(options_json)
+        
+        # Validate correct option
+        if correct_option not in options:
+            return False, 0
+        
+        # Check if already resolved
+        if status == PredictionStatus.RESOLVED.value:
+            logger.warning(f"Prediction {prediction_id} already resolved, re-processing leaderboard...")
+            # Don't return false - continue to reprocess leaderboard
+        else:
+            # Update prediction status
+            cursor.execute("""
+                UPDATE predictions 
+                SET status = ?, correct_option = ?
+                WHERE prediction_id = ?
+            """, (PredictionStatus.RESOLVED.value, correct_option, prediction_id))
+        
+        # Get all user predictions for this poll
+        cursor.execute("""
+            SELECT user_id, option FROM user_predictions 
+            WHERE prediction_id = ?
+        """, (prediction_id,))
+        
+        user_predictions = cursor.fetchall()
+        
+        # Calculate points for correct predictions
+        prediction_type = PredictionType(pred_type)
+        points = self.POINT_VALUES[prediction_type]
+        correct_users = 0
+        
+        current_week = week_number if week_number else self._get_current_week()
+        
+        # Commit the prediction update first
+        conn.commit()
+        conn.close()
+        
+        # Now update leaderboard separately to avoid lock conflicts
+        for user_id, user_option in user_predictions:
+            try:
+                if user_option == correct_option:
+                    # Award points to correct predictors
+                    self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
+                    correct_users += 1
+                else:
+                    # Update stats for incorrect predictors
+                    self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
+            except Exception as e:
+                logger.error(f"Error updating leaderboard for user {user_id}: {e}")
+                # Continue with other users even if one fails
+        
+        logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
+        return True, correct_users
+        
+    except Exception as e:
+        logger.error(f"Error resolving prediction: {e}")
+        if conn:
+            conn.rollback()
             conn.close()
+        return False, 0
+        
+        # Now update leaderboard separately to avoid lock conflicts
+        for user_id, user_option in user_predictions:
+            try:
+                if user_option == correct_option:
+                    # Award points to correct predictors
+                    self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
+                    correct_users += 1
+                else:
+                    # Update stats for incorrect predictors
+                    self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
+            except Exception as e:
+                logger.error(f"Error updating leaderboard for user {user_id}: {e}")
+                # Continue with other users even if one fails
+        
+        logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
+        return True, correct_users
+        
+    except Exception as e:
+        logger.error(f"Error resolving prediction: {e}")
+        if conn:
+            conn.rollback()
+            conn.close()
+        return False, 0
     
     def get_active_predictions(self, guild_id: int) -> List[Dict]:
         """Get all active predictions for a guild"""
