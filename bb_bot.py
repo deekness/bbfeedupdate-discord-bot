@@ -4066,6 +4066,287 @@ class CreatePollButton(discord.ui.Button):
     async def callback(self, interaction: discord.Interaction):
         await self.view.create_poll(interaction)
 
+class PredictionSelectionView(discord.ui.View):
+    def __init__(self, active_predictions, prediction_manager, user_id):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.active_predictions = active_predictions
+        self.prediction_manager = prediction_manager
+        self.user_id = user_id
+        self.selected_prediction = None
+        
+        # Add the poll selection dropdown
+        self.add_item(PollSelect(active_predictions))
+    
+    async def show_options_for_poll(self, interaction: discord.Interaction, selected_poll):
+        """Show the options selection for the chosen poll"""
+        self.selected_prediction = selected_poll
+        
+        # Get user's current prediction for this poll
+        current_prediction = self.prediction_manager.get_user_prediction(
+            self.user_id, selected_poll['id']
+        )
+        
+        # Remove the poll selector and add the options selector
+        self.clear_items()
+        self.add_item(OptionsSelect(selected_poll['options'], current_prediction))
+        self.add_item(ConfirmPredictionButton())
+        self.add_item(BackToPollsButton(self.active_predictions))
+        
+        # Create embed showing the selected poll details
+        embed = discord.Embed(
+            title=f"🗳️ {selected_poll['title']}",
+            description=selected_poll['description'],
+            color=0x3498db
+        )
+        
+        # Add timing info
+        closes_at = selected_poll['closes_at']
+        if isinstance(closes_at, str):
+            closes_at = datetime.fromisoformat(closes_at)
+        
+        time_left = closes_at - datetime.now()
+        if time_left.total_seconds() > 0:
+            hours_left = int(time_left.total_seconds() / 3600)
+            minutes_left = int((time_left.total_seconds() % 3600) / 60)
+            time_str = f"{hours_left}h {minutes_left}m remaining"
+        else:
+            time_str = "Closed"
+        
+        embed.add_field(name="⏰ Time Left", value=time_str, inline=True)
+        
+        pred_type_names = {
+            'season_winner': '👑 Season Winner',
+            'weekly_hoh': '🏆 Weekly HOH',
+            'weekly_veto': '💎 Weekly Veto',
+            'weekly_eviction': '🚪 Weekly Eviction'
+        }
+        type_name = pred_type_names.get(selected_poll['type'], selected_poll['type'])
+        embed.add_field(name="📊 Type", value=type_name, inline=True)
+        
+        if selected_poll.get('week_number'):
+            embed.add_field(name="📅 Week", value=f"Week {selected_poll['week_number']}", inline=True)
+        
+        if current_prediction:
+            embed.add_field(
+                name="✅ Current Prediction",
+                value=current_prediction,
+                inline=False
+            )
+        
+        embed.add_field(
+            name="💡 Instructions",
+            value="Select your prediction from the dropdown below, then click 'Confirm Prediction'",
+            inline=False
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class PollSelect(discord.ui.Select):
+    def __init__(self, active_predictions):
+        # Create options for available polls (max 25)
+        options = []
+        
+        for pred in active_predictions[:25]:  # Discord limit of 25 options
+            # Calculate time left
+            closes_at = pred['closes_at']
+            if isinstance(closes_at, str):
+                closes_at = datetime.fromisoformat(closes_at)
+            
+            time_left = closes_at - datetime.now()
+            if time_left.total_seconds() > 0:
+                hours_left = int(time_left.total_seconds() / 3600)
+                time_desc = f"({hours_left}h left)"
+            else:
+                time_desc = "(Closed)"
+            
+            # Create option label and description
+            label = f"{pred['title']}"
+            if len(label) > 100:  # Discord limit
+                label = label[:97] + "..."
+            
+            description = f"ID: {pred['id']} • {time_desc}"
+            if len(description) > 100:
+                description = description[:97] + "..."
+            
+            # Add emoji based on prediction type
+            emoji_map = {
+                'season_winner': '👑',
+                'weekly_hoh': '🏆',
+                'weekly_veto': '💎',
+                'weekly_eviction': '🚪'
+            }
+            emoji = emoji_map.get(pred['type'], '📊')
+            
+            options.append(discord.SelectOption(
+                label=label,
+                value=str(pred['id']),
+                description=description,
+                emoji=emoji
+            ))
+        
+        super().__init__(
+            placeholder="Select a poll to make your prediction...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        selected_poll_id = int(self.values[0])
+        
+        # Find the selected poll
+        selected_poll = None
+        for pred in self.view.active_predictions:
+            if pred['id'] == selected_poll_id:
+                selected_poll = pred
+                break
+        
+        if selected_poll:
+            await self.view.show_options_for_poll(interaction, selected_poll)
+        else:
+            await interaction.response.send_message("Error: Poll not found", ephemeral=True)
+
+class OptionsSelect(discord.ui.Select):
+    def __init__(self, options, current_prediction=None):
+        # Create options for houseguests
+        select_options = []
+        
+        for option in options[:25]:  # Discord limit of 25 options
+            # Check if this is the user's current prediction
+            is_current = (option == current_prediction)
+            
+            select_options.append(discord.SelectOption(
+                label=option,
+                value=option,
+                emoji="✅" if is_current else "👤",
+                description="Current prediction" if is_current else None
+            ))
+        
+        super().__init__(
+            placeholder="Select your prediction...",
+            options=select_options,
+            min_values=1,
+            max_values=1
+        )
+        
+        self.selected_option = current_prediction  # Store current selection
+    
+    async def callback(self, interaction: discord.Interaction):
+        self.selected_option = self.values[0]
+        
+        # Update the embed to show selection
+        embed = interaction.message.embeds[0]
+        
+        # Update or add the "Selected Prediction" field
+        field_found = False
+        for i, field in enumerate(embed.fields):
+            if field.name == "🎯 Selected Prediction":
+                embed.set_field_at(i, name="🎯 Selected Prediction", value=self.selected_option, inline=False)
+                field_found = True
+                break
+        
+        if not field_found:
+            embed.add_field(
+                name="🎯 Selected Prediction",
+                value=self.selected_option,
+                inline=False
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+class ConfirmPredictionButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.success,
+            label="Confirm Prediction",
+            emoji="✅"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Find the options selector to get the selected option
+        options_select = None
+        for item in self.view.children:
+            if isinstance(item, OptionsSelect):
+                options_select = item
+                break
+        
+        if not options_select or not options_select.selected_option:
+            await interaction.response.send_message(
+                "Please select a prediction option first!", 
+                ephemeral=True
+            )
+            return
+        
+        # Make the prediction
+        success = self.view.prediction_manager.make_prediction(
+            user_id=self.view.user_id,
+            prediction_id=self.view.selected_prediction['id'],
+            option=options_select.selected_option
+        )
+        
+        if success:
+            embed = discord.Embed(
+                title="✅ Prediction Confirmed!",
+                description=f"**Poll:** {self.view.selected_prediction['title']}\n"
+                           f"**Your Prediction:** {options_select.selected_option}\n\n"
+                           f"You can change your prediction anytime before the poll closes.",
+                color=0x2ecc71
+            )
+            
+            # Remove the view (disable buttons)
+            await interaction.response.edit_message(embed=embed, view=None)
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to record prediction. The poll may be closed or there was an error.",
+                ephemeral=True
+            )
+
+class BackToPollsButton(discord.ui.Button):
+    def __init__(self, active_predictions):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="Back to Polls",
+            emoji="⬅️"
+        )
+        self.active_predictions = active_predictions
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Reset view to poll selection
+        self.view.clear_items()
+        self.view.add_item(PollSelect(self.active_predictions))
+        self.view.selected_prediction = None
+        
+        embed = discord.Embed(
+            title="🗳️ Make Your Prediction",
+            description=f"**{len(self.active_predictions)} active polls** available\nSelect a poll to make your prediction:",
+            color=0x3498db
+        )
+        
+        # Show poll summary again
+        poll_list = []
+        for pred in self.active_predictions[:5]:
+            closes_at = pred['closes_at']
+            if isinstance(closes_at, str):
+                closes_at = datetime.fromisoformat(closes_at)
+            
+            time_left = closes_at - datetime.now()
+            if time_left.total_seconds() > 0:
+                hours_left = int(time_left.total_seconds() / 3600)
+                time_str = f"{hours_left}h left"
+            else:
+                time_str = "Closed"
+            
+            poll_list.append(f"**{pred['title']}** - {time_str}")
+        
+        if poll_list:
+            embed.add_field(
+                name="Available Polls",
+                value="\n".join(poll_list),
+                inline=False
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
     
@@ -4746,36 +5027,64 @@ class BBDiscordBot(commands.Bot):
                     await interaction.response.send_message("Error creating poll.", ephemeral=True)
 
         @self.tree.command(name="predict", description="Make a prediction on an active poll")
-        @discord.app_commands.describe(
-            prediction_id="ID of the prediction poll",
-            option="Your prediction choice"
-        )
-        async def predict_slash(interaction: discord.Interaction, prediction_id: int, option: str):
-            """Make a prediction"""
+        async def predict_slash(interaction: discord.Interaction):
+            """Make a prediction using interactive selection"""
             try:
                 await interaction.response.defer(ephemeral=True)
                 
-                success = self.prediction_manager.make_prediction(
-                    user_id=interaction.user.id,
-                    prediction_id=prediction_id,
-                    option=option
+                # Get active predictions for this guild
+                active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
+                
+                if not active_predictions:
+                    embed = discord.Embed(
+                        title="📊 No Active Polls",
+                        description="There are no active prediction polls right now.\nAsk an admin to create one with `/createpoll`!",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Create the prediction selection view
+                view = PredictionSelectionView(
+                    active_predictions=active_predictions,
+                    prediction_manager=self.prediction_manager,
+                    user_id=interaction.user.id
                 )
                 
-                if success:
-                    await interaction.followup.send(
-                        f"✅ Prediction recorded: **{option}**\n"
-                        f"You can change your prediction anytime before the poll closes.",
-                        ephemeral=True
-                    )
-                else:
-                    await interaction.followup.send(
-                        "❌ Could not record prediction. The poll may be closed, invalid, or your option is not valid.",
-                        ephemeral=True
+                embed = discord.Embed(
+                    title="🗳️ Make Your Prediction",
+                    description=f"**{len(active_predictions)} active polls** available\nSelect a poll to make your prediction:",
+                    color=0x3498db
+                )
+                
+                # Show a summary of active polls
+                poll_list = []
+                for pred in active_predictions[:5]:  # Show up to 5 polls
+                    closes_at = pred['closes_at']
+                    if isinstance(closes_at, str):
+                        closes_at = datetime.fromisoformat(closes_at)
+                    
+                    time_left = closes_at - datetime.now()
+                    if time_left.total_seconds() > 0:
+                        hours_left = int(time_left.total_seconds() / 3600)
+                        time_str = f"{hours_left}h left"
+                    else:
+                        time_str = "Closed"
+                    
+                    poll_list.append(f"**{pred['title']}** - {time_str}")
+                
+                if poll_list:
+                    embed.add_field(
+                        name="Available Polls",
+                        value="\n".join(poll_list),
+                        inline=False
                     )
                 
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
+                
             except Exception as e:
-                logger.error(f"Error making prediction: {e}")
-                await interaction.followup.send("Error making prediction.", ephemeral=True)
+                logger.error(f"Error in predict command: {e}")
+                await interaction.followup.send("Error loading prediction polls.", ephemeral=True)
 
         @self.tree.command(name="polls", description="View active prediction polls")
         async def polls_slash(interaction: discord.Interaction):
