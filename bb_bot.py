@@ -1715,85 +1715,85 @@ class PredictionManager:
             
     
     def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
-                      points: int, was_correct: bool, participated: bool):
+                  points: int, was_correct: bool, participated: bool):
         """Update user's leaderboard stats with improved error handling"""
         max_retries = 3
         retry_delay = 0.1  # 100ms
-    
-    for attempt in range(max_retries):
-        conn = None
-        try:
-            conn = self.get_connection()
-            # Set a longer timeout and immediate lock behavior
-            conn.execute("PRAGMA busy_timeout = 5000")  # 5 second timeout
-            conn.execute("BEGIN IMMEDIATE")  # Get exclusive lock immediately
-            
-            cursor = conn.cursor()
-            
-            # Get current stats
-            cursor.execute("""
-                SELECT season_points, weekly_points, correct_predictions, total_predictions
-                FROM prediction_leaderboard 
-                WHERE user_id = ? AND guild_id = ? AND week_number = ?
-            """, (user_id, guild_id, week_number))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                # Update existing record
-                season_points, weekly_points, correct_preds, total_preds = result
-                new_season_points = season_points + points
-                new_weekly_points = weekly_points + points
-                new_correct = correct_preds + (1 if was_correct else 0)
-                new_total = total_preds + (1 if participated else 0)
+
+        for attempt in range(max_retries):
+            conn = None
+            try:
+                conn = self.get_connection()
+                # Set a longer timeout and immediate lock behavior
+                conn.execute("PRAGMA busy_timeout = 5000")  # 5 second timeout
+                conn.execute("BEGIN IMMEDIATE")  # Get exclusive lock immediately
                 
+                cursor = conn.cursor()
+                
+                # Get current stats
                 cursor.execute("""
-                    UPDATE prediction_leaderboard 
-                    SET season_points = ?, weekly_points = ?, 
-                        correct_predictions = ?, total_predictions = ?,
-                        last_updated = CURRENT_TIMESTAMP
+                    SELECT season_points, weekly_points, correct_predictions, total_predictions
+                    FROM prediction_leaderboard 
                     WHERE user_id = ? AND guild_id = ? AND week_number = ?
-                """, (new_season_points, new_weekly_points, new_correct, new_total,
-                      user_id, guild_id, week_number))
-            else:
-                # Create new record
-                cursor.execute("""
-                    INSERT INTO prediction_leaderboard 
-                    (user_id, guild_id, week_number, season_points, weekly_points, 
-                     correct_predictions, total_predictions)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (user_id, guild_id, week_number, points, points,
-                      1 if was_correct else 0, 1 if participated else 0))
-            
-            conn.commit()
-            logger.info(f"Successfully updated leaderboard for user {user_id}")
-            break  # Success, exit retry loop
-            
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
-                logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s")
-                if conn:
-                    try:
+                """, (user_id, guild_id, week_number))
+                
+                result = cursor.fetchone()
+                
+                if result:
+                    # Update existing record
+                    season_points, weekly_points, correct_preds, total_preds = result
+                    new_season_points = season_points + points
+                    new_weekly_points = weekly_points + points
+                    new_correct = correct_preds + (1 if was_correct else 0)
+                    new_total = total_preds + (1 if participated else 0)
+                    
+                    cursor.execute("""
+                        UPDATE prediction_leaderboard 
+                        SET season_points = ?, weekly_points = ?, 
+                            correct_predictions = ?, total_predictions = ?,
+                            last_updated = CURRENT_TIMESTAMP
+                        WHERE user_id = ? AND guild_id = ? AND week_number = ?
+                    """, (new_season_points, new_weekly_points, new_correct, new_total,
+                          user_id, guild_id, week_number))
+                else:
+                    # Create new record
+                    cursor.execute("""
+                        INSERT INTO prediction_leaderboard 
+                        (user_id, guild_id, week_number, season_points, weekly_points, 
+                         correct_predictions, total_predictions)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """, (user_id, guild_id, week_number, points, points,
+                          1 if was_correct else 0, 1 if participated else 0))
+                
+                conn.commit()
+                logger.info(f"Successfully updated leaderboard for user {user_id}")
+                break  # Success, exit retry loop
+                
+            except sqlite3.OperationalError as e:
+                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+                    logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s")
+                    if conn:
+                        try:
+                            conn.rollback()
+                        except:
+                            pass
+                        conn.close()
+                    time.sleep(retry_delay)  # Use time.sleep instead of asyncio.sleep
+                    retry_delay *= 2  # Exponential backoff
+                    continue
+                else:
+                    logger.error(f"Database lock error after {attempt + 1} attempts: {e}")
+                    if conn:
                         conn.rollback()
-                    except:
-                        pass
-                    conn.close()
-                time.sleep(retry_delay)  # Use time.sleep instead of asyncio.sleep
-                retry_delay *= 2  # Exponential backoff
-                continue
-            else:
-                logger.error(f"Database lock error after {attempt + 1} attempts: {e}")
+                    raise
+            except Exception as e:
+                logger.error(f"Error updating leaderboard: {e}")
                 if conn:
                     conn.rollback()
                 raise
-        except Exception as e:
-            logger.error(f"Error updating leaderboard: {e}")
-            if conn:
-                conn.rollback()
-            raise
-        finally:
-            if conn:
-                conn.close()
+            finally:
+                if conn:
+                    conn.close()
     
     def get_active_predictions(self, guild_id: int) -> List[Dict]:
         """Get all active predictions for a guild"""
