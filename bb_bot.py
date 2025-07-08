@@ -2113,7 +2113,7 @@ class PredictionManager:
         
         return embed
     
-    def create_leaderboard_embed(self, leaderboard: List[Dict], guild, leaderboard_type: str = "Season") -> discord.Embed:
+    async def create_leaderboard_embed(self, leaderboard: List[Dict], guild, leaderboard_type: str = "Season") -> discord.Embed:
         """Create Discord embed for leaderboard"""
         embed = discord.Embed(
             title=f"🏆 {leaderboard_type} Prediction Leaderboard",
@@ -2135,13 +2135,12 @@ class PredictionManager:
         
         for i, entry in enumerate(leaderboard[:10]):
             user = guild.get_member(entry['user_id'])
-            print(f"Debug: Looking for user ID {entry['user_id']}, found: {user}")  # Debug line
-            
+    
             if user:
                 username = user.display_name
-            else:
-                # Fallback to just the last 4 digits of user ID
-                username = f"User#{str(entry['user_id'])[-4:]}"
+        else:
+            # Show last 4 digits of user ID as fallback
+            username = f"User#{str(entry['user_id'])[-4:]}"
             
             medal = medals[i] if i < 3 else f"{i+1}."
             accuracy_str = f"{entry['accuracy']:.1f}%" if entry['total'] > 0 else "0%"
@@ -4797,7 +4796,7 @@ class BBDiscordBot(commands.Bot):
                 
                 if leaderboard_type.value == "season":
                     leaderboard = self.prediction_manager.get_season_leaderboard(interaction.guild.id)
-                    embed = self.prediction_manager.create_leaderboard_embed(
+                    embed = await self.prediction_manager.create_leaderboard_embed(
                         leaderboard, interaction.guild, "Season"
                     )
                 else:
@@ -4805,7 +4804,7 @@ class BBDiscordBot(commands.Bot):
                         interaction.guild.id, week_number
                     )
                     week_text = f"Week {week_number}" if week_number else "Current Week"
-                    embed = self.prediction_manager.create_leaderboard_embed(
+                    embed = await self.prediction_manager.create_leaderboard_embed(
                         leaderboard, interaction.guild, week_text
                     )
                 
