@@ -1716,9 +1716,9 @@ class PredictionManager:
     
     def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
                       points: int, was_correct: bool, participated: bool):
-        """Update user's leaderboard stats with improved error handling"""
-        max_retries = 3
-        retry_delay = 0.1  # 100ms
+    """Update user's leaderboard stats with improved error handling"""
+    max_retries = 3
+    retry_delay = 0.1  # 100ms
     
     for attempt in range(max_retries):
         conn = None
@@ -1778,7 +1778,7 @@ class PredictionManager:
                     except:
                         pass
                     conn.close()
-                await asyncio.sleep(retry_delay)
+                time.sleep(retry_delay)  # Use time.sleep instead of asyncio.sleep
                 retry_delay *= 2  # Exponential backoff
                 continue
             else:
