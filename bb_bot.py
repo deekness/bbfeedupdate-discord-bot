@@ -1639,8 +1639,8 @@ class PredictionManager:
             conn.close()
     
     def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int]:
-    """Resolve a prediction and award points with better error handling"""
-    conn = self.get_connection()
+        """Resolve a prediction and award points with better error handling"""
+        conn = self.get_connection()
     
     try:
         # Set busy timeout for this connection
