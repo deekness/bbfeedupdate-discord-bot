@@ -1703,271 +1703,55 @@ class PredictionManager:
         finally:
             conn.close()
     
-    # Replace the _update_leaderboard method in PredictionManager class with this improved version
-
-def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
-                      points: int, was_correct: bool, participated: bool):
-    """Update user's leaderboard stats with better database lock handling"""
-    max_retries = 3
-    retry_delay = 0.1
-    
-    for attempt in range(max_retries):
-        conn = None
-        try:
-            conn = self.get_connection()
-            # Set busy timeout to handle locks
-            conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
-            cursor = conn.cursor()
-            
-            # Get current stats
-            cursor.execute("""
-                SELECT season_points, weekly_points, correct_predictions, total_predictions
-                FROM prediction_leaderboard 
-                WHERE user_id = ? AND guild_id = ? AND week_number = ?
-            """, (user_id, guild_id, week_number))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                # Update existing record
-                season_points, weekly_points, correct_preds, total_preds = result
-                new_season_points = season_points + points
-                new_weekly_points = weekly_points + points
-                new_correct = correct_preds + (1 if was_correct else 0)
-                new_total = total_preds + (1 if participated else 0)
-                
-                cursor.execute("""
-                    UPDATE prediction_leaderboard 
-                    SET season_points = ?, weekly_points = ?, 
-                        correct_predictions = ?, total_predictions = ?,
-                        last_updated = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND guild_id = ? AND week_number = ?
-                """, (new_season_points, new_weekly_points, new_correct, new_total,
-                      user_id, guild_id, week_number))
-                
-                logger.info(f"Updated leaderboard for user {user_id}: {new_season_points} points")
-            else:
-                # Create new record
-                cursor.execute("""
-                    INSERT INTO prediction_leaderboard 
-                    (user_id, guild_id, week_number, season_points, weekly_points, 
-                     correct_predictions, total_predictions)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (user_id, guild_id, week_number, points, points,
-                      1 if was_correct else 0, 1 if participated else 0))
-                
-                logger.info(f"Created new leaderboard entry for user {user_id}: {points} points")
-            
-            conn.commit()
-            logger.info(f"Leaderboard update successful for user {user_id}")
-            break  # Success, exit retry loop
-            
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
-                logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
-                continue
-            else:
-                logger.error(f"Database error after {attempt + 1} attempts: {e}")
-                if conn:
-                    conn.rollback()
-                raise
-        except Exception as e:
-            logger.error(f"Error updating leaderboard: {e}")
-            if conn:
-                conn.rollback()
-            raise
-        finally:
-            if conn:
-                conn.close()
-
-# Also improve the resolve_prediction method to handle the database better
-
-# Replace the _update_leaderboard method in PredictionManager class with this improved version
-
-def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
-                      points: int, was_correct: bool, participated: bool):
-    """Update user's leaderboard stats with better database lock handling"""
-    max_retries = 3
-    retry_delay = 0.1
-    
-    for attempt in range(max_retries):
-        conn = None
-        try:
-            conn = self.get_connection()
-            # Set busy timeout to handle locks
-            conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
-            cursor = conn.cursor()
-            
-            # Get current stats
-            cursor.execute("""
-                SELECT season_points, weekly_points, correct_predictions, total_predictions
-                FROM prediction_leaderboard 
-                WHERE user_id = ? AND guild_id = ? AND week_number = ?
-            """, (user_id, guild_id, week_number))
-            
-            result = cursor.fetchone()
-            
-            if result:
-                # Update existing record
-                season_points, weekly_points, correct_preds, total_preds = result
-                new_season_points = season_points + points
-                new_weekly_points = weekly_points + points
-                new_correct = correct_preds + (1 if was_correct else 0)
-                new_total = total_preds + (1 if participated else 0)
-                
-                cursor.execute("""
-                    UPDATE prediction_leaderboard 
-                    SET season_points = ?, weekly_points = ?, 
-                        correct_predictions = ?, total_predictions = ?,
-                        last_updated = CURRENT_TIMESTAMP
-                    WHERE user_id = ? AND guild_id = ? AND week_number = ?
-                """, (new_season_points, new_weekly_points, new_correct, new_total,
-                      user_id, guild_id, week_number))
-                
-                logger.info(f"Updated leaderboard for user {user_id}: {new_season_points} points")
-            else:
-                # Create new record
-                cursor.execute("""
-                    INSERT INTO prediction_leaderboard 
-                    (user_id, guild_id, week_number, season_points, weekly_points, 
-                     correct_predictions, total_predictions)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                """, (user_id, guild_id, week_number, points, points,
-                      1 if was_correct else 0, 1 if participated else 0))
-                
-                logger.info(f"Created new leaderboard entry for user {user_id}: {points} points")
-            
-            conn.commit()
-            logger.info(f"Leaderboard update successful for user {user_id}")
-            break  # Success, exit retry loop
-            
-        except sqlite3.OperationalError as e:
-            if "database is locked" in str(e).lower() and attempt < max_retries - 1:
-                logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s...")
-                time.sleep(retry_delay)
-                retry_delay *= 2  # Exponential backoff
-                continue
-            else:
-                logger.error(f"Database error after {attempt + 1} attempts: {e}")
-                if conn:
-                    conn.rollback()
-                raise
-        except Exception as e:
-            logger.error(f"Error updating leaderboard: {e}")
-            if conn:
-                conn.rollback()
-            raise
-        finally:
-            if conn:
-                conn.close()
-
-# Also improve the resolve_prediction method to handle the database better
-
-def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int]:
-    """Resolve a prediction and award points with better error handling"""
-    conn = None
-    try:
+    def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
+                          points: int, was_correct: bool, participated: bool):
+        """Update user's leaderboard stats"""
         conn = self.get_connection()
-        conn.execute("PRAGMA busy_timeout = 30000")  # 30 seconds
         cursor = conn.cursor()
         
-        # Get prediction details
-        cursor.execute("""
-            SELECT prediction_type, options, status, guild_id, week_number
-            FROM predictions WHERE prediction_id = ?
-        """, (prediction_id,))
-        
-        result = cursor.fetchone()
-        if not result:
-            return False, 0
-        
-        pred_type, options_json, status, guild_id, week_number = result
-        options = json.loads(options_json)
-        
-        # Validate correct option
-        if correct_option not in options:
-            return False, 0
-        
-        # Check if already resolved
-        if status == PredictionStatus.RESOLVED.value:
-            logger.warning(f"Prediction {prediction_id} already resolved, re-processing leaderboard...")
-            # Don't return false - continue to reprocess leaderboard
-        else:
-            # Update prediction status
+        try:
+            # Get current stats
             cursor.execute("""
-                UPDATE predictions 
-                SET status = ?, correct_option = ?
-                WHERE prediction_id = ?
-            """, (PredictionStatus.RESOLVED.value, correct_option, prediction_id))
-        
-        # Get all user predictions for this poll
-        cursor.execute("""
-            SELECT user_id, option FROM user_predictions 
-            WHERE prediction_id = ?
-        """, (prediction_id,))
-        
-        user_predictions = cursor.fetchall()
-        
-        # Calculate points for correct predictions
-        prediction_type = PredictionType(pred_type)
-        points = self.POINT_VALUES[prediction_type]
-        correct_users = 0
-        
-        current_week = week_number if week_number else self._get_current_week()
-        
-        # Commit the prediction update first
-        conn.commit()
-        conn.close()
-        
-        # Now update leaderboard separately to avoid lock conflicts
-        for user_id, user_option in user_predictions:
-            try:
-                if user_option == correct_option:
-                    # Award points to correct predictors
-                    self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
-                    correct_users += 1
-                else:
-                    # Update stats for incorrect predictors
-                    self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
-            except Exception as e:
-                logger.error(f"Error updating leaderboard for user {user_id}: {e}")
-                # Continue with other users even if one fails
-        
-        logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
-        return True, correct_users
-        
-    except Exception as e:
-        logger.error(f"Error resolving prediction: {e}")
-        if conn:
+                SELECT season_points, weekly_points, correct_predictions, total_predictions
+                FROM prediction_leaderboard 
+                WHERE user_id = ? AND guild_id = ? AND week_number = ?
+            """, (user_id, guild_id, week_number))
+            
+            result = cursor.fetchone()
+            
+            if result:
+                # Update existing record
+                season_points, weekly_points, correct_preds, total_preds = result
+                new_season_points = season_points + points
+                new_weekly_points = weekly_points + points
+                new_correct = correct_preds + (1 if was_correct else 0)
+                new_total = total_preds + (1 if participated else 0)
+                
+                cursor.execute("""
+                    UPDATE prediction_leaderboard 
+                    SET season_points = ?, weekly_points = ?, 
+                        correct_predictions = ?, total_predictions = ?,
+                        last_updated = CURRENT_TIMESTAMP
+                    WHERE user_id = ? AND guild_id = ? AND week_number = ?
+                """, (new_season_points, new_weekly_points, new_correct, new_total,
+                      user_id, guild_id, week_number))
+            else:
+                # Create new record
+                cursor.execute("""
+                    INSERT INTO prediction_leaderboard 
+                    (user_id, guild_id, week_number, season_points, weekly_points, 
+                     correct_predictions, total_predictions)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (user_id, guild_id, week_number, points, points,
+                      1 if was_correct else 0, 1 if participated else 0))
+            
+            conn.commit()
+            
+        except Exception as e:
+            logger.error(f"Error updating leaderboard: {e}")
             conn.rollback()
+        finally:
             conn.close()
-        return False, 0
-        
-        # Now update leaderboard separately to avoid lock conflicts
-        for user_id, user_option in user_predictions:
-            try:
-                if user_option == correct_option:
-                    # Award points to correct predictors
-                    self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
-                    correct_users += 1
-                else:
-                    # Update stats for incorrect predictors
-                    self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
-            except Exception as e:
-                logger.error(f"Error updating leaderboard for user {user_id}: {e}")
-                # Continue with other users even if one fails
-        
-        logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
-        return True, correct_users
-        
-    except Exception as e:
-        logger.error(f"Error resolving prediction: {e}")
-        if conn:
-            conn.rollback()
-            conn.close()
-        return False, 0
     
     def get_active_predictions(self, guild_id: int) -> List[Dict]:
         """Get all active predictions for a guild"""
@@ -2746,35 +2530,35 @@ CRITICAL INSTRUCTIONS:
         ])
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-    
-    {updates_text}
-    
-    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-    
-    HIGHLIGHT-WORTHY updates include:
-    - Competition wins (HOH, POV, etc.)
-    - Major strategic moves or betrayals
-    - Dramatic fights or confrontations  
-    - Romantic moments (first kiss, breakup, etc.)
-    - Hilarious or memorable incidents
-    - Game-changing twists revealed
-    - Eviction results or surprise votes
-    - Alliance formations or breaks
-    
-    For each selected update, provide:
-    {{
-        "highlights": [
-            {{
-                "original_time": "the time from the original update (like '08:10 PM PST')",
-                "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
-                "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-                "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-            }}
-        ]
-    }}
-    
-    Be selective - these should be the updates that a superfan would want to know about from this batch."""
-    
+
+{updates_text}
+
+Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+
+HIGHLIGHT-WORTHY updates include:
+- Competition wins (HOH, POV, etc.)
+- Major strategic moves or betrayals
+- Dramatic fights or confrontations  
+- Romantic moments (first kiss, breakup, etc.)
+- Hilarious or memorable incidents
+- Game-changing twists revealed
+- Eviction results or surprise votes
+- Alliance formations or breaks
+
+For each selected update, provide:
+{{
+    "highlights": [
+        {{
+            "time": "exact time from update",
+            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
+            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+        }}
+    ]
+}}
+
+Be selective - these should be the updates that a superfan would want to know about from this batch."""
+
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
@@ -2800,23 +2584,20 @@ CRITICAL INSTRUCTIONS:
             
             for highlight in highlights_data['highlights'][:10]:
                 title = highlight.get('title', 'Update')
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
                 
-                # Clean title of any remaining time stamps
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                
-                # Use the original time from the LLM response
-                time_str = highlight.get('original_time', 'Time')
-                
-                # Build the field content
-                field_content = title
                 if highlight.get('reason') and highlight['reason'].strip():
-                    field_content += f"\n*{highlight['reason']}*"
-                
-                embed.add_field(
-                    name=f"{highlight.get('importance_emoji', '📝')} {time_str}",
-                    value=field_content,
-                    inline=False
-                )
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=f"{title}\n*{highlight['reason']}*",
+                        inline=False
+                    )
+                else:
+                    embed.add_field(
+                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
+                        value=title,
+                        inline=False
+                    )
             
             embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
             return [embed]
@@ -2824,10 +2605,7 @@ CRITICAL INSTRUCTIONS:
         except Exception as e:
             logger.error(f"Failed to parse highlights response: {e}")
             return [self._create_pattern_highlights_embed()]
-        
-    except Exception as e:
-        logger.error(f"Failed to parse highlights response: {e}")
-        return [self._create_pattern_highlights_embed()]
+
     async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
         """Create narrative LLM hourly summary as fallback"""
         try:
@@ -3375,441 +3153,326 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         else:
             return await self._create_single_daily_recap(updates, day_number)
     
-    # Add these methods to your UpdateBatcher class
-
-async def _create_single_daily_recap_with_context(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-    """Create daily recap with full context from manageable number of updates"""
-    if not self.llm_client or not await self._can_make_llm_request():
-        return self._create_pattern_daily_recap(updates, day_number)
-    
-    try:
-        await self.rate_limiter.wait_if_needed()
+    async def _create_single_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap from manageable number of updates"""
+        if not self.llm_client or not await self._can_make_llm_request():
+            return self._create_pattern_daily_recap(updates, day_number)
         
-        # Gather comprehensive context
-        context_data = await self._gather_daily_context(day_number)
-        
-        # Prepare current day's updates
-        updates_data = []
-        for update in updates:
-            time_str = self._extract_correct_time(update)
-            updates_data.append({
-                'time': time_str,
-                'title': update.title,
-                'description': update.description[:150] if update.description != update.title else ""
-            })
-        
-        # Create enhanced prompt with context
-        prompt = self._create_contextual_daily_prompt(updates_data, day_number, context_data)
-        
-        # Make LLM request
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=2000,  # Longer for contextual analysis
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Parse response
-        analysis = self._parse_llm_response(response.content[0].text)
-        
-        # Create enhanced daily recap embed
-        return self._create_contextual_daily_recap_embed(analysis, day_number, len(updates), context_data)
-        
-    except Exception as e:
-        logger.error(f"Contextual daily recap LLM failed: {e}")
-        return self._create_pattern_daily_recap(updates, day_number)
-
-async def _gather_daily_context(self, day_number: int) -> Dict:
-    """Gather comprehensive context for daily recap"""
-    try:
-        context = {
-            'recent_history': [],
-            'alliance_developments': [],
-            'prediction_context': {},
-            'game_phase': 'mid_game',
-            'recent_storylines': [],
-            'weekly_themes': []
-        }
-        
-        # Get recent days' headlines for storyline continuity
-        if day_number > 1:
-            # Get last 3-7 days of major developments
-            days_back = min(7, day_number - 1)
-            end_time = datetime.now() - timedelta(days=1)  # Yesterday
-            start_time = end_time - timedelta(days=days_back)
-            
-            recent_updates = self.db.get_daily_updates(start_time, end_time)
-            
-            # Extract major storylines from recent days
-            if recent_updates:
-                major_updates = sorted(recent_updates, 
-                                     key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-                                     reverse=True)[:15]  # Top 15 most important
-                
-                context['recent_history'] = [
-                    {
-                        'day': (update.pub_date.date() - datetime(2025, 7, 1).date()).days + 1,
-                        'event': update.title[:100],
-                        'importance': self.analyzer.analyze_strategic_importance(update)
-                    }
-                    for update in major_updates
-                ]
-        
-        # Get alliance context
-        active_alliances = self.alliance_tracker.get_active_alliances()
-        recent_betrayals = self.alliance_tracker.get_recent_betrayals(days=5)
-        broken_alliances = self.alliance_tracker.get_recently_broken_alliances(days=7)
-        
-        context['alliance_developments'] = {
-            'active_count': len(active_alliances),
-            'strong_alliances': [a['name'] for a in active_alliances if a['confidence'] >= 70][:3],
-            'recent_betrayals': [b['description'] for b in recent_betrayals][:3],
-            'broken_alliances': [f"{a['name']} (broke {(datetime.now() - datetime.fromisoformat(a['broken_date'])).days}d ago)" 
-                               for a in broken_alliances][:2]
-        }
-        
-        # Determine game phase based on day number
-        if day_number <= 20:
-            context['game_phase'] = 'early_game'
-        elif day_number <= 50:
-            context['game_phase'] = 'mid_game'
-        elif day_number <= 70:
-            context['game_phase'] = 'jury_phase'
-        elif day_number <= 85:
-            context['game_phase'] = 'final_weeks'
-        else:
-            context['game_phase'] = 'finale_approach'
-        
-        # Get prediction context if available
         try:
-            # This would require adding a method to prediction_manager
-            # context['prediction_context'] = self.prediction_manager.get_current_season_context()
-            pass
-        except:
-            pass
-        
-        return context
-        
-    except Exception as e:
-        logger.error(f"Error gathering daily context: {e}")
-        return {'recent_history': [], 'alliance_developments': {}, 'game_phase': 'mid_game'}
+            await self.rate_limiter.wait_if_needed()
+            
+            # Prepare chronological update data
+            updates_data = []
+            for update in updates:
+                time_str = self._extract_correct_time(update)
+                updates_data.append({
+                    'time': time_str,
+                    'title': update.title,
+                    'description': update.description[:150] if update.description != update.title else ""
+                })
+            
+            # Create daily recap prompt
+            prompt = f"""You are the ultimate Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
 
-def _create_contextual_daily_prompt(self, updates_data: List[Dict], day_number: int, context_data: Dict) -> str:
-    """Create enhanced prompt with context for daily recap"""
-    
-    # Format recent history
-    recent_context = ""
-    if context_data.get('recent_history'):
-        recent_context = "RECENT STORYLINES (Last 7 days):\n"
-        for event in context_data['recent_history'][:10]:
-            recent_context += f"• Day {event['day']}: {event['event']}\n"
-        recent_context += "\n"
-    
-    # Format alliance context
-    alliance_context = ""
-    alliance_dev = context_data.get('alliance_developments', {})
-    if alliance_dev:
-        alliance_context = "ALLIANCE LANDSCAPE:\n"
-        if alliance_dev.get('strong_alliances'):
-            alliance_context += f"• Strong Alliances: {', '.join(alliance_dev['strong_alliances'])}\n"
-        if alliance_dev.get('recent_betrayals'):
-            alliance_context += f"• Recent Betrayals: {'; '.join(alliance_dev['recent_betrayals'])}\n"
-        if alliance_dev.get('broken_alliances'):
-            alliance_context += f"• Recently Broken: {'; '.join(alliance_dev['broken_alliances'])}\n"
-        alliance_context += "\n"
-    
-    # Format current day updates
-    updates_text = "\n".join([
-        f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "")
-        for u in updates_data
-    ])
-    
-    game_phase = context_data.get('game_phase', 'mid_game')
-    
-    prompt = f"""You are the ultimate Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number} with full context and storyline continuity.
+Analyze these {len(updates)} updates from the entire day (chronological order):
 
-{recent_context}{alliance_context}TODAY'S UPDATES (Day {day_number}) - IN CHRONOLOGICAL ORDER:
-{updates_text}
+{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
 
-GAME PHASE: {game_phase.replace('_', ' ').title()}
-
-Create a comprehensive daily recap that weaves today's events into the ongoing Big Brother narrative. Reference recent developments, continuing storylines, and alliance evolution.
-
-Provide your analysis in this EXACT JSON format:
+Create a comprehensive daily recap that tells the story of Day {day_number}:
 
 {{
-    "headline": "Day {day_number} headline that connects to ongoing storylines",
-    "narrative_summary": "5-6 sentence summary that references recent events and shows progression from previous days",
-    "storyline_continuations": "How today's events continue, resolve, or complicate recent storylines. Reference specific previous days when relevant.",
-    "strategic_evolution": "Strategic developments in context of recent alliance changes, betrayals, and power shifts",
-    "relationship_progressions": "How relationships (alliances, showmances, friendships) evolved today building on recent developments",
-    "entertainment_arc": "Memorable moments and drama, noting if this continues recent patterns or represents new developments",
-    "key_players_today": ["houseguests", "who", "were", "central", "to", "today"],
+    "headline": "Day {day_number} headline capturing the most significant storyline",
+    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+    "strategic_analysis": "Strategic developments - key conversations, alliance shifts, target changes, power dynamics",
+    "social_dynamics": "Alliance formations, trust shifts, betrayals, strategic partnerships throughout the day",
+    "entertainment_highlights": "Memorable moments, drama, funny interactions, personality conflicts from the day",
+    "key_players": ["houseguests", "who", "were", "central", "to", "the", "day"],
     "strategic_importance": 8,
-    "day_timeline": "Chronological overview of how today unfolded, noting connections to recent events",
-    "week_themes": "What broader weekly or multi-day themes are emerging",
-    "narrative_impact": "How today's events will likely impact future days and ongoing storylines",
-    "context_connections": "Specific references to previous days' events that are relevant to today's developments"
+    "house_culture": "Daily routines, inside jokes, traditions, or cultural moments that defined the day",
+    "relationship_updates": "Showmance developments, romantic moments, or relationship changes",
+    "day_timeline": "Brief chronological overview of how the day unfolded from morning to night"
 }}
 
-CRITICAL INSTRUCTIONS:
-- Reference specific previous days when relevant (e.g., "continuing the drama from Day {day_number-2}")
-- Show how today's alliances/betrayals connect to recent alliance landscape
-- Note if today represents escalation, resolution, or new development of ongoing storylines
-- Connect today's entertainment/drama to patterns or previous incidents
-- Consider the game phase context in your analysis
-- Make the recap feel like the next chapter in an ongoing story, not an isolated day"""
+Focus on creating a comprehensive daily story that captures the full arc of Day {day_number}. This should read like a daily diary entry for superfans."""
 
-    return prompt
+            # Make LLM request
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1500,  # Longer for daily recap
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            analysis = self._parse_llm_response(response.content[0].text)
+            
+            # Create daily recap embed
+            return self._create_daily_recap_embed(analysis, day_number, len(updates))
+            
+        except Exception as e:
+            logger.error(f"Daily recap LLM failed: {e}")
+            return self._create_pattern_daily_recap(updates, day_number)
+    
+    async def _create_chunked_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap by summarizing in chunks first"""
+        chunk_size = 25
+        chunks = [updates[i:i + chunk_size] for i in range(0, len(updates), chunk_size)]
+        
+        logger.info(f"Creating chunked daily recap: {len(chunks)} chunks of ~{chunk_size} updates each")
+        
+        # First pass: summarize each chunk
+        chunk_summaries = []
+        for i, chunk in enumerate(chunks):
+            if not await self._can_make_llm_request():
+                # Fall back to pattern analysis if rate limited
+                summary = self._summarize_chunk_pattern(chunk, i + 1)
+            else:
+                summary = await self._summarize_chunk_llm(chunk, i + 1)
+            
+            chunk_summaries.append(summary)
+        
+        # Second pass: create final daily recap from summaries
+        return await self._create_final_daily_recap(chunk_summaries, day_number, len(updates))
+    
+    async def _summarize_chunk_llm(self, chunk: List[BBUpdate], chunk_number: int) -> str:
+        """Summarize a chunk of updates using LLM"""
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            updates_text = "\n".join([
+                f"{self._extract_correct_time(u)} - {u.title}"
+                for u in chunk
+            ])
+            
+            prompt = f"""Summarize this chunk of Big Brother updates (Chunk {chunk_number}):
 
-def _create_contextual_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int, context_data: Dict) -> List[discord.Embed]:
-    """Create the contextual daily recap embed"""
-    
-    # Determine color based on game phase and importance
-    game_phase = context_data.get('game_phase', 'mid_game')
-    importance = analysis.get('strategic_importance', 5)
-    
-    phase_colors = {
-        'early_game': 0x3498db,    # Blue
-        'mid_game': 0x9b59b6,      # Purple  
-        'jury_phase': 0xe67e22,    # Orange
-        'final_weeks': 0xe74c3c,   # Red
-        'finale_approach': 0xf1c40f # Gold
-    }
-    
-    color = phase_colors.get(game_phase, 0x9b59b6)
-    
-    embed = discord.Embed(
-        title=f"📅 Day {day_number} Recap - {game_phase.replace('_', ' ').title()}",
-        description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('narrative_summary', 'Daily summary not available')}",
-        color=color,
-        timestamp=datetime.now()
-    )
-    
-    # Add storyline continuations (new contextual section)
-    if analysis.get('storyline_continuations'):
-        embed.add_field(
-            name="📖 Storyline Continuations",
-            value=analysis['storyline_continuations'],
-            inline=False
-        )
-    
-    # Add day timeline
-    if analysis.get('day_timeline'):
-        embed.add_field(
-            name="⏰ Day Timeline",
-            value=analysis['day_timeline'],
-            inline=False
-        )
-    
-    # Add strategic evolution (enhanced with context)
-    if analysis.get('strategic_evolution'):
-        embed.add_field(
-            name="🎯 Strategic Evolution",
-            value=analysis['strategic_evolution'],
-            inline=False
-        )
-    
-    # Add relationship progressions
-    if analysis.get('relationship_progressions'):
-        embed.add_field(
-            name="🤝 Relationship Progressions",
-            value=analysis['relationship_progressions'],
-            inline=False
-        )
-    
-    # Add entertainment arc
-    if analysis.get('entertainment_arc'):
-        embed.add_field(
-            name="🎬 Entertainment Arc",
-            value=analysis['entertainment_arc'],
-            inline=False
-        )
-    
-    # Add week themes (new contextual section)
-    if analysis.get('week_themes'):
-        embed.add_field(
-            name="📊 Week Themes",
-            value=analysis['week_themes'],
-            inline=False
-        )
-    
-    # Add narrative impact (new contextual section)
-    if analysis.get('narrative_impact'):
-        embed.add_field(
-            name="🔮 Narrative Impact",
-            value=analysis['narrative_impact'],
-            inline=False
-        )
-    
-    # Add key players
-    if analysis.get('key_players_today'):
-        players = analysis['key_players_today'][:8]
-        embed.add_field(
-            name="⭐ Key Players Today",
-            value=" • ".join([f"**{player}**" for player in players]),
-            inline=False
-        )
-    
-    # Add importance with context
-    importance = analysis.get('strategic_importance', 5)
-    importance_bar = "🔥" * min(importance, 10)
-    
-    # Add context indicators
-    context_indicators = []
-    alliance_dev = context_data.get('alliance_developments', {})
-    if alliance_dev.get('recent_betrayals'):
-        context_indicators.append("💔 Recent betrayals")
-    if alliance_dev.get('strong_alliances'):
-        context_indicators.append(f"🤝 {len(alliance_dev['strong_alliances'])} strong alliances")
-    
-    importance_text = f"{importance_bar} **{importance}/10**"
-    if context_indicators:
-        importance_text += f"\n*Context: {', '.join(context_indicators)}*"
-    
-    embed.add_field(
-        name="📊 Day Importance",
-        value=importance_text,
-        inline=True
-    )
-    
-    # Add game phase indicator
-    phase_emojis = {
-        'early_game': '🌱',
-        'mid_game': '⚡',
-        'jury_phase': '🏛️',
-        'final_weeks': '🔥',
-        'finale_approach': '👑'
-    }
-    
-    phase_emoji = phase_emojis.get(game_phase, '⚡')
-    embed.add_field(
-        name="🎮 Game Phase",
-        value=f"{phase_emoji} **{game_phase.replace('_', ' ').title()}**\nDay {day_number}",
-        inline=True
-    )
-    
-    embed.set_footer(text=f"Daily Recap • Day {day_number} • Contextual AI • {game_phase.replace('_', ' ').title()}")
-    
-    return [embed]
+{updates_text}
 
-# Update the main daily recap method to use context
-async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-    """Create a comprehensive daily recap from all updates WITH CONTEXT"""
-    if not updates:
-        return []
-    
-    logger.info(f"Creating contextual daily recap for {len(updates)} updates")
-    
-    # Check if we need to chunk the updates (too many for single LLM call)
-    if len(updates) > 50:
-        return await self._create_chunked_daily_recap_with_context(updates, day_number)
-    else:
-        return await self._create_single_daily_recap_with_context(updates, day_number)
+Provide a 2-3 sentence summary capturing the key strategic and social developments in this time period. Focus on the most important events and conversations."""
 
-async def _create_chunked_daily_recap_with_context(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-    """Create contextual daily recap by summarizing in chunks first"""
-    chunk_size = 25
-    chunks = [updates[i:i + chunk_size] for i in range(0, len(updates), chunk_size)]
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return f"**Chunk {chunk_number}**: {response.content[0].text}"
+            
+        except Exception as e:
+            logger.error(f"Chunk summarization failed: {e}")
+            return self._summarize_chunk_pattern(chunk, chunk_number)
     
-    logger.info(f"Creating chunked contextual daily recap: {len(chunks)} chunks")
+    def _summarize_chunk_pattern(self, chunk: List[BBUpdate], chunk_number: int) -> str:
+        """Summarize a chunk using pattern matching"""
+        # Group by importance and pick top updates
+        important_updates = sorted(
+            chunk, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:3]
+        
+        titles = [u.title[:60] + "..." if len(u.title) > 60 else u.title for u in important_updates]
+        return f"**Chunk {chunk_number}**: {' • '.join(titles)}"
     
-    # Gather context once for the whole day
-    context_data = await self._gather_daily_context(day_number)
-    
-    # First pass: summarize each chunk with context awareness
-    chunk_summaries = []
-    for i, chunk in enumerate(chunks):
-        if not await self._can_make_llm_request():
-            summary = self._summarize_chunk_pattern(chunk, i + 1)
-        else:
-            summary = await self._summarize_chunk_llm_with_context(chunk, i + 1, context_data)
+    async def _create_final_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create final daily recap from chunk summaries"""
+        if not self.llm_client or not await self._can_make_llm_request():
+            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
         
-        chunk_summaries.append(summary)
-    
-    # Second pass: create final contextual daily recap from summaries
-    return await self._create_final_contextual_daily_recap(chunk_summaries, day_number, len(updates), context_data)
+        try:
+            await self.rate_limiter.wait_if_needed()
+            
+            summaries_text = "\n\n".join(chunk_summaries)
+            
+            prompt = f"""Create a comprehensive Day {day_number} recap from these chunk summaries:
 
-async def _summarize_chunk_llm_with_context(self, chunk: List[BBUpdate], chunk_number: int, context_data: Dict) -> str:
-    """Summarize a chunk of updates using LLM with context awareness"""
-    try:
-        await self.rate_limiter.wait_if_needed()
-        
-        updates_text = "\n".join([
-            f"{self._extract_correct_time(u)} - {u.title}"
-            for u in chunk
-        ])
-        
-        # Add brief context for chunk summary
-        context_brief = ""
-        if context_data.get('recent_history'):
-            recent_events = [e['event'][:50] for e in context_data['recent_history'][:3]]
-            context_brief = f"Recent context: {'; '.join(recent_events)}\n\n"
-        
-        prompt = f"""Summarize this chunk of Big Brother updates (Chunk {chunk_number}) with awareness of recent storylines:
-
-{context_brief}{updates_text}
-
-Provide a 3-4 sentence summary that notes how these events connect to or continue recent developments. Reference ongoing storylines when relevant."""
-
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=300,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        return f"**Chunk {chunk_number}**: {response.content[0].text}"
-        
-    except Exception as e:
-        logger.error(f"Contextual chunk summarization failed: {e}")
-        return self._summarize_chunk_pattern(chunk, chunk_number)
-
-async def _create_final_contextual_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int, context_data: Dict) -> List[discord.Embed]:
-    """Create final contextual daily recap from chunk summaries"""
-    if not self.llm_client or not await self._can_make_llm_request():
-        return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
-    
-    try:
-        await self.rate_limiter.wait_if_needed()
-        
-        summaries_text = "\n\n".join(chunk_summaries)
-        
-        # Add context to final recap
-        context_brief = ""
-        if context_data.get('recent_history'):
-            context_brief = "RECENT CONTEXT:\n"
-            for event in context_data['recent_history'][:5]:
-                context_brief += f"• Day {event['day']}: {event['event'][:60]}\n"
-            context_brief += "\n"
-        
-        game_phase = context_data.get('game_phase', 'mid_game')
-        
-        prompt = f"""Create a comprehensive Day {day_number} recap with full storyline context from these chunk summaries:
-
-{context_brief}CHUNK SUMMARIES:
 {summaries_text}
 
-GAME PHASE: {game_phase.replace('_', ' ').title()}
+Create a daily recap that tells the story of Day {day_number} from these summaries:
 
-Create a contextual daily recap using the same JSON format as the single-day version, emphasizing storyline continuity and connections to recent events."""
+{{
+    "headline": "Day {day_number} headline capturing the most significant storyline",
+    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+    "strategic_analysis": "Strategic developments throughout the day",
+    "social_dynamics": "Alliance and relationship dynamics",
+    "entertainment_highlights": "Memorable moments and drama",
+    "key_players": ["main", "houseguests", "from", "the", "day"],
+    "strategic_importance": 8,
+    "house_culture": "Daily culture and routine moments",
+    "relationship_updates": "Showmance and relationship developments",
+    "day_timeline": "How the day unfolded chronologically"
+}}
 
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=1500,
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
+Focus on creating a cohesive daily story from these summaries."""
+
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=1200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            analysis = self._parse_llm_response(response.content[0].text)
+            return self._create_daily_recap_embed(analysis, day_number, total_updates)
+            
+        except Exception as e:
+            logger.error(f"Final daily recap failed: {e}")
+            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+    
+    def _create_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int) -> List[discord.Embed]:
+        """Create the daily recap embed"""
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('summary', 'Daily summary not available')}",
+            color=0x9b59b6,  # Purple for daily recaps
+            timestamp=datetime.now()
         )
         
-        analysis = self._parse_llm_response(response.content[0].text)
-        return self._create_contextual_daily_recap_embed(analysis, day_number, total_updates, context_data)
+        # Add timeline if available
+        if analysis.get('day_timeline'):
+            embed.add_field(
+                name="📖 Day Timeline",
+                value=analysis['day_timeline'],
+                inline=False
+            )
         
-    except Exception as e:
-        logger.error(f"Final contextual daily recap failed: {e}")
-        return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+        # Add strategic analysis
+        if analysis.get('strategic_analysis'):
+            embed.add_field(
+                name="🎯 Strategic Developments",
+                value=analysis['strategic_analysis'],
+                inline=False
+            )
+        
+        # Add other sections
+        if analysis.get('social_dynamics'):
+            embed.add_field(
+                name="🤝 Alliance Dynamics",
+                value=analysis['social_dynamics'],
+                inline=False
+            )
+        
+        if analysis.get('entertainment_highlights'):
+            embed.add_field(
+                name="🎬 Day Highlights",
+                value=analysis['entertainment_highlights'],
+                inline=False
+            )
+        
+        if analysis.get('relationship_updates'):
+            embed.add_field(
+                name="💕 Showmance Updates",
+                value=analysis['relationship_updates'],
+                inline=False
+            )
+        
+        if analysis.get('house_culture'):
+            embed.add_field(
+                name="🏠 House Culture",
+                value=analysis['house_culture'],
+                inline=False
+            )
+        
+        # Add key players
+        if analysis.get('key_players'):
+            players = analysis['key_players'][:8]
+            embed.add_field(
+                name="⭐ Key Players of the Day",
+                value=" • ".join(players),
+                inline=False
+            )
+        
+        # Add importance
+        importance = analysis.get('strategic_importance', 5)
+        importance_bar = "🔥" * min(importance, 10)
+        embed.add_field(
+            name="📊 Day Importance",
+            value=f"{importance_bar} {importance}/10",
+            inline=True
+        )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • BB Superfan AI")
+        
+        return [embed]
+    
+    def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create daily recap using pattern matching"""
+        # Analyze updates by importance
+        important_updates = sorted(
+            updates, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:10]  # Top 10 most important
+        
+        # Group by categories
+        categories = defaultdict(list)
+        for update in important_updates:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{len(updates)} updates** • Pattern-based daily summary",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Add top moments
+        top_moments = []
+        for update in important_updates[:5]:
+            time_str = self._extract_correct_time(update)
+            title = update.title[:80] + "..." if len(update.title) > 80 else update.title
+            top_moments.append(f"**{time_str}**: {title}")
+        
+        if top_moments:
+            embed.add_field(
+                name="🎯 Top Moments of the Day",
+                value="\n".join(top_moments),
+                inline=False
+            )
+        
+        # Add categories
+        for category, cat_updates in categories.items():
+            if cat_updates:
+                summary = f"{len(cat_updates)} updates in this category"
+                embed.add_field(
+                    name=f"{category}",
+                    value=summary,
+                    inline=True
+                )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
+        
+        return [embed]
+    
+    def _create_pattern_daily_recap_from_summaries(self, summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create pattern-based daily recap from summaries"""
+        embed = discord.Embed(
+            title=f"📅 Day {day_number} Recap",
+            description=f"**{total_updates} updates** • Chunked summary analysis",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        # Add chunk summaries
+        summary_text = "\n\n".join(summaries)
+        if len(summary_text) > 1000:
+            summary_text = summary_text[:997] + "..."
+        
+        embed.add_field(
+            name="📝 Daily Summary",
+            value=summary_text,
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
+        
+        return [embed]
 
 # Add these methods to your UpdateBatcher class
 
