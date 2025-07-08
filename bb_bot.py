@@ -1639,8 +1639,8 @@ class PredictionManager:
             conn.close()
     
     def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int]:
-        """Resolve a prediction and award points with better error handling"""
-        conn = self.get_connection()
+    """Resolve a prediction and award points with better error handling"""
+    conn = self.get_connection()
     
     try:
         # Set busy timeout for this connection
@@ -1692,11 +1692,11 @@ class PredictionManager:
             try:
                 if user_option == correct_option:
                     # Award points to correct predictors
-                    await self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
+                    self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
                     correct_users += 1
                 else:
                     # Update stats for incorrect predictors
-                    await self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
+                    self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
             except Exception as e:
                 logger.error(f"Error updating leaderboard for user {user_id}: {e}")
                 # Continue processing other users even if one fails
