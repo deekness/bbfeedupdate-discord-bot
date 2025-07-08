@@ -281,6 +281,14 @@ PG13_ZINGS = [
 ALL_ZINGS = PG_ZINGS + PG13_ZINGS
 
 # Game-specific constants
+# Add this with your other constants (around line 50-100)
+BB27_HOUSEGUESTS = [
+    "Angela", "Brooklyn", "Cam", "Cedric", "Chelsie", "Joseph", "Kimo", 
+    "Leah", "Makensy", "Quinn", "Rubina", "T'Kor", "Tucker"
+    # Replace these with your actual 20 houseguests
+    # "Name14", "Name15", "Name16", "Name17", "Name18", "Name19", "Name20"
+]
+
 COMPETITION_KEYWORDS = [
     'hoh', 'head of household', 'power of veto', 'pov', 'nomination', 
     'eviction', 'ceremony', 'competition', 'challenge', 'immunity'
@@ -3939,6 +3947,126 @@ class BBDatabase:
             logger.error(f"Database query error: {e}")
             return []
 
+class HouseguestSelectionView(discord.ui.View):
+    def __init__(self, prediction_type, duration_hours, week_number, title, description, prediction_manager, config):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.prediction_type = prediction_type
+        self.duration_hours = duration_hours
+        self.week_number = week_number
+        self.poll_title = title
+        self.poll_description = description
+        self.prediction_manager = prediction_manager
+        self.config = config
+        self.selected_houseguests = []
+        
+        # Add the select dropdown
+        self.add_item(HouseguestSelect())
+    
+    async def create_poll(self, interaction: discord.Interaction):
+        """Create the poll with selected houseguests"""
+        if len(self.selected_houseguests) < 2:
+            await interaction.response.send_message(
+                "Please select at least 2 houseguests for the poll.", 
+                ephemeral=True
+            )
+            return
+        
+        try:
+            pred_type = PredictionType(self.prediction_type)
+            prediction_id = self.prediction_manager.create_prediction(
+                title=self.poll_title,
+                description=self.poll_description,
+                prediction_type=pred_type,
+                options=self.selected_houseguests,
+                created_by=interaction.user.id,
+                guild_id=interaction.guild.id,
+                duration_hours=self.duration_hours,
+                week_number=self.week_number
+            )
+            
+            # Create success embed
+            prediction_data = {
+                'id': prediction_id,
+                'title': self.poll_title,
+                'description': self.poll_description,
+                'type': self.prediction_type,
+                'options': self.selected_houseguests,
+                'closes_at': datetime.now() + timedelta(hours=self.duration_hours),
+                'week_number': self.week_number
+            }
+            
+            embed = self.prediction_manager.create_prediction_embed(prediction_data)
+            embed.color = 0x2ecc71
+            embed.title = f"✅ Poll Created - {embed.title}"
+            
+            await interaction.response.edit_message(
+                content=f"Poll created successfully! ID: {prediction_id}",
+                embed=embed,
+                view=None  # Remove the view
+            )
+            
+            # Announce in main channel
+            if self.config.get('update_channel_id'):
+                channel = interaction.client.get_channel(self.config.get('update_channel_id'))
+                if channel:
+                    announce_embed = self.prediction_manager.create_prediction_embed(prediction_data)
+                    announce_embed.title = f"🗳️ New Prediction Poll - {self.poll_title}"
+                    await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
+            
+        except Exception as e:
+            logger.error(f"Error creating poll: {e}")
+            await interaction.response.send_message("Error creating poll. Please try again.", ephemeral=True)
+
+class HouseguestSelect(discord.ui.Select):
+    def __init__(self):
+        # Create options for the select menu (max 25 options)
+        options = [
+            discord.SelectOption(
+                label=houseguest,
+                value=houseguest,
+                emoji="👤"
+            ) for houseguest in BB27_HOUSEGUESTS
+        ]
+        
+        super().__init__(
+            placeholder="Select houseguests for the poll...",
+            min_values=2,
+            max_values=len(BB27_HOUSEGUESTS),  # Allow selecting all houseguests
+            options=options
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Update the selected houseguests
+        self.view.selected_houseguests = self.values
+        
+        # Update the embed to show selected houseguests
+        embed = discord.Embed(
+            title=f"Creating Poll: {self.view.poll_title}",
+            description=f"**Selected Houseguests ({len(self.values)}):**\n{', '.join(self.values)}",
+            color=0x3498db
+        )
+        
+        # Add create poll button
+        if len(self.values) >= 2:
+            create_button = CreatePollButton()
+            # Check if button already exists
+            button_exists = any(isinstance(child, CreatePollButton) for child in self.view.children)
+            if not button_exists:
+                self.view.add_item(create_button)
+        
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+class CreatePollButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.success,
+            label="Create Poll",
+            emoji="✅"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        await self.view.create_poll(interaction)
+
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
     
@@ -4541,7 +4669,6 @@ class BBDiscordBot(commands.Bot):
         @self.tree.command(name="createpoll", description="Create a prediction poll (Admin only)")
         @discord.app_commands.describe(
             prediction_type="Type of prediction",
-            options="All options separated by | (e.g., 'Alice|Bob|Charlie|David')",
             duration_hours="How long the poll stays open (hours)",
             week_number="Week number (required for weekly predictions, ignored for season winner)"
         )
@@ -4553,16 +4680,15 @@ class BBDiscordBot(commands.Bot):
         ])
         async def createpoll_slash(interaction: discord.Interaction, 
                                   prediction_type: discord.app_commands.Choice[str],
-                                  options: str,
                                   duration_hours: int,
                                   week_number: int = None):
-            """Create a prediction poll with auto-generated title and description"""
+            """Create a prediction poll with interactive houseguest selection"""
             try:
                 if not interaction.user.guild_permissions.administrator:
                     await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
                     return
                 
-                if duration_hours < 1 or duration_hours > 168:  # Max 1 week
+                if duration_hours < 1 or duration_hours > 168:
                     await interaction.response.send_message("Duration must be between 1 and 168 hours.", ephemeral=True)
                     return
                 
@@ -4573,11 +4699,11 @@ class BBDiscordBot(commands.Bot):
                         await interaction.response.send_message("Week number is required for weekly predictions and must be 1 or greater.", ephemeral=True)
                         return
                 
-                # Auto-generate title and description based on prediction type
+                # Auto-generate title and description
                 if pred_type_value == "season_winner":
                     title = "Season Winner"
                     description = "Season 27"
-                    week_number = None  # Not applicable for season winner
+                    week_number = None
                 elif pred_type_value == "weekly_hoh":
                     title = f"Week {week_number} HOH"
                     description = f"Week {week_number}"
@@ -4591,137 +4717,101 @@ class BBDiscordBot(commands.Bot):
                     await interaction.response.send_message("Invalid prediction type.", ephemeral=True)
                     return
                 
-                # Parse options from the pipe-separated string
-                option_list = [opt.strip() for opt in options.split('|') if opt.strip()]
+                # Create the view with houseguest selection
+                view = HouseguestSelectionView(
+                    prediction_type=pred_type_value,
+                    duration_hours=duration_hours,
+                    week_number=week_number,
+                    title=title,
+                    description=description,
+                    prediction_manager=self.prediction_manager,
+                    config=self.config
+                )
                 
-                if len(option_list) < 2:
-                    await interaction.response.send_message("You need at least 2 options. Separate them with | (e.g., 'Alice|Bob|Charlie')", ephemeral=True)
-                    return
+                embed = discord.Embed(
+                    title=f"Creating Poll: {title}",
+                    description="Please select the houseguests for this poll using the dropdown below.",
+                    color=0x3498db
+                )
                 
-                if len(option_list) > 25:  # Discord embed field limit
-                    await interaction.response.send_message("Maximum 25 options allowed.", ephemeral=True)
-                    return
+                embed.add_field(name="Poll Type", value=prediction_type.name, inline=True)
+                embed.add_field(name="Duration", value=f"{duration_hours} hours", inline=True)
+                if week_number:
+                    embed.add_field(name="Week", value=str(week_number), inline=True)
                 
-                await interaction.response.defer(ephemeral=True)
-                
-                try:
-                    pred_type = PredictionType(pred_type_value)
-                    prediction_id = self.prediction_manager.create_prediction(
-                        title=title,
-                        description=description,
-                        prediction_type=pred_type,
-                        options=option_list,
-                        created_by=interaction.user.id,
-                        guild_id=interaction.guild.id,
-                        duration_hours=duration_hours,
-                        week_number=week_number
-                    )
-                    
-                    # Create embed to show the created poll
-                    prediction_data = {
-                        'id': prediction_id,
-                        'title': title,
-                        'description': description,
-                        'type': pred_type_value,
-                        'options': option_list,
-                        'closes_at': datetime.now() + timedelta(hours=duration_hours),
-                        'week_number': week_number
-                    }
-                    
-                    embed = self.prediction_manager.create_prediction_embed(prediction_data)
-                    embed.color = 0x2ecc71  # Green for newly created
-                    embed.title = f"✅ Poll Created - {embed.title}"
-                    
-                    await interaction.followup.send(
-                        f"Poll created successfully! ID: {prediction_id}\n"
-                        f"**Title:** {title}\n**Description:** {description}",
-                        embed=embed,
-                        ephemeral=True
-                    )
-                    
-                    # Optionally announce in the main channel
-                    if self.config.get('update_channel_id'):
-                        channel = self.get_channel(self.config.get('update_channel_id'))
-                        if channel:
-                            announce_embed = self.prediction_manager.create_prediction_embed(prediction_data)
-                            announce_embed.title = f"🗳️ New Prediction Poll - {title}"
-                            await channel.send("📢 **New Prediction Poll Created!**", embed=announce_embed)
-                    
-                except Exception as e:
-                    logger.error(f"Error creating poll: {e}")
-                    await interaction.followup.send("Error creating poll. Please try again.", ephemeral=True)
+                await interaction.response.send_message(embed=embed, view=view, ephemeral=True)
                 
             except Exception as e:
                 logger.error(f"Error in createpoll command: {e}")
                 if not interaction.response.is_done():
                     await interaction.response.send_message("Error creating poll.", ephemeral=True)
-
-        @self.tree.command(name="predict", description="Make a prediction on an active poll")
-        @discord.app_commands.describe(
-            prediction_id="ID of the prediction poll",
-            option="Your prediction choice"
-        )
-        async def predict_slash(interaction: discord.Interaction, prediction_id: int, option: str):
-            """Make a prediction"""
-            try:
-                await interaction.response.defer(ephemeral=True)
-                
-                success = self.prediction_manager.make_prediction(
-                    user_id=interaction.user.id,
-                    prediction_id=prediction_id,
-                    option=option
-                )
-                
-                if success:
-                    await interaction.followup.send(
-                        f"✅ Prediction recorded: **{option}**\n"
-                        f"You can change your prediction anytime before the poll closes.",
-                        ephemeral=True
-                    )
-                else:
-                    await interaction.followup.send(
-                        "❌ Could not record prediction. The poll may be closed, invalid, or your option is not valid.",
-                        ephemeral=True
-                    )
-                
-            except Exception as e:
-                logger.error(f"Error making prediction: {e}")
-                await interaction.followup.send("Error making prediction.", ephemeral=True)
-
-        @self.tree.command(name="polls", description="View active prediction polls")
-        async def polls_slash(interaction: discord.Interaction):
-            """View active polls"""
-            try:
-                await interaction.response.defer()
-                
-                active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
-                
-                if not active_predictions:
-                    embed = discord.Embed(
-                        title="📊 Active Prediction Polls",
-                        description="No active polls right now.",
-                        color=0x95a5a6
-                    )
-                    await interaction.followup.send(embed=embed)
-                    return
-                
-                # Show up to 5 active polls
-                for prediction in active_predictions[:5]:
-                    user_prediction = self.prediction_manager.get_user_prediction(
-                        interaction.user.id, prediction['id']
+    
+            @self.tree.command(name="predict", description="Make a prediction on an active poll")
+            @discord.app_commands.describe(
+                prediction_id="ID of the prediction poll",
+                option="Your prediction choice"
+            )
+            async def predict_slash(interaction: discord.Interaction, prediction_id: int, option: str):
+                """Make a prediction"""
+                try:
+                    await interaction.response.defer(ephemeral=True)
+                    
+                    success = self.prediction_manager.make_prediction(
+                        user_id=interaction.user.id,
+                        prediction_id=prediction_id,
+                        option=option
                     )
                     
-                    embed = self.prediction_manager.create_prediction_embed(prediction, user_prediction)
-                    await interaction.followup.send(embed=embed)
-                
-                if len(active_predictions) > 5:
-                    await interaction.followup.send(
-                        f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict <id> <option>` to vote.*"
-                    )
-                
-            except Exception as e:
-                logger.error(f"Error showing polls: {e}")
-                await interaction.followup.send("Error retrieving polls.")
+                    if success:
+                        await interaction.followup.send(
+                            f"✅ Prediction recorded: **{option}**\n"
+                            f"You can change your prediction anytime before the poll closes.",
+                            ephemeral=True
+                        )
+                    else:
+                        await interaction.followup.send(
+                            "❌ Could not record prediction. The poll may be closed, invalid, or your option is not valid.",
+                            ephemeral=True
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Error making prediction: {e}")
+                    await interaction.followup.send("Error making prediction.", ephemeral=True)
+    
+            @self.tree.command(name="polls", description="View active prediction polls")
+            async def polls_slash(interaction: discord.Interaction):
+                """View active polls"""
+                try:
+                    await interaction.response.defer()
+                    
+                    active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
+                    
+                    if not active_predictions:
+                        embed = discord.Embed(
+                            title="📊 Active Prediction Polls",
+                            description="No active polls right now.",
+                            color=0x95a5a6
+                        )
+                        await interaction.followup.send(embed=embed)
+                        return
+                    
+                    # Show up to 5 active polls
+                    for prediction in active_predictions[:5]:
+                        user_prediction = self.prediction_manager.get_user_prediction(
+                            interaction.user.id, prediction['id']
+                        )
+                        
+                        embed = self.prediction_manager.create_prediction_embed(prediction, user_prediction)
+                        await interaction.followup.send(embed=embed)
+                    
+                    if len(active_predictions) > 5:
+                        await interaction.followup.send(
+                            f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict <id> <option>` to vote.*"
+                        )
+                    
+                except Exception as e:
+                    logger.error(f"Error showing polls: {e}")
+                    await interaction.followup.send("Error retrieving polls.")
 
         @self.tree.command(name="closepoll", description="Manually close a prediction poll (Admin only)")
         @discord.app_commands.describe(prediction_id="ID of the poll to close")
