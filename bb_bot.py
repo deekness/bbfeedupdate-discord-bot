@@ -381,6 +381,7 @@ class AllianceEventType(Enum):
 # Prediction system enums
 class PredictionType(Enum):
     SEASON_WINNER = "season_winner"
+    FIRST_BOOT = "first_boot" 
     WEEKLY_HOH = "weekly_hoh"
     WEEKLY_VETO = "weekly_veto"
     WEEKLY_EVICTION = "weekly_eviction"
@@ -1471,6 +1472,7 @@ class PredictionManager:
     # Point values for each prediction type
     POINT_VALUES = {
         PredictionType.SEASON_WINNER: 20,
+        PredictionType.FIRST_BOOT: 10,
         PredictionType.WEEKLY_HOH: 5,
         PredictionType.WEEKLY_VETO: 3,
         PredictionType.WEEKLY_EVICTION: 2
@@ -2036,6 +2038,7 @@ class PredictionManager:
         """Create Discord embed for a prediction"""
         pred_type_names = {
             'season_winner': '👑 Season Winner',
+            'first_boot': '👢 First Boot - Womp Womp',
             'weekly_hoh': '🏆 Weekly HOH',
             'weekly_veto': '💎 Weekly Veto',
             'weekly_eviction': '🚪 Weekly Eviction'
@@ -5643,6 +5646,7 @@ class BBDiscordBot(commands.Bot):
         )
         @discord.app_commands.choices(prediction_type=[
             discord.app_commands.Choice(name="👑 Season Winner", value="season_winner"),
+            discord.app_commands.Choice(name="👢 First Boot - Womp Womp", value="first_boot"),
             discord.app_commands.Choice(name="🏆 Weekly HOH", value="weekly_hoh"),
             discord.app_commands.Choice(name="💎 Weekly Veto", value="weekly_veto"),
             discord.app_commands.Choice(name="🚪 Weekly Eviction", value="weekly_eviction")
@@ -5663,7 +5667,7 @@ class BBDiscordBot(commands.Bot):
                 
                 # Validate week_number for weekly predictions
                 pred_type_value = prediction_type.value
-                if pred_type_value != "season_winner":
+                if pred_type_value not in ["season_winner", "first_boot"]:  # Update this line
                     if week_number is None or week_number < 1:
                         await interaction.response.send_message("Week number is required for weekly predictions and must be 1 or greater.", ephemeral=True)
                         return
@@ -5671,6 +5675,10 @@ class BBDiscordBot(commands.Bot):
                 # Auto-generate title and description
                 if pred_type_value == "season_winner":
                     title = "Season Winner"
+                    description = "Season 27"
+                    week_number = None
+                elif pred_type_value == "first_boot":  # Add this block
+                    title = "First Boot - Womp Womp"
                     description = "Season 27"
                     week_number = None
                 elif pred_type_value == "weekly_hoh":
