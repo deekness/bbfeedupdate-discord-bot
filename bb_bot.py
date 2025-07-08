@@ -3956,6 +3956,7 @@ class BBDiscordBot(commands.Bot):
         intents = discord.Intents.default()
         intents.message_content = True
         intents.guilds = True
+        intents.members = True
         super().__init__(command_prefix='!bb', intents=intents)
         
         self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
