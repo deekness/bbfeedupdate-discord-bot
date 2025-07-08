@@ -2568,7 +2568,7 @@ CRITICAL INSTRUCTIONS:
         
         # Prepare update data
         updates_text = "\n".join([
-            f"{self._extract_correct_time(u)} - {u.title}"
+            f"{self._extract_correct_time(u)} - {re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', u.title)}"
             for u in self.highlights_queue
         ])
         
