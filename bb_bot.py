@@ -1794,8 +1794,7 @@ class PredictionManager:
             finally:
                 if conn:
                     conn.close()
-    
-    def get_active_predictions(self, guild_id: int) -> List[Dict]:
+
     
     def get_active_predictions(self, guild_id: int) -> List[Dict]:
         """Get all active predictions for a guild"""
