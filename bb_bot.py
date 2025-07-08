@@ -4744,73 +4744,73 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error in createpoll command: {e}")
                 if not interaction.response.is_done():
                     await interaction.response.send_message("Error creating poll.", ephemeral=True)
-    
-            @self.tree.command(name="predict", description="Make a prediction on an active poll")
-            @discord.app_commands.describe(
-                prediction_id="ID of the prediction poll",
-                option="Your prediction choice"
-            )
-            async def predict_slash(interaction: discord.Interaction, prediction_id: int, option: str):
-                """Make a prediction"""
-                try:
-                    await interaction.response.defer(ephemeral=True)
-                    
-                    success = self.prediction_manager.make_prediction(
-                        user_id=interaction.user.id,
-                        prediction_id=prediction_id,
-                        option=option
+
+        @self.tree.command(name="predict", description="Make a prediction on an active poll")
+        @discord.app_commands.describe(
+            prediction_id="ID of the prediction poll",
+            option="Your prediction choice"
+        )
+        async def predict_slash(interaction: discord.Interaction, prediction_id: int, option: str):
+            """Make a prediction"""
+            try:
+                await interaction.response.defer(ephemeral=True)
+                
+                success = self.prediction_manager.make_prediction(
+                    user_id=interaction.user.id,
+                    prediction_id=prediction_id,
+                    option=option
+                )
+                
+                if success:
+                    await interaction.followup.send(
+                        f"✅ Prediction recorded: **{option}**\n"
+                        f"You can change your prediction anytime before the poll closes.",
+                        ephemeral=True
+                    )
+                else:
+                    await interaction.followup.send(
+                        "❌ Could not record prediction. The poll may be closed, invalid, or your option is not valid.",
+                        ephemeral=True
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error making prediction: {e}")
+                await interaction.followup.send("Error making prediction.", ephemeral=True)
+
+        @self.tree.command(name="polls", description="View active prediction polls")
+        async def polls_slash(interaction: discord.Interaction):
+            """View active polls"""
+            try:
+                await interaction.response.defer()
+                
+                active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
+                
+                if not active_predictions:
+                    embed = discord.Embed(
+                        title="📊 Active Prediction Polls",
+                        description="No active polls right now.",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                # Show up to 5 active polls
+                for prediction in active_predictions[:5]:
+                    user_prediction = self.prediction_manager.get_user_prediction(
+                        interaction.user.id, prediction['id']
                     )
                     
-                    if success:
-                        await interaction.followup.send(
-                            f"✅ Prediction recorded: **{option}**\n"
-                            f"You can change your prediction anytime before the poll closes.",
-                            ephemeral=True
-                        )
-                    else:
-                        await interaction.followup.send(
-                            "❌ Could not record prediction. The poll may be closed, invalid, or your option is not valid.",
-                            ephemeral=True
-                        )
-                    
-                except Exception as e:
-                    logger.error(f"Error making prediction: {e}")
-                    await interaction.followup.send("Error making prediction.", ephemeral=True)
-    
-            @self.tree.command(name="polls", description="View active prediction polls")
-            async def polls_slash(interaction: discord.Interaction):
-                """View active polls"""
-                try:
-                    await interaction.response.defer()
-                    
-                    active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
-                    
-                    if not active_predictions:
-                        embed = discord.Embed(
-                            title="📊 Active Prediction Polls",
-                            description="No active polls right now.",
-                            color=0x95a5a6
-                        )
-                        await interaction.followup.send(embed=embed)
-                        return
-                    
-                    # Show up to 5 active polls
-                    for prediction in active_predictions[:5]:
-                        user_prediction = self.prediction_manager.get_user_prediction(
-                            interaction.user.id, prediction['id']
-                        )
-                        
-                        embed = self.prediction_manager.create_prediction_embed(prediction, user_prediction)
-                        await interaction.followup.send(embed=embed)
-                    
-                    if len(active_predictions) > 5:
-                        await interaction.followup.send(
-                            f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict <id> <option>` to vote.*"
-                        )
-                    
-                except Exception as e:
-                    logger.error(f"Error showing polls: {e}")
-                    await interaction.followup.send("Error retrieving polls.")
+                    embed = self.prediction_manager.create_prediction_embed(prediction, user_prediction)
+                    await interaction.followup.send(embed=embed)
+                
+                if len(active_predictions) > 5:
+                    await interaction.followup.send(
+                        f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict <id> <option>` to vote.*"
+                    )
+                
+            except Exception as e:
+                logger.error(f"Error showing polls: {e}")
+                await interaction.followup.send("Error retrieving polls.")
 
         @self.tree.command(name="closepoll", description="Manually close a prediction poll (Admin only)")
         @discord.app_commands.describe(prediction_id="ID of the poll to close")
