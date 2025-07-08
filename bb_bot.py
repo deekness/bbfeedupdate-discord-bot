@@ -4347,6 +4347,314 @@ class BackToPollsButton(discord.ui.Button):
         
         await interaction.response.edit_message(embed=embed, view=self.view)
 
+class ResolvePollView(discord.ui.View):
+    def __init__(self, active_predictions, prediction_manager, admin_user_id, config):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.active_predictions = active_predictions
+        self.prediction_manager = prediction_manager
+        self.admin_user_id = admin_user_id
+        self.config = config
+        self.selected_prediction = None
+        
+        # Add the poll selection dropdown
+        self.add_item(ResolvePollSelect(active_predictions))
+    
+    async def show_options_for_resolution(self, interaction: discord.Interaction, selected_poll):
+        """Show the answer options for the chosen poll"""
+        self.selected_prediction = selected_poll
+        
+        # Remove the poll selector and add the answer options selector
+        self.clear_items()
+        self.add_item(AnswerOptionsSelect(selected_poll['options']))
+        self.add_item(ResolveConfirmButton())
+        self.add_item(BackToResolvePollsButton(self.active_predictions))
+        
+        # Create embed showing the selected poll details
+        embed = discord.Embed(
+            title=f"🎯 Resolve Poll: {selected_poll['title']}",
+            description=f"**Poll ID:** {selected_poll['id']}\n{selected_poll['description']}",
+            color=0xff9800
+        )
+        
+        # Get poll statistics
+        try:
+            conn = self.prediction_manager.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM user_predictions 
+                WHERE prediction_id = ?
+            """, (selected_poll['id'],))
+            
+            total_predictions = cursor.fetchone()[0]
+            conn.close()
+            
+        except Exception as e:
+            total_predictions = "Unknown"
+        
+        # Add poll info
+        embed.add_field(name="📊 Total Predictions", value=str(total_predictions), inline=True)
+        
+        pred_type_names = {
+            'season_winner': '👑 Season Winner',
+            'weekly_hoh': '🏆 Weekly HOH',
+            'weekly_veto': '💎 Weekly Veto',
+            'weekly_eviction': '🚪 Weekly Eviction'
+        }
+        type_name = pred_type_names.get(selected_poll['type'], selected_poll['type'])
+        embed.add_field(name="📋 Type", value=type_name, inline=True)
+        
+        if selected_poll.get('week_number'):
+            embed.add_field(name="📅 Week", value=f"Week {selected_poll['week_number']}", inline=True)
+        
+        # Show all options
+        options_text = "\n".join([f"• {option}" for option in selected_poll['options']])
+        embed.add_field(
+            name="🎯 Available Options",
+            value=options_text,
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💡 Instructions",
+            value="Select the correct answer from the dropdown below, then click 'Resolve Poll'",
+            inline=False
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class ResolvePollSelect(discord.ui.Select):
+    def __init__(self, active_predictions):
+        # Create options for polls that can be resolved (closed or active)
+        options = []
+        
+        for pred in active_predictions[:25]:  # Discord limit of 25 options
+            # Calculate time left or status
+            closes_at = pred['closes_at']
+            if isinstance(closes_at, str):
+                closes_at = datetime.fromisoformat(closes_at)
+            
+            time_left = closes_at - datetime.now()
+            if time_left.total_seconds() > 0:
+                hours_left = int(time_left.total_seconds() / 3600)
+                time_desc = f"({hours_left}h left)"
+            else:
+                time_desc = "(Closed)"
+            
+            # Create option label and description
+            label = f"{pred['title']}"
+            if len(label) > 100:  # Discord limit
+                label = label[:97] + "..."
+            
+            description = f"ID: {pred['id']} • {time_desc}"
+            if len(description) > 100:
+                description = description[:97] + "..."
+            
+            # Add emoji based on prediction type
+            emoji_map = {
+                'season_winner': '👑',
+                'weekly_hoh': '🏆',
+                'weekly_veto': '💎',
+                'weekly_eviction': '🚪'
+            }
+            emoji = emoji_map.get(pred['type'], '📊')
+            
+            options.append(discord.SelectOption(
+                label=label,
+                value=str(pred['id']),
+                description=description,
+                emoji=emoji
+            ))
+        
+        super().__init__(
+            placeholder="Select a poll to resolve...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        selected_poll_id = int(self.values[0])
+        
+        # Find the selected poll
+        selected_poll = None
+        for pred in self.view.active_predictions:
+            if pred['id'] == selected_poll_id:
+                selected_poll = pred
+                break
+        
+        if selected_poll:
+            await self.view.show_options_for_resolution(interaction, selected_poll)
+        else:
+            await interaction.response.send_message("Error: Poll not found", ephemeral=True)
+
+class AnswerOptionsSelect(discord.ui.Select):
+    def __init__(self, options):
+        # Create options for the correct answers
+        select_options = []
+        
+        for option in options[:25]:  # Discord limit of 25 options
+            select_options.append(discord.SelectOption(
+                label=option,
+                value=option,
+                emoji="🎯"
+            ))
+        
+        super().__init__(
+            placeholder="Select the correct answer...",
+            options=select_options,
+            min_values=1,
+            max_values=1
+        )
+        
+        self.selected_answer = None
+    
+    async def callback(self, interaction: discord.Interaction):
+        self.selected_answer = self.values[0]
+        
+        # Update the embed to show selection
+        embed = interaction.message.embeds[0]
+        
+        # Update or add the "Selected Answer" field
+        field_found = False
+        for i, field in enumerate(embed.fields):
+            if field.name == "✅ Selected Correct Answer":
+                embed.set_field_at(i, name="✅ Selected Correct Answer", value=self.selected_answer, inline=False)
+                field_found = True
+                break
+        
+        if not field_found:
+            embed.add_field(
+                name="✅ Selected Correct Answer",
+                value=self.selected_answer,
+                inline=False
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
+class ResolveConfirmButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label="Resolve Poll",
+            emoji="✅"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Find the answer selector to get the selected answer
+        answer_select = None
+        for item in self.view.children:
+            if isinstance(item, AnswerOptionsSelect):
+                answer_select = item
+                break
+        
+        if not answer_select or not answer_select.selected_answer:
+            await interaction.response.send_message(
+                "Please select the correct answer first!", 
+                ephemeral=True
+            )
+            return
+        
+        # Resolve the poll
+        success, correct_users = self.view.prediction_manager.resolve_prediction(
+            prediction_id=self.view.selected_prediction['id'],
+            correct_option=answer_select.selected_answer,
+            admin_user_id=self.view.admin_user_id
+        )
+        
+        if success:
+            embed = discord.Embed(
+                title="✅ Poll Resolved Successfully!",
+                description=f"**Poll:** {self.view.selected_prediction['title']}\n"
+                           f"**Correct Answer:** {answer_select.selected_answer}\n"
+                           f"**Winners:** {correct_users} users got it right and earned points! 🎉",
+                color=0x2ecc71
+            )
+            
+            # Calculate points awarded
+            from enum import Enum
+            point_values = {
+                'season_winner': 20,
+                'weekly_hoh': 5,
+                'weekly_veto': 3,
+                'weekly_eviction': 2
+            }
+            points_per_user = point_values.get(self.view.selected_prediction['type'], 5)
+            total_points = correct_users * points_per_user
+            
+            embed.add_field(
+                name="🏆 Points Awarded",
+                value=f"{points_per_user} points per correct prediction\n{total_points} total points distributed",
+                inline=False
+            )
+            
+            # Remove the view (disable buttons)
+            await interaction.response.edit_message(embed=embed, view=None)
+            
+            # Announce resolution in main channel
+            if self.view.config.get('update_channel_id'):
+                channel = interaction.client.get_channel(self.view.config.get('update_channel_id'))
+                if channel:
+                    public_embed = discord.Embed(
+                        title="🎯 Poll Results",
+                        description=f"**{self.view.selected_prediction['title']}**\n\n"
+                                   f"**Correct Answer:** {answer_select.selected_answer}\n"
+                                   f"🎉 **{correct_users} users** predicted correctly and earned {points_per_user} points each!",
+                        color=0x2ecc71
+                    )
+                    await channel.send(embed=public_embed)
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to resolve poll. There may have been an error.",
+                ephemeral=True
+            )
+
+class BackToResolvePollsButton(discord.ui.Button):
+    def __init__(self, active_predictions):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="Back to Polls",
+            emoji="⬅️"
+        )
+        self.active_predictions = active_predictions
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Reset view to poll selection
+        self.view.clear_items()
+        self.view.add_item(ResolvePollSelect(self.active_predictions))
+        self.view.selected_prediction = None
+        
+        embed = discord.Embed(
+            title="🎯 Resolve Prediction Poll",
+            description=f"**{len(self.active_predictions)} polls** available to resolve\nSelect a poll to resolve:",
+            color=0xff9800
+        )
+        
+        # Show poll summary again
+        poll_list = []
+        for pred in self.active_predictions[:5]:
+            closes_at = pred['closes_at']
+            if isinstance(closes_at, str):
+                closes_at = datetime.fromisoformat(closes_at)
+            
+            time_left = closes_at - datetime.now()
+            if time_left.total_seconds() > 0:
+                hours_left = int(time_left.total_seconds() / 3600)
+                time_str = f"{hours_left}h left"
+            else:
+                time_str = "Closed"
+            
+            poll_list.append(f"**{pred['title']}** - {time_str}")
+        
+        if poll_list:
+            embed.add_field(
+                name="Available Polls",
+                value="\n".join(poll_list),
+                inline=False
+            )
+        
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
     
@@ -5144,12 +5452,8 @@ class BBDiscordBot(commands.Bot):
                 await interaction.followup.send("Error closing poll.", ephemeral=True)
 
         @self.tree.command(name="resolvepoll", description="Resolve a poll and award points (Admin only)")
-        @discord.app_commands.describe(
-            prediction_id="ID of the poll to resolve",
-            correct_option="The correct answer"
-        )
-        async def resolvepoll_slash(interaction: discord.Interaction, prediction_id: int, correct_option: str):
-            """Resolve a poll and award points"""
+        async def resolvepoll_slash(interaction: discord.Interaction):
+            """Resolve a poll using interactive selection"""
             try:
                 if not interaction.user.guild_permissions.administrator:
                     await interaction.response.send_message("You need administrator permissions to resolve polls.", ephemeral=True)
@@ -5157,39 +5461,94 @@ class BBDiscordBot(commands.Bot):
                 
                 await interaction.response.defer(ephemeral=True)
                 
-                success, correct_users = self.prediction_manager.resolve_prediction(
-                    prediction_id, correct_option, interaction.user.id
+                # Get polls that can be resolved (both active and closed)
+                conn = self.prediction_manager.get_connection()
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT prediction_id, title, description, prediction_type, 
+                           options, closes_at, week_number, status
+                    FROM predictions 
+                    WHERE guild_id = ? AND status IN ('active', 'closed')
+                    ORDER BY closes_at DESC
+                """, (interaction.guild.id,))
+                
+                results = cursor.fetchall()
+                conn.close()
+                
+                if not results:
+                    embed = discord.Embed(
+                        title="📊 No Polls to Resolve",
+                        description="There are no active or closed polls that can be resolved.",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Convert to the format expected by the view
+                resolvable_predictions = []
+                for row in results:
+                    pred_id, title, desc, pred_type, options_json, closes_at, week_num, status = row
+                    resolvable_predictions.append({
+                        'id': pred_id,
+                        'title': title,
+                        'description': desc,
+                        'type': pred_type,
+                        'options': json.loads(options_json),
+                        'closes_at': closes_at,
+                        'week_number': week_num,
+                        'status': status
+                    })
+                
+                # Create the resolution view
+                view = ResolvePollView(
+                    active_predictions=resolvable_predictions,
+                    prediction_manager=self.prediction_manager,
+                    admin_user_id=interaction.user.id,
+                    config=self.config
                 )
                 
-                if success:
-                    embed = discord.Embed(
-                        title="✅ Poll Resolved",
-                        description=f"Poll {prediction_id} has been resolved.\n"
-                                   f"**Correct Answer:** {correct_option}\n"
-                                   f"**Winners:** {correct_users} users got it right!",
-                        color=0x2ecc71,
-                        timestamp=datetime.now()
+                embed = discord.Embed(
+                    title="🎯 Resolve Prediction Poll",
+                    description=f"**{len(resolvable_predictions)} polls** available to resolve\nSelect a poll to resolve:",
+                    color=0xff9800
+                )
+                
+                # Show a summary of resolvable polls
+                poll_list = []
+                for pred in resolvable_predictions[:5]:  # Show up to 5 polls
+                    closes_at = pred['closes_at']
+                    if isinstance(closes_at, str):
+                        closes_at = datetime.fromisoformat(closes_at)
+                    
+                    time_left = closes_at - datetime.now()
+                    if time_left.total_seconds() > 0:
+                        hours_left = int(time_left.total_seconds() / 3600)
+                        time_str = f"{hours_left}h left"
+                    else:
+                        time_str = "Closed"
+                    
+                    status_emoji = "🔴" if pred['status'] == 'closed' else "🟢"
+                    poll_list.append(f"{status_emoji} **{pred['title']}** - {time_str}")
+                
+                if poll_list:
+                    embed.add_field(
+                        name="Available Polls",
+                        value="\n".join(poll_list),
+                        inline=False
                     )
-                    
-                    await interaction.followup.send(embed=embed, ephemeral=True)
-                    
-                    # Announce resolution in main channel
-                    if self.config.get('update_channel_id'):
-                        channel = self.get_channel(self.config.get('update_channel_id'))
-                        if channel:
-                            public_embed = discord.Embed(
-                                title="🎯 Poll Results",
-                                description=f"**Correct Answer:** {correct_option}\n"
-                                           f"🎉 **{correct_users} users** predicted correctly and earned points!",
-                                color=0x2ecc71
-                            )
-                            await channel.send(embed=public_embed)
-                else:
-                    await interaction.followup.send(f"❌ Could not resolve poll {prediction_id}.", ephemeral=True)
+                
+                embed.add_field(
+                    name="💡 Note",
+                    value="🟢 = Active polls | 🔴 = Closed polls\nBoth can be resolved to award points.",
+                    inline=False
+                )
+                
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
                 
             except Exception as e:
-                logger.error(f"Error resolving poll: {e}")
-                await interaction.followup.send("Error resolving poll.", ephemeral=True)
+                logger.error(f"Error in resolvepoll command: {e}")
+                await interaction.followup.send("Error loading polls for resolution.", ephemeral=True)
 
         @self.tree.command(name="leaderboard", description="View prediction leaderboards")
         async def leaderboard_slash(interaction: discord.Interaction):
