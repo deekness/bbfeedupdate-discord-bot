@@ -615,8 +615,18 @@ class Config:
         return self.config.get(key, default)
     
     def set(self, key: str, value):
-        """Set configuration value"""
+        """Set configuration value and save to file"""
         self.config[key] = value
+        self.save_to_file()  # Add this line
+        
+    def save_to_file(self):
+        """Save current config to file"""
+        try:
+            with open(self.config_file, 'w') as f:
+                json.dump(self.config, f, indent=2)
+            logger.info("Configuration saved to file")
+        except Exception as e:
+            logger.error(f"Error saving config: {e}")
 
 @dataclass
 class BBUpdate:
