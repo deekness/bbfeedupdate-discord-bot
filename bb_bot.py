@@ -1641,76 +1641,78 @@ class PredictionManager:
     def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int]:
         """Resolve a prediction and award points with better error handling"""
         conn = self.get_connection()
+    
+    try:
+        # Set busy timeout for this connection
+        conn.execute("PRAGMA busy_timeout = 10000")  # 10 second timeout
+        cursor = conn.cursor()
         
+        # Get prediction details
+        cursor.execute("""
+            SELECT prediction_type, options, status, guild_id, week_number
+            FROM predictions WHERE prediction_id = ?
+        """, (prediction_id,))
+        
+        result = cursor.fetchone()
+        if not result:
+            return False, 0
+        
+        pred_type, options_json, status, guild_id, week_number = result
+        options = json.loads(options_json)
+        
+        # Validate correct option
+        if correct_option not in options:
+            return False, 0
+        
+        # Update prediction status
+        cursor.execute("""
+            UPDATE predictions 
+            SET status = ?, correct_option = ?
+            WHERE prediction_id = ?
+        """, (PredictionStatus.RESOLVED.value, correct_option, prediction_id))
+        
+        # Get all user predictions for this poll
+        cursor.execute("""
+            SELECT user_id, option FROM user_predictions 
+            WHERE prediction_id = ?
+        """, (prediction_id,))
+        
+        user_predictions = cursor.fetchall()
+        conn.commit()  # Commit the prediction resolution first
+        
+        # Calculate points for correct predictions
+        prediction_type = PredictionType(pred_type)
+        points = self.POINT_VALUES[prediction_type]
+        correct_users = 0
+        
+        current_week = week_number if week_number else self._get_current_week()
+        
+        # Process each user prediction separately to avoid holding locks too long
+        for user_id, user_option in user_predictions:
             try:
-                # Set busy timeout for this connection
-                conn.execute("PRAGMA busy_timeout = 10000")  # 10 second timeout
-                cursor = conn.cursor()
-                
-                # Get prediction details
-                cursor.execute("""
-                    SELECT prediction_type, options, status, guild_id, week_number
-                    FROM predictions WHERE prediction_id = ?
-                """, (prediction_id,))
-                
-                result = cursor.fetchone()
-                if not result:
-                    return False, 0
-                
-                pred_type, options_json, status, guild_id, week_number = result
-                options = json.loads(options_json)
-                
-                # Validate correct option
-                if correct_option not in options:
-                    return False, 0
-                
-                # Update prediction status
-                cursor.execute("""
-                    UPDATE predictions 
-                    SET status = ?, correct_option = ?
-                    WHERE prediction_id = ?
-                """, (PredictionStatus.RESOLVED.value, correct_option, prediction_id))
-                
-                # Get all user predictions for this poll
-                cursor.execute("""
-                    SELECT user_id, option FROM user_predictions 
-                    WHERE prediction_id = ?
-                """, (prediction_id,))
-                
-                user_predictions = cursor.fetchall()
-                conn.commit()  # Commit the prediction resolution first
-                
-                # Calculate points for correct predictions
-                prediction_type = PredictionType(pred_type)
-                points = self.POINT_VALUES[prediction_type]
-                correct_users = 0
-                
-                current_week = week_number if week_number else self._get_current_week()
-                
-                # Process each user prediction separately to avoid holding locks too long
-                for user_id, user_option in user_predictions:
-                    try:
-                        if user_option == correct_option:
-                            # Award points to correct predictors
-                            await self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
-                            correct_users += 1
-                        else:
-                            # Update stats for incorrect predictors
-                            await self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
-                    except Exception as e:
-                        logger.error(f"Error updating leaderboard for user {user_id}: {e}")
-                        # Continue processing other users even if one fails
-                        continue
-                
-                logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
-                return True, correct_users
-                
+                if user_option == correct_option:
+                    # Award points to correct predictors
+                    await self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
+                    correct_users += 1
+                else:
+                    # Update stats for incorrect predictors
+                    await self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
             except Exception as e:
-                logger.error(f"Error resolving prediction: {e}")
-                conn.rollback()
-                return False, 0
-            finally:
-                conn.close()
+                logger.error(f"Error updating leaderboard for user {user_id}: {e}")
+                # Continue processing other users even if one fails
+                continue
+        
+        logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
+        return True, correct_users
+        
+    except Exception as e:
+        logger.error(f"Error resolving prediction: {e}")
+        conn.rollback()
+        return False, 0
+    finally:
+        conn.close()
+        
+            
     
     def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
                       points: int, was_correct: bool, participated: bool):
