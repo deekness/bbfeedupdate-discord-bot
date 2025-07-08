@@ -4772,40 +4772,22 @@ class BBDiscordBot(commands.Bot):
                 await interaction.followup.send("Error resolving poll.", ephemeral=True)
 
         @self.tree.command(name="leaderboard", description="View prediction leaderboards")
-        @discord.app_commands.describe(
-            leaderboard_type="Type of leaderboard to view",
-            week_number="Week number for weekly leaderboard"
-        )
-        @discord.app_commands.choices(leaderboard_type=[
-            discord.app_commands.Choice(name="🏆 Season Leaderboard", value="season"),
-            discord.app_commands.Choice(name="📅 Weekly Leaderboard", value="weekly")
-        ])
-        async def leaderboard_slash(interaction: discord.Interaction, 
-                                   leaderboard_type: discord.app_commands.Choice[str],
-                                   week_number: int = None):
-            """View leaderboards"""
-            try:
-                await interaction.response.defer()
-                
-                if leaderboard_type.value == "season":
+            async def leaderboard_slash(interaction: discord.Interaction):
+                """View leaderboards"""
+                try:
+                    await interaction.response.defer()
+                    
+                    # Only show season leaderboard
                     leaderboard = self.prediction_manager.get_season_leaderboard(interaction.guild.id)
                     embed = await self.prediction_manager.create_leaderboard_embed(
                         leaderboard, interaction.guild, "Season"
                     )
-                else:
-                    leaderboard = self.prediction_manager.get_weekly_leaderboard(
-                        interaction.guild.id, week_number
-                    )
-                    week_text = f"Week {week_number}" if week_number else "Current Week"
-                    embed = await self.prediction_manager.create_leaderboard_embed(
-                        leaderboard, interaction.guild, week_text
-                    )
-                
-                await interaction.followup.send(embed=embed)
-                
-            except Exception as e:
-                logger.error(f"Error showing leaderboard: {e}")
-                await interaction.followup.send("Error retrieving leaderboard.")
+                    
+                    await interaction.followup.send(embed=embed)
+                    
+                except Exception as e:
+                    logger.error(f"Error showing leaderboard: {e}")
+                    await interaction.followup.send("Error retrieving leaderboard.")
 
         @self.tree.command(name="mypredictions", description="View your prediction history")
         async def mypredictions_slash(interaction: discord.Interaction):
