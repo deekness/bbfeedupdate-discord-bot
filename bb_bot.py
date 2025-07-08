@@ -4537,7 +4537,15 @@ class AnswerOptionsSelect(discord.ui.Select):
         
         await interaction.response.edit_message(embed=embed, view=self.view)
 
-async def callback(self, interaction: discord.Interaction):
+class ResolveConfirmButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label="Resolve Poll",
+            emoji="✅"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
         # Find the answer selector to get the selected answer
         answer_select = None
         for item in self.view.children:
@@ -4624,8 +4632,8 @@ async def callback(self, interaction: discord.Interaction):
                 "❌ Failed to resolve poll. There may have been an error.",
                 ephemeral=True
             )
-            
-def _get_correct_users(self, prediction_id, correct_answer, guild):
+
+    def _get_correct_users(self, prediction_id, correct_answer, guild):
         """Get list of users who predicted correctly with their display names"""
         try:
             conn = self.view.prediction_manager.get_connection()
@@ -4663,89 +4671,15 @@ def _get_correct_users(self, prediction_id, correct_answer, guild):
             logger.error(f"Error getting correct users: {e}")
             return []
     
-def _format_winners_list(self, correct_users_data):
-    """Format the winners list for display"""
-    if not correct_users_data:
-        return "No winners"
+    def _format_winners_list(self, correct_users_data):
+        """Format the winners list for display"""
+        if not correct_users_data:
+            return "No winners"
         
-    if len(correct_users_data) <= 10:
-        # Show all winners if 10 or fewer
-        winners = [user['display_name'] for user in correct_users_data]
-        return " • ".join([f"**{name}**" for name in winners])
-    else:
-        # Show first 8 winners plus count of remaining
-        displayed_winners = correct_users_data[:8]
-        remaining_count = len(correct_users_data) - 8
-            
-        winners_text = " • ".join([f"**{user['display_name']}**" for user in displayed_winners])
-        winners_text += f" • **+{remaining_count} more**"
-            
-        return winners_text
-    
-def _create_public_results_embed(self, prediction, correct_answer, correct_users_data, points_per_user):
-    """Create the public results embed for the main channel"""
-    embed = discord.Embed(
-        title="🎯 Poll Results",
-        description=f"**{prediction['title']}**",
-        color=0x2ecc71
-    )
-        
-    embed.add_field(
-        name="✅ Correct Answer",
-        value=correct_answer,
-        inline=True
-    )
-        
-    embed.add_field(
-        name="🏆 Points Earned",
-        value=f"{points_per_user} pts each",
-        inline=True
-    )
-        
-    if prediction.get('week_number'):
-        embed.add_field(
-            name="📅 Week",
-            value=f"Week {prediction['week_number']}",
-            inline=True
-        )
-        
-    # Add winners section
-    if correct_users_data:
-        if len(correct_users_data) == 1:
-            winner_text = f"🎉 **{correct_users_data[0]['display_name']}** got it right!"
-        elif len(correct_users_data) <= 5:
-            winner_names = [user['display_name'] for user in correct_users_data]
-            winner_text = f"🎉 **{', '.join(winner_names[:-1])} and {winner_names[-1]}** got it right!"
-        else:
-            # For many winners, show count and first few names
-            first_three = [user['display_name'] for user in correct_users_data[:3]]
-            remaining = len(correct_users_data) - 3
-            winner_text = f"🎉 **{len(correct_users_data)} users** got it right!\n"
-            winner_text += f"Including **{', '.join(first_three)}** and **{remaining} others**"
-            
-        embed.add_field(
-            name="🏆 Winners",
-            value=winner_text,
-            inline=False
-        )
-    else:
-        embed.add_field(
-            name="😢 No Winners",
-            value="No one predicted correctly this time!",
-            inline=False
-        )
-        
-    # Add total points distributed
-    total_points = len(correct_users_data) * points_per_user
-    embed.add_field(
-        name="📊 Summary",
-        value=f"**{len(correct_users_data)}** correct predictions\n**{total_points}** total points awarded",
-        inline=False
-    )
-        
-    embed.set_footer(text="Use /leaderboard to see current standings!")
-        
-    return embed
+        if len(correct_users_data) <= 10:
+            # Show all winners if 10 or fewer
+            winners = [user['display_name'] for user in correct_users_data]
+            return " •
 
 class BackToResolvePollsButton(discord.ui.Button):
     def __init__(self, active_predictions):
