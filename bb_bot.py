@@ -4655,6 +4655,254 @@ class BackToResolvePollsButton(discord.ui.Button):
         
         await interaction.response.edit_message(embed=embed, view=self.view)
 
+class ClosePollView(discord.ui.View):
+    def __init__(self, active_predictions, prediction_manager, admin_user_id):
+        super().__init__(timeout=300)  # 5 minute timeout
+        self.active_predictions = active_predictions
+        self.prediction_manager = prediction_manager
+        self.admin_user_id = admin_user_id
+        self.selected_prediction = None
+        
+        # Add the poll selection dropdown
+        self.add_item(ClosePollSelect(active_predictions))
+    
+    async def show_close_confirmation(self, interaction: discord.Interaction, selected_poll):
+        """Show confirmation for closing the selected poll"""
+        self.selected_prediction = selected_poll
+        
+        # Remove the poll selector and add confirmation button
+        self.clear_items()
+        self.add_item(ConfirmCloseButton())
+        self.add_item(BackToClosePollsButton(self.active_predictions))
+        
+        # Get poll statistics
+        try:
+            conn = self.prediction_manager.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM user_predictions 
+                WHERE prediction_id = ?
+            """, (selected_poll['id'],))
+            
+            total_predictions = cursor.fetchone()[0]
+            conn.close()
+            
+        except Exception as e:
+            total_predictions = "Unknown"
+        
+        # Create embed showing the selected poll details
+        embed = discord.Embed(
+            title=f"🔒 Close Poll: {selected_poll['title']}",
+            description=f"**Poll ID:** {selected_poll['id']}\n{selected_poll['description']}",
+            color=0xff6b35
+        )
+        
+        # Add timing info
+        closes_at = selected_poll['closes_at']
+        if isinstance(closes_at, str):
+            closes_at = datetime.fromisoformat(closes_at)
+        
+        time_left = closes_at - datetime.now()
+        if time_left.total_seconds() > 0:
+            hours_left = int(time_left.total_seconds() / 3600)
+            minutes_left = int((time_left.total_seconds() % 3600) / 60)
+            time_str = f"{hours_left}h {minutes_left}m remaining"
+        else:
+            time_str = "Already expired"
+        
+        embed.add_field(name="⏰ Original Time Left", value=time_str, inline=True)
+        embed.add_field(name="📊 Total Predictions", value=str(total_predictions), inline=True)
+        
+        pred_type_names = {
+            'season_winner': '👑 Season Winner',
+            'weekly_hoh': '🏆 Weekly HOH',
+            'weekly_veto': '💎 Weekly Veto',
+            'weekly_eviction': '🚪 Weekly Eviction'
+        }
+        type_name = pred_type_names.get(selected_poll['type'], selected_poll['type'])
+        embed.add_field(name="📋 Type", value=type_name, inline=True)
+        
+        if selected_poll.get('week_number'):
+            embed.add_field(name="📅 Week", value=f"Week {selected_poll['week_number']}", inline=True)
+        
+        # Show warning about what closing does
+        embed.add_field(
+            name="⚠️ What happens when you close this poll:",
+            value="• Users can no longer make or change predictions\n"
+                  "• The poll will be locked until you resolve it\n"
+                  "• You can still resolve it later with `/resolvepoll`\n"
+                  "• This action cannot be undone",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="💡 Instructions",
+            value="Click 'Close Poll' to confirm, or 'Back to Polls' to cancel",
+            inline=False
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self)
+
+class ClosePollSelect(discord.ui.Select):
+    def __init__(self, active_predictions):
+        # Create options for active polls only
+        options = []
+        
+        for pred in active_predictions[:25]:  # Discord limit of 25 options
+            # Calculate time left
+            closes_at = pred['closes_at']
+            if isinstance(closes_at, str):
+                closes_at = datetime.fromisoformat(closes_at)
+            
+            time_left = closes_at - datetime.now()
+            if time_left.total_seconds() > 0:
+                hours_left = int(time_left.total_seconds() / 3600)
+                time_desc = f"({hours_left}h left)"
+            else:
+                time_desc = "(Expired)"
+            
+            # Create option label and description
+            label = f"{pred['title']}"
+            if len(label) > 100:  # Discord limit
+                label = label[:97] + "..."
+            
+            description = f"ID: {pred['id']} • {time_desc}"
+            if len(description) > 100:
+                description = description[:97] + "..."
+            
+            # Add emoji based on prediction type
+            emoji_map = {
+                'season_winner': '👑',
+                'weekly_hoh': '🏆',
+                'weekly_veto': '💎',
+                'weekly_eviction': '🚪'
+            }
+            emoji = emoji_map.get(pred['type'], '📊')
+            
+            options.append(discord.SelectOption(
+                label=label,
+                value=str(pred['id']),
+                description=description,
+                emoji=emoji
+            ))
+        
+        super().__init__(
+            placeholder="Select a poll to close...",
+            options=options,
+            min_values=1,
+            max_values=1
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        selected_poll_id = int(self.values[0])
+        
+        # Find the selected poll
+        selected_poll = None
+        for pred in self.view.active_predictions:
+            if pred['id'] == selected_poll_id:
+                selected_poll = pred
+                break
+        
+        if selected_poll:
+            await self.view.show_close_confirmation(interaction, selected_poll)
+        else:
+            await interaction.response.send_message("Error: Poll not found", ephemeral=True)
+
+class ConfirmCloseButton(discord.ui.Button):
+    def __init__(self):
+        super().__init__(
+            style=discord.ButtonStyle.danger,
+            label="Close Poll",
+            emoji="🔒"
+        )
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Close the poll
+        success = self.view.prediction_manager.close_prediction(
+            prediction_id=self.view.selected_prediction['id'],
+            admin_user_id=self.view.admin_user_id
+        )
+        
+        if success:
+            embed = discord.Embed(
+                title="🔒 Poll Closed Successfully!",
+                description=f"**Poll:** {self.view.selected_prediction['title']}\n\n"
+                           f"✅ The poll has been closed and no longer accepts predictions.\n"
+                           f"📝 You can resolve it later with `/resolvepoll` to award points.",
+                color=0x2ecc71
+            )
+            
+            embed.add_field(
+                name="🎯 Next Steps",
+                value="1. Wait for the actual result (who won HOH, got evicted, etc.)\n"
+                      "2. Use `/resolvepoll` to set the correct answer\n"
+                      "3. Points will be awarded to correct predictors",
+                inline=False
+            )
+            
+            # Remove the view (disable buttons)
+            await interaction.response.edit_message(embed=embed, view=None)
+            
+        else:
+            await interaction.response.send_message(
+                "❌ Failed to close poll. It may not exist or already be closed.",
+                ephemeral=True
+            )
+
+class BackToClosePollsButton(discord.ui.Button):
+    def __init__(self, active_predictions):
+        super().__init__(
+            style=discord.ButtonStyle.secondary,
+            label="Back to Polls",
+            emoji="⬅️"
+        )
+        self.active_predictions = active_predictions
+    
+    async def callback(self, interaction: discord.Interaction):
+        # Reset view to poll selection
+        self.view.clear_items()
+        self.view.add_item(ClosePollSelect(self.active_predictions))
+        self.view.selected_prediction = None
+        
+        embed = discord.Embed(
+            title="🔒 Close Prediction Poll",
+            description=f"**{len(self.active_predictions)} active polls** available\nSelect a poll to close:",
+            color=0xff6b35
+        )
+        
+        # Show poll summary again
+        poll_list = []
+        for pred in self.active_predictions[:5]:
+            closes_at = pred['closes_at']
+            if isinstance(closes_at, str):
+                closes_at = datetime.fromisoformat(closes_at)
+            
+            time_left = closes_at - datetime.now()
+            if time_left.total_seconds() > 0:
+                hours_left = int(time_left.total_seconds() / 3600)
+                time_str = f"{hours_left}h left"
+            else:
+                time_str = "Expired"
+            
+            poll_list.append(f"**{pred['title']}** - {time_str}")
+        
+        if poll_list:
+            embed.add_field(
+                name="Available Polls",
+                value="\n".join(poll_list),
+                inline=False
+            )
+        
+        embed.add_field(
+            name="💡 About Closing Polls",
+            value="Closing a poll stops users from making new predictions but doesn't award points yet. "
+                  "Use this when you want to 'lock in' predictions before the result is known.",
+            inline=False
+        )
+        
+        await interaction.response.edit_message(embed=embed, view=self.view)
+
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
     
@@ -5430,9 +5678,8 @@ class BBDiscordBot(commands.Bot):
                 await interaction.followup.send("Error retrieving polls.")
 
         @self.tree.command(name="closepoll", description="Manually close a prediction poll (Admin only)")
-        @discord.app_commands.describe(prediction_id="ID of the poll to close")
-        async def closepoll_slash(interaction: discord.Interaction, prediction_id: int):
-            """Manually close a poll"""
+        async def closepoll_slash(interaction: discord.Interaction):
+            """Close a poll using interactive selection"""
             try:
                 if not interaction.user.guild_permissions.administrator:
                     await interaction.response.send_message("You need administrator permissions to close polls.", ephemeral=True)
@@ -5440,16 +5687,66 @@ class BBDiscordBot(commands.Bot):
                 
                 await interaction.response.defer(ephemeral=True)
                 
-                success = self.prediction_manager.close_prediction(prediction_id, interaction.user.id)
+                # Get active predictions that can be closed
+                active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
                 
-                if success:
-                    await interaction.followup.send(f"✅ Poll {prediction_id} has been closed.", ephemeral=True)
-                else:
-                    await interaction.followup.send(f"❌ Could not close poll {prediction_id}. It may not exist or already be closed.", ephemeral=True)
+                if not active_predictions:
+                    embed = discord.Embed(
+                        title="📊 No Active Polls",
+                        description="There are no active polls that can be closed right now.",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed, ephemeral=True)
+                    return
+                
+                # Create the close poll view
+                view = ClosePollView(
+                    active_predictions=active_predictions,
+                    prediction_manager=self.prediction_manager,
+                    admin_user_id=interaction.user.id
+                )
+                
+                embed = discord.Embed(
+                    title="🔒 Close Prediction Poll",
+                    description=f"**{len(active_predictions)} active polls** available\nSelect a poll to close:",
+                    color=0xff6b35
+                )
+                
+                # Show a summary of active polls
+                poll_list = []
+                for pred in active_predictions[:5]:  # Show up to 5 polls
+                    closes_at = pred['closes_at']
+                    if isinstance(closes_at, str):
+                        closes_at = datetime.fromisoformat(closes_at)
+                    
+                    time_left = closes_at - datetime.now()
+                    if time_left.total_seconds() > 0:
+                        hours_left = int(time_left.total_seconds() / 3600)
+                        time_str = f"{hours_left}h left"
+                    else:
+                        time_str = "Expired"
+                    
+                    poll_list.append(f"**{pred['title']}** - {time_str}")
+                
+                if poll_list:
+                    embed.add_field(
+                        name="Available Polls",
+                        value="\n".join(poll_list),
+                        inline=False
+                    )
+                
+                embed.add_field(
+                    name="💡 About Closing Polls",
+                    value="Closing a poll stops users from making new predictions but doesn't award points yet. "
+                          "Use this when you want to 'lock in' predictions before the result is known.",
+                    inline=False
+                )
+                
+                await interaction.followup.send(embed=embed, view=view, ephemeral=True)
                 
             except Exception as e:
-                logger.error(f"Error closing poll: {e}")
-                await interaction.followup.send("Error closing poll.", ephemeral=True)
+                logger.error(f"Error in closepoll command: {e}")
+                await interaction.followup.send("Error loading polls to close.", ephemeral=True)
 
         @self.tree.command(name="resolvepoll", description="Resolve a poll and award points (Admin only)")
         async def resolvepoll_slash(interaction: discord.Interaction):
