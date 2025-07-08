@@ -1645,13 +1645,13 @@ class PredictionManager:
         finally:
             conn.close()
     
-    def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int]:
-        """Resolve a prediction and award points with better error handling"""
+    def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int, List[int]]:
+        """Resolve a prediction and award points, returning success, count, and user IDs"""
         conn = self.get_connection()
         
         try:
             # Set busy timeout for this connection
-            conn.execute("PRAGMA busy_timeout = 10000")  # 10 second timeout
+            conn.execute("PRAGMA busy_timeout = 10000")
             cursor = conn.cursor()
             
             # Get prediction details
@@ -1662,14 +1662,22 @@ class PredictionManager:
             
             result = cursor.fetchone()
             if not result:
-                return False, 0
+                return False, 0, []
             
             pred_type, options_json, status, guild_id, week_number = result
             options = json.loads(options_json)
             
             # Validate correct option
             if correct_option not in options:
-                return False, 0
+                return False, 0, []
+            
+            # Get users who predicted correctly BEFORE updating the prediction
+            cursor.execute("""
+                SELECT user_id FROM user_predictions 
+                WHERE prediction_id = ? AND option = ?
+            """, (prediction_id, correct_option))
+            
+            correct_user_ids = [row[0] for row in cursor.fetchall()]
             
             # Update prediction status
             cursor.execute("""
@@ -1685,7 +1693,7 @@ class PredictionManager:
             """, (prediction_id,))
             
             user_predictions = cursor.fetchall()
-            conn.commit()  # Commit the prediction resolution first
+            conn.commit()
             
             # Calculate points for correct predictions
             prediction_type = PredictionType(pred_type)
@@ -1694,28 +1702,25 @@ class PredictionManager:
             
             current_week = week_number if week_number else self._get_current_week()
             
-            # Process each user prediction separately to avoid holding locks too long
+            # Process each user prediction
             for user_id, user_option in user_predictions:
                 try:
                     if user_option == correct_option:
-                        # Award points to correct predictors
                         self._update_leaderboard(user_id, guild_id, current_week, points, True, True)
                         correct_users += 1
                     else:
-                        # Update stats for incorrect predictors
                         self._update_leaderboard(user_id, guild_id, current_week, 0, False, True)
                 except Exception as e:
                     logger.error(f"Error updating leaderboard for user {user_id}: {e}")
-                    # Continue processing other users even if one fails
                     continue
             
             logger.info(f"Prediction {prediction_id} resolved. {correct_users} users got it right.")
-            return True, correct_users
+            return True, correct_users, correct_user_ids
             
         except Exception as e:
             logger.error(f"Error resolving prediction: {e}")
             conn.rollback()
-            return False, 0
+            return False, 0, []
         finally:
             conn.close()
         
@@ -4532,15 +4537,7 @@ class AnswerOptionsSelect(discord.ui.Select):
         
         await interaction.response.edit_message(embed=embed, view=self.view)
 
-class ResolveConfirmButton(discord.ui.Button):
-    def __init__(self):
-        super().__init__(
-            style=discord.ButtonStyle.danger,
-            label="Resolve Poll",
-            emoji="✅"
-        )
-    
-    async def callback(self, interaction: discord.Interaction):
+async def callback(self, interaction: discord.Interaction):
         # Find the answer selector to get the selected answer
         answer_select = None
         for item in self.view.children:
@@ -4555,8 +4552,15 @@ class ResolveConfirmButton(discord.ui.Button):
             )
             return
         
-        # Resolve the poll
-        success, correct_users = self.view.prediction_manager.resolve_prediction(
+        # Get correct users BEFORE resolving the poll
+        correct_users_data = self._get_correct_users(
+            self.view.selected_prediction['id'], 
+            answer_select.selected_answer,
+            interaction.guild
+        )
+        
+        # Resolve the poll (now returns 3 values)
+        success, correct_users_count, correct_user_ids = self.view.prediction_manager.resolve_prediction(
             prediction_id=self.view.selected_prediction['id'],
             correct_option=answer_select.selected_answer,
             admin_user_id=self.view.admin_user_id
@@ -4566,13 +4570,11 @@ class ResolveConfirmButton(discord.ui.Button):
             embed = discord.Embed(
                 title="✅ Poll Resolved Successfully!",
                 description=f"**Poll:** {self.view.selected_prediction['title']}\n"
-                           f"**Correct Answer:** {answer_select.selected_answer}\n"
-                           f"**Winners:** {correct_users} users got it right and earned points! 🎉",
+                           f"**Correct Answer:** {answer_select.selected_answer}",
                 color=0x2ecc71
             )
             
             # Calculate points awarded
-            from enum import Enum
             point_values = {
                 'season_winner': 20,
                 'weekly_hoh': 5,
@@ -4580,7 +4582,22 @@ class ResolveConfirmButton(discord.ui.Button):
                 'weekly_eviction': 2
             }
             points_per_user = point_values.get(self.view.selected_prediction['type'], 5)
-            total_points = correct_users * points_per_user
+            total_points = correct_users_count * points_per_user
+            
+            # Add winners section
+            if correct_users_data:
+                winners_text = self._format_winners_list(correct_users_data)
+                embed.add_field(
+                    name=f"🎉 Winners ({len(correct_users_data)} users)",
+                    value=winners_text,
+                    inline=False
+                )
+            else:
+                embed.add_field(
+                    name="😢 No Winners",
+                    value="No one predicted correctly this time!",
+                    inline=False
+                )
             
             embed.add_field(
                 name="🏆 Points Awarded",
@@ -4591,16 +4608,15 @@ class ResolveConfirmButton(discord.ui.Button):
             # Remove the view (disable buttons)
             await interaction.response.edit_message(embed=embed, view=None)
             
-            # Announce resolution in main channel
+            # Announce resolution in main channel with winners
             if self.view.config.get('update_channel_id'):
                 channel = interaction.client.get_channel(self.view.config.get('update_channel_id'))
                 if channel:
-                    public_embed = discord.Embed(
-                        title="🎯 Poll Results",
-                        description=f"**{self.view.selected_prediction['title']}**\n\n"
-                                   f"**Correct Answer:** {answer_select.selected_answer}\n"
-                                   f"🎉 **{correct_users} users** predicted correctly and earned {points_per_user} points each!",
-                        color=0x2ecc71
+                    public_embed = self._create_public_results_embed(
+                        self.view.selected_prediction,
+                        answer_select.selected_answer,
+                        correct_users_data,
+                        points_per_user
                     )
                     await channel.send(embed=public_embed)
         else:
@@ -4608,6 +4624,128 @@ class ResolveConfirmButton(discord.ui.Button):
                 "❌ Failed to resolve poll. There may have been an error.",
                 ephemeral=True
             )
+            
+def _get_correct_users(self, prediction_id, correct_answer, guild):
+        """Get list of users who predicted correctly with their display names"""
+        try:
+            conn = self.view.prediction_manager.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT user_id FROM user_predictions 
+                WHERE prediction_id = ? AND option = ?
+            """, (prediction_id, correct_answer))
+            
+            user_ids = [row[0] for row in cursor.fetchall()]
+            conn.close()
+            
+            # Get display names for users
+            correct_users = []
+            for user_id in user_ids:
+                member = guild.get_member(user_id)
+                if member:
+                    correct_users.append({
+                        'user_id': user_id,
+                        'display_name': member.display_name,
+                        'mention': member.mention
+                    })
+                else:
+                    # User no longer in server, show partial ID
+                    correct_users.append({
+                        'user_id': user_id,
+                        'display_name': f"User#{str(user_id)[-4:]}",
+                        'mention': f"User#{str(user_id)[-4:]}"
+                    })
+            
+            return correct_users
+            
+        except Exception as e:
+            logger.error(f"Error getting correct users: {e}")
+            return []
+    
+    def _format_winners_list(self, correct_users_data):
+        """Format the winners list for display"""
+        if not correct_users_data:
+            return "No winners"
+        
+        if len(correct_users_data) <= 10:
+            # Show all winners if 10 or fewer
+            winners = [user['display_name'] for user in correct_users_data]
+            return " • ".join([f"**{name}**" for name in winners])
+        else:
+            # Show first 8 winners plus count of remaining
+            displayed_winners = correct_users_data[:8]
+            remaining_count = len(correct_users_data) - 8
+            
+            winners_text = " • ".join([f"**{user['display_name']}**" for user in displayed_winners])
+            winners_text += f" • **+{remaining_count} more**"
+            
+            return winners_text
+    
+    def _create_public_results_embed(self, prediction, correct_answer, correct_users_data, points_per_user):
+        """Create the public results embed for the main channel"""
+        embed = discord.Embed(
+            title="🎯 Poll Results",
+            description=f"**{prediction['title']}**",
+            color=0x2ecc71
+        )
+        
+        embed.add_field(
+            name="✅ Correct Answer",
+            value=correct_answer,
+            inline=True
+        )
+        
+        embed.add_field(
+            name="🏆 Points Earned",
+            value=f"{points_per_user} pts each",
+            inline=True
+        )
+        
+        if prediction.get('week_number'):
+            embed.add_field(
+                name="📅 Week",
+                value=f"Week {prediction['week_number']}",
+                inline=True
+            )
+        
+        # Add winners section
+        if correct_users_data:
+            if len(correct_users_data) == 1:
+                winner_text = f"🎉 **{correct_users_data[0]['display_name']}** got it right!"
+            elif len(correct_users_data) <= 5:
+                winner_names = [user['display_name'] for user in correct_users_data]
+                winner_text = f"🎉 **{', '.join(winner_names[:-1])} and {winner_names[-1]}** got it right!"
+            else:
+                # For many winners, show count and first few names
+                first_three = [user['display_name'] for user in correct_users_data[:3]]
+                remaining = len(correct_users_data) - 3
+                winner_text = f"🎉 **{len(correct_users_data)} users** got it right!\n"
+                winner_text += f"Including **{', '.join(first_three)}** and **{remaining} others**"
+            
+            embed.add_field(
+                name="🏆 Winners",
+                value=winner_text,
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="😢 No Winners",
+                value="No one predicted correctly this time!",
+                inline=False
+            )
+        
+        # Add total points distributed
+        total_points = len(correct_users_data) * points_per_user
+        embed.add_field(
+            name="📊 Summary",
+            value=f"**{len(correct_users_data)}** correct predictions\n**{total_points}** total points awarded",
+            inline=False
+        )
+        
+        embed.set_footer(text="Use /leaderboard to see current standings!")
+        
+        return embed
 
 class BackToResolvePollsButton(discord.ui.Button):
     def __init__(self, active_predictions):
