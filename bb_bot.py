@@ -5617,32 +5617,6 @@ def __init__(self):
     # ... your existing init code ...
     self.setup_commands()
     
-    # ADD THESE CONSTANTS HERE:
-    self.CURRENT_HOUSEGUESTS = [
-        "Chelsie", "Cam", "Makensy", "Leah", "Quinn", "Tucker", "Joseph", 
-        "Rubina", "Angela", "Kimo", "T'kor", "Brooklyn", "Cedric", "Lisa"
-    ]
-
-    self.POLL_TEMPLATES = {
-        "season_winner": {
-            "title": "Pick the Big Brother 27 Season Winner",
-            "description": "Who will win Big Brother 27? Correct prediction awards 20 points!"
-        },
-        "weekly_hoh": {
-            "title": "Pick the HoH Winner", 
-            "description": "Who will win Head of Household this week? Correct prediction awards 5 points!"
-        },
-        "weekly_veto": {
-            "title": "Pick the Veto Winner",
-            "description": "Who will win the Power of Veto this week? Correct prediction awards 3 points!"
-        },
-        "weekly_eviction": {
-            "title": "Pick who will be evicted",
-            "description": "Who will be evicted this week? Correct prediction awards 2 points!"
-        }
-    }
-
-# STEP 2: Add this class RIGHT BEFORE your setup_commands method (around line 2301)
 
 class HouseguestSelector(discord.ui.View):
     def __init__(self, poll_data, bot_instance):
