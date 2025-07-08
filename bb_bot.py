@@ -2116,8 +2116,7 @@ class PredictionManager:
         # Add instruction for making predictions
         embed.add_field(
             name="💡 How to Predict",
-            value=f"Use `/predict {prediction['id']} <option>` to make your prediction!\n"
-                  f"Example: `/predict {prediction['id']} {options[0]}`",
+            value="Use `/predict` to make your prediction!\nThe command will guide you through selecting this poll and your choice.",
             inline=False
         )
         
