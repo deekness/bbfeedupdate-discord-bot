@@ -4679,7 +4679,59 @@ class ResolveConfirmButton(discord.ui.Button):
         if len(correct_users_data) <= 10:
             # Show all winners if 10 or fewer
             winners = [user['display_name'] for user in correct_users_data]
-            return " •
+            return " • ".join(winners)
+        else:
+            # Show first 8 winners + count of remaining
+            displayed_winners = [user['display_name'] for user in correct_users_data[:8]]
+            remaining_count = len(correct_users_data) - 8
+            winners_text = " • ".join(displayed_winners)
+            winners_text += f" • +{remaining_count} more"
+            return winners_text
+    
+    def _create_public_results_embed(self, prediction, correct_answer, correct_users_data, points_per_user):
+        """Create public results embed for main channel announcement"""
+        pred_type_names = {
+            'season_winner': '👑 Season Winner',
+            'weekly_hoh': '🏆 Weekly HOH',
+            'weekly_veto': '💎 Weekly Veto',
+            'weekly_eviction': '🚪 Weekly Eviction'
+        }
+        
+        type_name = pred_type_names.get(prediction['type'], prediction['type'])
+        
+        embed = discord.Embed(
+            title=f"🎉 Poll Results - {prediction['title']}",
+            description=f"**{type_name}**\n✅ **Correct Answer:** {correct_answer}",
+            color=0x2ecc71,
+            timestamp=datetime.now()
+        )
+        
+        # Add winners section
+        if correct_users_data:
+            winners_text = self._format_winners_list(correct_users_data)
+            embed.add_field(
+                name=f"🏆 Winners ({len(correct_users_data)} users)",
+                value=winners_text,
+                inline=False
+            )
+            
+            # Add points info
+            total_points = len(correct_users_data) * points_per_user
+            embed.add_field(
+                name="💎 Points Awarded",
+                value=f"{points_per_user} points each • {total_points} total points distributed",
+                inline=False
+            )
+        else:
+            embed.add_field(
+                name="😢 No Winners",
+                value="No one predicted correctly this time!",
+                inline=False
+            )
+        
+        embed.set_footer(text="Prediction Poll Results • Check your points with /leaderboard")
+        
+        return embed
 
 class BackToResolvePollsButton(discord.ui.Button):
     def __init__(self, active_predictions):
