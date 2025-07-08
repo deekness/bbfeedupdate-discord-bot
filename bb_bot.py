@@ -4772,22 +4772,22 @@ class BBDiscordBot(commands.Bot):
                 await interaction.followup.send("Error resolving poll.", ephemeral=True)
 
         @self.tree.command(name="leaderboard", description="View prediction leaderboards")
-            async def leaderboard_slash(interaction: discord.Interaction):
-                """View leaderboards"""
-                try:
-                    await interaction.response.defer()
+        async def leaderboard_slash(interaction: discord.Interaction):
+            """View leaderboards"""
+            try:
+                await interaction.response.defer()
                     
-                    # Only show season leaderboard
-                    leaderboard = self.prediction_manager.get_season_leaderboard(interaction.guild.id)
-                    embed = await self.prediction_manager.create_leaderboard_embed(
-                        leaderboard, interaction.guild, "Season"
-                    )
+                # Only show season leaderboard
+                leaderboard = self.prediction_manager.get_season_leaderboard(interaction.guild.id)
+                embed = await self.prediction_manager.create_leaderboard_embed(
+                    leaderboard, interaction.guild, "Season"
+                )
                     
-                    await interaction.followup.send(embed=embed)
+                await interaction.followup.send(embed=embed)
                     
-                except Exception as e:
-                    logger.error(f"Error showing leaderboard: {e}")
-                    await interaction.followup.send("Error retrieving leaderboard.")
+            except Exception as e:
+                logger.error(f"Error showing leaderboard: {e}")
+                await interaction.followup.send("Error retrieving leaderboard.")
 
         @self.tree.command(name="mypredictions", description="View your prediction history")
         async def mypredictions_slash(interaction: discord.Interaction):
