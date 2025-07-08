@@ -283,10 +283,9 @@ ALL_ZINGS = PG_ZINGS + PG13_ZINGS
 # Game-specific constants
 # Add this with your other constants (around line 50-100)
 BB27_HOUSEGUESTS = [
-    "Angela", "Brooklyn", "Cam", "Cedric", "Chelsie", "Joseph", "Kimo", 
-    "Leah", "Makensy", "Quinn", "Rubina", "T'Kor", "Tucker"
+    "Adrian", "Amy", "Ashley", "Ava", "Isaiah", "Jimmy", "Katherine", "Keanu", 
+    "Kelley", "Lauren", "Mickey", "Morgan", "Rylie", "Vince", "Will", "Zach"
     # Replace these with your actual 20 houseguests
-    # "Name14", "Name15", "Name16", "Name17", "Name18", "Name19", "Name20"
 ]
 
 COMPETITION_KEYWORDS = [
