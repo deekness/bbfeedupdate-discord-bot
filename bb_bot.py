@@ -2902,10 +2902,12 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         )
         
         # ALWAYS add importance rating (required)
-        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-        importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
+        custom_emoji = "<:China2:1362458099935346930>"  # Replace this with your actual custom emoji
+    
+        # Create multiple icons based on the rating (like your second image)
+        icon_count = min(importance, 10)  # Cap at 10 icons max
+        importance_text = custom_emoji * icon_count + f" **{importance}/10**"
         
-        importance_text = f"{importance_icon} **{importance}/10**"
         explanation = analysis_data.get('importance_explanation', '')
         if explanation:
             importance_text += f"\n*{explanation}*"
