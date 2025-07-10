@@ -2649,7 +2649,7 @@ Be selective - these should be the updates that a superfan would want to know ab
             
             embed = discord.Embed(
                 title="📸 Feed Highlights - What Just Happened",
-                description=f"Key moments from the last {len(self.highlights_queue)} updates",
+                description=f"But first...",
                 color=0xe74c3c,
                 timestamp=datetime.now()
             )
