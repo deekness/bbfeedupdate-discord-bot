@@ -5827,7 +5827,7 @@ class BBDiscordBot(commands.Bot):
                 ("/closepoll", "Manually close a prediction poll (Admin only)"),
                 ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
                 ("/leaderboard", "View prediction leaderboards"),
-                ("/mypredictions", "View your prediction history")
+                ("/mypredictions", "View your prediction history"),
                 ("/ask", "Ask questions about the current Big Brother game state")
             ]
             
