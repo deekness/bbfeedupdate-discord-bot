@@ -2648,7 +2648,7 @@ Be selective - these should be the updates that a superfan would want to know ab
                 return [self._create_pattern_highlights_embed()]
             
             embed = discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
+                title="📸 Feed Highlights - What Just Happened",
                 description=f"Key moments from the last {len(self.highlights_queue)} updates",
                 color=0xe74c3c,
                 timestamp=datetime.now()
