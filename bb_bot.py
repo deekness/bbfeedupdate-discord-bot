@@ -2938,9 +2938,11 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         current_hour = datetime.now().strftime("%I %p").lstrip('0')
         
+        custom_emoji = "<:calebperiodt:1223089828401250410>"
+        title = f"Chen Bot's House Summary - {current_hour} {custom_emoji}"
+        
         embed = discord.Embed(
-            custom_emoji = "<:calebperiodt:1223089828401250410>"
-            title = f"Chen Bot's House Summary - {current_hour} {custom_emoji}"
+            title=title,
             description=f"**{len(self.hourly_queue)} updates this hour** • Enhanced Pattern Analysis",
             color=0x95a5a6,  # Gray for pattern-based
             timestamp=datetime.now()
