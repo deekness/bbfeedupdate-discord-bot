@@ -5041,6 +5041,574 @@ class BackToClosePollsButton(discord.ui.Button):
         
         await interaction.response.edit_message(embed=embed, view=self.view)
 
+class BBChatAnalyzer:
+    """Analyzes current game state to answer user questions"""
+    
+    def __init__(self, db: BBDatabase, alliance_tracker: AllianceTracker, analyzer: BBAnalyzer, llm_client=None):
+        self.db = db
+        self.alliance_tracker = alliance_tracker
+        self.analyzer = analyzer
+        self.llm_client = llm_client
+    
+    async def answer_question(self, question: str) -> dict:
+        """Answer a question about the current game state"""
+        question_lower = question.lower()
+        
+        # Get recent updates (last 24 hours)
+        recent_updates = self.db.get_recent_updates(24)
+        
+        # Determine question type and route to appropriate handler
+        if any(keyword in question_lower for keyword in ['control', 'power', 'hoh', 'head of household']):
+            return await self._analyze_power_structure(recent_updates, question)
+        
+        elif any(keyword in question_lower for keyword in ['danger', 'target', 'eviction', 'nominated', 'block']):
+            return await self._analyze_danger_level(recent_updates, question)
+        
+        elif any(keyword in question_lower for keyword in ['alliance', 'working together', 'team', 'group']):
+            return await self._analyze_alliances(question)
+        
+        elif any(keyword in question_lower for keyword in ['showmance', 'romance', 'relationship', 'dating', 'couple']):
+            return await self._analyze_relationships(recent_updates, question)
+        
+        elif any(keyword in question_lower for keyword in ['winning', 'winner', 'favorite', 'best positioned']):
+            return await self._analyze_win_chances(recent_updates, question)
+        
+        elif any(keyword in question_lower for keyword in ['drama', 'fight', 'argument', 'tension']):
+            return await self._analyze_drama(recent_updates, question)
+        
+        elif any(keyword in question_lower for keyword in ['competition', 'comp', 'challenge', 'veto', 'pov']):
+            return await self._analyze_competitions(recent_updates, question)
+        
+        else:
+            return await self._general_analysis(recent_updates, question)
+    
+    async def _analyze_power_structure(self, updates: List[BBUpdate], question: str) -> dict:
+        """Analyze who's in control of the house"""
+        
+        # Look for HOH wins and power-related updates
+        power_updates = []
+        current_hoh = None
+        
+        for update in updates[:20]:  # Check recent updates
+            content = f"{update.title} {update.description}".lower()
+            
+            if 'hoh' in content or 'head of household' in content:
+                if 'wins' in content or 'winner' in content:
+                    # Extract potential HOH winner
+                    houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
+                    if houseguests:
+                        current_hoh = houseguests[0]
+                power_updates.append(update)
+        
+        # Get active alliances to see power structure
+        active_alliances = self.alliance_tracker.get_active_alliances()
+        
+        if self.llm_client:
+            return await self._llm_power_analysis(power_updates, active_alliances, current_hoh, question)
+        else:
+            return self._pattern_power_analysis(power_updates, active_alliances, current_hoh)
+    
+    async def _analyze_danger_level(self, updates: List[BBUpdate], question: str) -> dict:
+        """Analyze who's in danger of eviction"""
+        
+        danger_updates = []
+        nominees = []
+        targets = []
+        
+        for update in updates[:15]:
+            content = f"{update.title} {update.description}".lower()
+            
+            if any(word in content for word in ['nominate', 'nomination', 'block', 'target', 'backdoor']):
+                danger_updates.append(update)
+                
+                # Extract potential nominees/targets
+                houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
+                if 'nominate' in content or 'block' in content:
+                    nominees.extend(houseguests[:2])
+                elif 'target' in content or 'backdoor' in content:
+                    targets.extend(houseguests[:1])
+        
+        if self.llm_client:
+            return await self._llm_danger_analysis(danger_updates, nominees, targets, question)
+        else:
+            return self._pattern_danger_analysis(danger_updates, nominees, targets)
+    
+    async def _analyze_alliances(self, question: str) -> dict:
+        """Analyze current alliance structure"""
+        
+        active_alliances = self.alliance_tracker.get_active_alliances()
+        broken_alliances = self.alliance_tracker.get_recently_broken_alliances(days=3)
+        recent_betrayals = self.alliance_tracker.get_recent_betrayals(days=3)
+        
+        if self.llm_client:
+            return await self._llm_alliance_analysis(active_alliances, broken_alliances, recent_betrayals, question)
+        else:
+            return self._pattern_alliance_analysis(active_alliances, broken_alliances, recent_betrayals)
+    
+    async def _analyze_relationships(self, updates: List[BBUpdate], question: str) -> dict:
+        """Analyze showmances and relationships"""
+        
+        relationship_updates = []
+        
+        for update in updates[:20]:
+            categories = self.analyzer.categorize_update(update)
+            if "💕 Romance" in categories:
+                relationship_updates.append(update)
+        
+        if self.llm_client:
+            return await self._llm_relationship_analysis(relationship_updates, question)
+        else:
+            return self._pattern_relationship_analysis(relationship_updates)
+    
+    async def _analyze_win_chances(self, updates: List[BBUpdate], question: str) -> dict:
+        """Analyze who's best positioned to win"""
+        
+        # Get strategic updates and alliance data
+        strategic_updates = []
+        for update in updates[:25]:
+            if self.analyzer.analyze_strategic_importance(update) >= 6:
+                strategic_updates.append(update)
+        
+        active_alliances = self.alliance_tracker.get_active_alliances()
+        
+        if self.llm_client:
+            return await self._llm_winner_analysis(strategic_updates, active_alliances, question)
+        else:
+            return self._pattern_winner_analysis(strategic_updates, active_alliances)
+    
+    async def _analyze_drama(self, updates: List[BBUpdate], question: str) -> dict:
+        """Analyze current drama and conflicts"""
+        
+        drama_updates = []
+        
+        for update in updates[:15]:
+            categories = self.analyzer.categorize_update(update)
+            if "💥 Drama" in categories:
+                drama_updates.append(update)
+        
+        if self.llm_client:
+            return await self._llm_drama_analysis(drama_updates, question)
+        else:
+            return self._pattern_drama_analysis(drama_updates)
+    
+    async def _analyze_competitions(self, updates: List[BBUpdate], question: str) -> dict:
+        """Analyze recent competition results and upcoming comps"""
+        
+        comp_updates = []
+        
+        for update in updates[:20]:
+            categories = self.analyzer.categorize_update(update)
+            if "🏆 Competition" in categories:
+                comp_updates.append(update)
+        
+        if self.llm_client:
+            return await self._llm_competition_analysis(comp_updates, question)
+        else:
+            return self._pattern_competition_analysis(comp_updates)
+    
+    async def _general_analysis(self, updates: List[BBUpdate], question: str) -> dict:
+        """General analysis for questions that don't fit specific categories"""
+        
+        if self.llm_client:
+            return await self._llm_general_analysis(updates[:20], question)
+        else:
+            return self._pattern_general_analysis(updates[:20])
+    
+    # LLM-powered analysis methods
+    async def _llm_power_analysis(self, power_updates: List[BBUpdate], alliances: List[dict], current_hoh: str, question: str) -> dict:
+        """Use LLM to analyze power structure"""
+        
+        updates_text = "\n".join([f"• {update.title}" for update in power_updates[:10]])
+        alliances_text = "\n".join([f"• {alliance['name']}: {', '.join(alliance['members'])}" for alliance in alliances[:5]])
+        
+        prompt = f"""Based on recent Big Brother updates, analyze the current power structure in the house.
+
+RECENT POWER-RELATED UPDATES:
+{updates_text}
+
+CURRENT ALLIANCES:
+{alliances_text}
+
+CURRENT HOH: {current_hoh or "Unknown"}
+
+USER QUESTION: {question}
+
+Provide analysis in this format:
+{{
+    "main_answer": "Direct answer to the user's question",
+    "current_hoh": "Current HOH if known",
+    "power_players": ["list", "of", "houseguests", "with", "influence"],
+    "power_analysis": "2-3 sentence analysis of who controls the house and why",
+    "next_targets": ["potential", "targets", "for", "eviction"],
+    "confidence": "high/medium/low based on available information"
+}}
+
+Focus on answering their specific question about power and control."""
+
+        try:
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=800,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "power")
+            
+        except Exception as e:
+            logger.error(f"LLM power analysis failed: {e}")
+            return self._pattern_power_analysis(power_updates, alliances, current_hoh)
+    
+    async def _llm_danger_analysis(self, danger_updates: List[BBUpdate], nominees: List[str], targets: List[str], question: str) -> dict:
+        """Use LLM to analyze danger levels"""
+        
+        updates_text = "\n".join([f"• {update.title}" for update in danger_updates[:8]])
+        nominees_text = ", ".join(list(set(nominees))) if nominees else "Unknown"
+        targets_text = ", ".join(list(set(targets))) if targets else "Unknown"
+        
+        prompt = f"""Based on recent Big Brother updates, analyze who is in danger of eviction.
+
+RECENT DANGER/TARGETING UPDATES:
+{updates_text}
+
+KNOWN NOMINEES: {nominees_text}
+KNOWN TARGETS: {targets_text}
+
+USER QUESTION: {question}
+
+Provide analysis in this format:
+{{
+    "main_answer": "Direct answer to the user's question",
+    "current_nominees": ["current", "nominees", "if", "known"],
+    "biggest_threats": ["houseguests", "in", "most", "danger"],
+    "danger_analysis": "2-3 sentence explanation of who's in danger and why",
+    "safe_players": ["houseguests", "who", "seem", "safe"],
+    "confidence": "high/medium/low based on available information"
+}}
+
+Focus on answering their specific question about danger and eviction threats."""
+
+        try:
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=800,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "danger")
+            
+        except Exception as e:
+            logger.error(f"LLM danger analysis failed: {e}")
+            return self._pattern_danger_analysis(danger_updates, nominees, targets)
+    
+    # Pattern-based fallback methods
+    def _pattern_power_analysis(self, power_updates: List[BBUpdate], alliances: List[dict], current_hoh: str) -> dict:
+        """Pattern-based power analysis"""
+        
+        power_players = []
+        
+        # Current HOH has power
+        if current_hoh:
+            power_players.append(current_hoh)
+        
+        # Strong alliance members have power
+        for alliance in alliances:
+            if alliance['confidence'] >= 70:
+                power_players.extend(alliance['members'][:2])  # Top 2 from strong alliances
+        
+        power_players = list(set(power_players))[:5]  # Remove duplicates, limit to 5
+        
+        main_answer = f"Based on recent updates, "
+        if current_hoh:
+            main_answer += f"{current_hoh} currently holds HOH power. "
+        
+        if power_players:
+            main_answer += f"Key power players include: {', '.join(power_players[:3])}"
+        else:
+            main_answer += "power structure is unclear from recent updates"
+        
+        return {
+            "response_type": "power",
+            "main_answer": main_answer,
+            "current_hoh": current_hoh,
+            "power_players": power_players,
+            "confidence": "medium",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _pattern_danger_analysis(self, danger_updates: List[BBUpdate], nominees: List[str], targets: List[str]) -> dict:
+        """Pattern-based danger analysis"""
+        
+        all_threatened = list(set(nominees + targets))
+        
+        main_answer = "Based on recent targeting discussions, "
+        if all_threatened:
+            main_answer += f"the following houseguests appear to be in danger: {', '.join(all_threatened[:3])}"
+        else:
+            main_answer += "no clear eviction targets have emerged from recent updates"
+        
+        return {
+            "response_type": "danger",
+            "main_answer": main_answer,
+            "threatened_players": all_threatened[:5],
+            "nominees": list(set(nominees)) if nominees else [],
+            "confidence": "medium",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _pattern_alliance_analysis(self, active_alliances: List[dict], broken_alliances: List[dict], betrayals: List[dict]) -> dict:
+        """Pattern-based alliance analysis"""
+        
+        strong_alliances = [a for a in active_alliances if a['confidence'] >= 70]
+        
+        main_answer = f"Currently tracking {len(active_alliances)} active alliances. "
+        if strong_alliances:
+            main_answer += f"Strongest alliance appears to be '{strong_alliances[0]['name']}' with members: {', '.join(strong_alliances[0]['members'])}"
+        
+        if betrayals:
+            main_answer += f". Recent betrayals detected: {len(betrayals)} in the last 3 days"
+        
+        return {
+            "response_type": "alliances",
+            "main_answer": main_answer,
+            "strong_alliances": strong_alliances[:3],
+            "recent_betrayals": len(betrayals),
+            "confidence": "high",
+            "data_source": "alliance_tracker"
+        }
+    
+    def _pattern_relationship_analysis(self, relationship_updates: List[BBUpdate]) -> dict:
+        """Pattern-based relationship analysis"""
+        
+        if relationship_updates:
+            main_answer = f"Recent showmance/relationship activity detected. Latest update: {relationship_updates[0].title}"
+        else:
+            main_answer = "No significant showmance or relationship developments in recent updates"
+        
+        return {
+            "response_type": "relationships",
+            "main_answer": main_answer,
+            "recent_updates_count": len(relationship_updates),
+            "confidence": "medium",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _pattern_winner_analysis(self, strategic_updates: List[BBUpdate], alliances: List[dict]) -> dict:
+        """Pattern-based winner analysis"""
+        
+        # Find houseguests mentioned most in strategic contexts
+        houseguest_mentions = {}
+        for update in strategic_updates:
+            houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            for hg in houseguests:
+                houseguest_mentions[hg] = houseguest_mentions.get(hg, 0) + 1
+        
+        top_strategic_players = sorted(houseguest_mentions.items(), key=lambda x: x[1], reverse=True)[:3]
+        
+        main_answer = "Based on strategic activity, "
+        if top_strategic_players:
+            main_answer += f"the most active strategic players appear to be: {', '.join([hg[0] for hg in top_strategic_players])}"
+        else:
+            main_answer += "it's difficult to assess winner potential from recent updates"
+        
+        return {
+            "response_type": "winners",
+            "main_answer": main_answer,
+            "strategic_players": [hg[0] for hg in top_strategic_players],
+            "confidence": "low",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _pattern_drama_analysis(self, drama_updates: List[BBUpdate]) -> dict:
+        """Pattern-based drama analysis"""
+        
+        if drama_updates:
+            main_answer = f"Recent drama detected: {len(drama_updates)} conflict-related updates. Latest: {drama_updates[0].title}"
+        else:
+            main_answer = "House appears relatively calm with no major drama in recent updates"
+        
+        return {
+            "response_type": "drama",
+            "main_answer": main_answer,
+            "drama_count": len(drama_updates),
+            "confidence": "medium",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _pattern_competition_analysis(self, comp_updates: List[BBUpdate]) -> dict:
+        """Pattern-based competition analysis"""
+        
+        if comp_updates:
+            main_answer = f"Recent competition activity: {len(comp_updates)} competition-related updates. Latest: {comp_updates[0].title}"
+        else:
+            main_answer = "No recent competition results or announcements detected"
+        
+        return {
+            "response_type": "competitions",
+            "main_answer": main_answer,
+            "comp_count": len(comp_updates),
+            "confidence": "medium",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _pattern_general_analysis(self, updates: List[BBUpdate]) -> dict:
+        """Pattern-based general analysis"""
+        
+        if updates:
+            # Get most important recent update
+            top_update = max(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x))
+            main_answer = f"Most significant recent development: {top_update.title}"
+        else:
+            main_answer = "No recent significant updates to analyze"
+        
+        return {
+            "response_type": "general",
+            "main_answer": main_answer,
+            "total_updates": len(updates),
+            "confidence": "medium",
+            "data_source": "pattern_analysis"
+        }
+    
+    def _parse_llm_chat_response(self, response_text: str, response_type: str) -> dict:
+        """Parse LLM response for chat feature"""
+        try:
+            # Try to extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start != -1 and json_end != -1:
+                json_text = response_text[json_start:json_end]
+                data = json.loads(json_text)
+                data["response_type"] = response_type
+                data["data_source"] = "llm_analysis"
+                return data
+            else:
+                raise ValueError("No JSON found in response")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"LLM chat JSON parsing failed: {e}")
+            # Return basic response with the text
+            return {
+                "response_type": response_type,
+                "main_answer": response_text[:500] + "..." if len(response_text) > 500 else response_text,
+                "confidence": "medium",
+                "data_source": "llm_analysis"
+            }
+    
+    def create_chat_response_embed(self, analysis_result: dict, question: str) -> discord.Embed:
+        """Create Discord embed for chat response"""
+        
+        response_type = analysis_result.get("response_type", "general")
+        confidence = analysis_result.get("confidence", "medium")
+        data_source = analysis_result.get("data_source", "analysis")
+        
+        # Set embed color based on response type
+        colors = {
+            "power": 0xffd700,      # Gold for power
+            "danger": 0xff1744,     # Red for danger
+            "alliances": 0x3498db,  # Blue for alliances
+            "relationships": 0xe91e63,  # Pink for showmances
+            "winners": 0x9c27b0,    # Purple for winners
+            "drama": 0xff5722,      # Orange for drama
+            "competitions": 0x4caf50,   # Green for comps
+            "general": 0x607d8b     # Blue-gray for general
+        }
+        
+        color = colors.get(response_type, 0x607d8b)
+        
+        # Set title based on response type
+        titles = {
+            "power": "🏛️ Power Structure Analysis",
+            "danger": "⚠️ Eviction Danger Analysis", 
+            "alliances": "🤝 Alliance Analysis",
+            "relationships": "💕 Showmance Analysis",
+            "winners": "👑 Winner Potential Analysis",
+            "drama": "💥 Drama Analysis",
+            "competitions": "🏆 Competition Analysis",
+            "general": "📊 Game Analysis"
+        }
+        
+        title = titles.get(response_type, "📊 Game Analysis")
+        
+        embed = discord.Embed(
+            title=title,
+            description=f"**Your Question:** {question}",
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Main answer
+        main_answer = analysis_result.get("main_answer", "Unable to provide analysis")
+        embed.add_field(
+            name="🎯 Analysis",
+            value=main_answer,
+            inline=False
+        )
+        
+        # Add specific fields based on response type
+        if response_type == "power":
+            if analysis_result.get("current_hoh"):
+                embed.add_field(
+                    name="👑 Current HOH",
+                    value=analysis_result["current_hoh"],
+                    inline=True
+                )
+            
+            if analysis_result.get("power_players"):
+                players = analysis_result["power_players"][:5]
+                embed.add_field(
+                    name="💪 Power Players",
+                    value=" • ".join(players),
+                    inline=True
+                )
+        
+        elif response_type == "danger":
+            if analysis_result.get("threatened_players"):
+                threatened = analysis_result["threatened_players"][:5]
+                embed.add_field(
+                    name="⚠️ In Danger",
+                    value=" • ".join(threatened),
+                    inline=True
+                )
+            
+            if analysis_result.get("safe_players"):
+                safe = analysis_result["safe_players"][:5]
+                embed.add_field(
+                    name="✅ Likely Safe",
+                    value=" • ".join(safe),
+                    inline=True
+                )
+        
+        elif response_type == "alliances":
+            if analysis_result.get("strong_alliances"):
+                alliances = analysis_result["strong_alliances"][:3]
+                alliance_text = []
+                for alliance in alliances:
+                    members = " + ".join(alliance['members'][:4])
+                    alliance_text.append(f"**{alliance['name']}**: {members}")
+                
+                embed.add_field(
+                    name="💪 Strong Alliances",
+                    value="\n".join(alliance_text),
+                    inline=False
+                )
+        
+        # Add confidence and data source
+        confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}
+        source_emoji = {"llm_analysis": "🤖", "pattern_analysis": "📊", "alliance_tracker": "🤝"}
+        
+        embed.add_field(
+            name="📈 Analysis Quality",
+            value=f"{confidence_emoji.get(confidence, '🟡')} {confidence.title()} confidence\n"
+                  f"{source_emoji.get(data_source, '📊')} {data_source.replace('_', ' ').title()}",
+            inline=True
+        )
+        
+        embed.set_footer(text="Ask me about power, danger, alliances, showmances, winners, drama, or competitions!")
+        
+        return embed
+
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
     
@@ -5260,6 +5828,7 @@ class BBDiscordBot(commands.Bot):
                 ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
                 ("/leaderboard", "View prediction leaderboards"),
                 ("/mypredictions", "View your prediction history")
+                ("/ask", "Ask questions about the current Big Brother game state")
             ]
             
             for name, description in commands_list:
@@ -6067,6 +6636,44 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error showing user predictions: {e}")
                 await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
 
+        @self.tree.command(name="ask", description="Ask questions about the current Big Brother game")
+        @discord.app_commands.describe(question="Your question about the current game state")
+        async def ask_slash(interaction: discord.Interaction, question: str):
+            """Chat feature for game analysis"""
+            try:
+                await interaction.response.defer()
+                
+                # Initialize chat analyzer
+                chat_analyzer = BBChatAnalyzer(
+                    db=self.db,
+                    alliance_tracker=self.alliance_tracker,
+                    analyzer=self.analyzer,
+                    llm_client=self.update_batcher.llm_client
+                )
+                
+                # Get analysis
+                analysis_result = await chat_analyzer.answer_question(question)
+                
+                # Create response embed
+                embed = chat_analyzer.create_chat_response_embed(analysis_result, question)
+                
+                await interaction.followup.send(embed=embed)
+                
+                logger.info(f"Chat question answered: {interaction.user} asked '{question[:50]}...'")
+                
+            except Exception as e:
+                logger.error(f"Error in ask command: {e}")
+                logger.error(traceback.format_exc())
+                
+                error_embed = discord.Embed(
+                    title="❌ Analysis Error",
+                    description="Sorry, I couldn't analyze the current game state. Please try again later.",
+                    color=0xe74c3c
+                )
+                
+                await interaction.followup.send(embed=error_embed)
+    
+        
         # I'll continue with the rest of the commands in the next step...
         # For now, this should fix your immediate startup error
 
