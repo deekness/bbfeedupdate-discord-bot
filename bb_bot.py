@@ -2649,7 +2649,7 @@ Be selective - these should be the updates that a superfan would want to know ab
             
             embed = discord.Embed(
                 title="📸 Feed Highlights - What Just Happened",
-                description=f"But first...",
+                description=f"Key moments from the last {len(self.highlights_queue)} updates",
                 color=0xe74c3c,
                 timestamp=datetime.now()
             )
@@ -2841,12 +2841,12 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         # Create main embed
         if summary_type == "hourly_summary":
             title = f"🏠 Chen Bot's House Summary - {current_hour}"
-            description = f"**{update_count} updates this hour** • AI Structured Analysis"
-            footer_text = f"Chen Bot's House Summary • {current_hour} • Structured AI"
+            description = f"**But first..."
+            footer_text = f"Chen Bot's House Summary • {current_hour}"
         else:
             title = f"🏠 Chen Bot's Update Summary"
-            description = f"**{update_count} updates** • AI Structured Analysis"
-            footer_text = "Chen Bot's Summary • Structured AI"
+            description = f"**But first..."
+            footer_text = "Chen Bot's Summary"
         
         embed = discord.Embed(
             title=title,
