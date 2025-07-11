@@ -2840,13 +2840,13 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         # Create main embed
         if summary_type == "hourly_summary":
-            custom_emoji = "<:takingnotes:916186747770130443>"
             title = f"Chen Bot's House Summary - {current_hour}"
+            custom_emoji = "<:takingnotes:916186747770130443>"
             description = f"But first...{custom_emoji}"
             footer_text = f"Chen Bot's House Summary • {current_hour}"
         else:
-            custom_emoji = "<:takingnotes:916186747770130443>"
             title = f"Chen Bot's House Summary - {current_hour}"
+            custom_emoji = "<:takingnotes:916186747770130443>"
             description = f"But first...{custom_emoji}"
             footer_text = "Chen Bot's Summary"
         
