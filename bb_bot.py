@@ -5644,6 +5644,21 @@ class BBDiscordBot(commands.Bot):
         self.remove_command('help')
         self.setup_commands()
     
+    def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
+        """Check if user is bot owner or has admin permissions"""
+        # Check if user is bot owner
+        owner_id = self.config.get('owner_id')
+        if owner_id and user.id == owner_id:
+            return True
+        
+        # Check if user has admin permissions in the guild (if in a guild)
+        if interaction and interaction.guild:
+            member = interaction.guild.get_member(user.id)
+            if member and member.guild_permissions.administrator:
+                return True
+        
+        return False
+    
     def setup_commands(self):
         """Setup all slash commands"""
         
@@ -5651,8 +5666,8 @@ class BBDiscordBot(commands.Bot):
         async def status_slash(interaction: discord.Interaction):
             """Show bot status"""
             try:
-                if not interaction.user.guild_permissions.administrator:
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                if not self.is_owner_or_admin(interaction.user, interaction):
+                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
                     return
                 
                 await interaction.response.defer(ephemeral=True)
