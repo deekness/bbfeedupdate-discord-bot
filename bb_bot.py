@@ -9,7 +9,7 @@ import os
 import sys
 import signal
 from datetime import datetime, timedelta
-import pytz_
+import pytz
 from typing import List, Dict, Set, Optional, Tuple
 import logging
 from dataclasses import dataclass
