@@ -9,7 +9,7 @@ import os
 import sys
 import signal
 from datetime import datetime, timedelta
-import pytz
+import pytz_
 from typing import List, Dict, Set, Optional, Tuple
 import logging
 from dataclasses import dataclass
@@ -2841,13 +2841,13 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         # Create main embed
         if summary_type == "hourly_summary":
             custom_emoji = "<:takingnotes:916186747770130443>"
-            title = f"Chen Bot's House Summary - {current_hour} {custom_emoji}"
-            description = f"But first..."
+            title = f"Chen Bot's House Summary - {current_hour}"
+            description = f"But first...{custom_emoji}"
             footer_text = f"Chen Bot's House Summary • {current_hour}"
         else:
             custom_emoji = "<:takingnotes:916186747770130443>"
-            title = f"Chen Bot's House Summary - {current_hour} {custom_emoji}"
-            description = f"But first..."
+            title = f"Chen Bot's House Summary - {current_hour}"
+            description = f"But first...{custom_emoji}"
             footer_text = "Chen Bot's Summary"
         
         embed = discord.Embed(
@@ -2939,11 +2939,11 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         current_hour = datetime.now().strftime("%I %p").lstrip('0')
         
         custom_emoji = "<:takingnotes:916186747770130443>"
-        title = f"Chen Bot's House Summary - {current_hour} {custom_emoji}"
+        title = f"Chen Bot's House Summary - {current_hour}"
         
         embed = discord.Embed(
             title=title,
-            description=f"**{len(self.hourly_queue)} updates this hour** • Enhanced Pattern Analysis",
+            description=f"**{len(self.hourly_queue)} updates this hour** •{custom_emoji}",
             color=0x95a5a6,  # Gray for pattern-based
             timestamp=datetime.now()
         )
