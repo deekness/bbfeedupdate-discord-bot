@@ -2840,14 +2840,12 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         # Create main embed
         if summary_type == "hourly_summary":
-            title = f"Chen Bot's House Summary - {current_hour}"
-            custom_emoji = "<:takingnotes:916186747770130443>"
-            description = f"But first...{custom_emoji}"
+            title = f"Chen Bot's House Summary - {current_hour} 🏠"
+            description = f"But first..."
             footer_text = f"Chen Bot's House Summary • {current_hour}"
         else:
-            title = f"Chen Bot's House Summary - {current_hour}"
-            custom_emoji = "<:takingnotes:916186747770130443>"
-            description = f"But first...{custom_emoji}"
+            title = f"Chen Bot's House Summary - {current_hour} 🏠"
+            description = f"But first..."
             footer_text = "Chen Bot's Summary"
         
         embed = discord.Embed(
