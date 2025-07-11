@@ -284,7 +284,7 @@ ALL_ZINGS = PG_ZINGS + PG13_ZINGS
 # Add this with your other constants (around line 50-100)
 BB27_HOUSEGUESTS = [
     "Adrian", "Amy", "Ashley", "Ava", "Jimmy", "Katherine", "Keanu", 
-    "Kelley", "Lauren", "Mickey", "Morgan", "Rachel", "Rylie", "Vince", "Will", "Zach", "Zae"
+    "Kelley", "Lauren", "Mickey", "Morgan", "Rylie", "Vince", "Will", "Zach", "Zae"
     # Replace these with your actual 20 houseguests
 ]
 
@@ -5644,31 +5644,16 @@ class BBDiscordBot(commands.Bot):
         self.remove_command('help')
         self.setup_commands()
     
-    def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
-        """Check if user is bot owner or has admin permissions"""
-        # Check if user is bot owner
-        owner_id = self.config.get('owner_id')
-        if owner_id and user.id == owner_id:
-            return True
-        
-        # Check if user has admin permissions in the guild (if in a guild)
-        if interaction and interaction.guild:
-            member = interaction.guild.get_member(user.id)
-            if member and member.guild_permissions.administrator:
-                return True
-        
-        return False
-    
     def setup_commands(self):
         """Setup all slash commands"""
         
-            @self.tree.command(name="status", description="Show bot status and statistics")
-            async def status_slash(interaction: discord.Interaction):
-                """Show bot status"""
-                try:
-                    if not self.is_owner_or_admin(interaction.user, interaction):
-                        await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
-                        return
+        @self.tree.command(name="status", description="Show bot status and statistics")
+        async def status_slash(interaction: discord.Interaction):
+            """Show bot status"""
+            try:
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
                 
                 await interaction.response.defer(ephemeral=True)
                 
@@ -5737,8 +5722,8 @@ class BBDiscordBot(commands.Bot):
         async def summary_slash(interaction: discord.Interaction, hours: int = 24):
             """Generate a summary of updates"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-            await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
                     return
                 
                 if hours < 1 or hours > 168:
@@ -5794,8 +5779,8 @@ class BBDiscordBot(commands.Bot):
         async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
             """Set the channel for RSS updates"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
                     return
                     
                 if not channel.permissions_for(interaction.guild.me).send_messages:
@@ -5904,8 +5889,8 @@ class BBDiscordBot(commands.Bot):
         async def test_llm_slash(interaction: discord.Interaction):
             """Test LLM integration"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
                     return
                 
                 await interaction.response.defer(ephemeral=True)
@@ -6070,8 +6055,8 @@ class BBDiscordBot(commands.Bot):
         async def remove_bad_alliance(interaction: discord.Interaction, alliance_name: str):
             """Remove a bad alliance"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
                     return
                     
                 await interaction.response.defer(ephemeral=True)
@@ -6248,8 +6233,8 @@ class BBDiscordBot(commands.Bot):
                                   week_number: int = None):
             """Create a prediction poll with interactive houseguest selection"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to create polls.", ephemeral=True)
                     return
                 
                 if duration_hours < 1 or duration_hours > 168:
@@ -6413,8 +6398,8 @@ class BBDiscordBot(commands.Bot):
         async def closepoll_slash(interaction: discord.Interaction):
             """Close a poll using interactive selection"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to close polls.", ephemeral=True)
                     return
                 
                 await interaction.response.defer(ephemeral=True)
@@ -6484,8 +6469,8 @@ class BBDiscordBot(commands.Bot):
         async def resolvepoll_slash(interaction: discord.Interaction):
             """Resolve a poll using interactive selection"""
             try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                if not interaction.user.guild_permissions.administrator:
+                    await interaction.response.send_message("You need administrator permissions to resolve polls.", ephemeral=True)
                     return
                 
                 await interaction.response.defer(ephemeral=True)
