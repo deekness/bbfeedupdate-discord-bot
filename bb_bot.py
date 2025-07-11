@@ -284,7 +284,7 @@ ALL_ZINGS = PG_ZINGS + PG13_ZINGS
 # Add this with your other constants (around line 50-100)
 BB27_HOUSEGUESTS = [
     "Adrian", "Amy", "Ashley", "Ava", "Jimmy", "Katherine", "Keanu", 
-    "Kelley", "Lauren", "Mickey", "Morgan", "Rylie", "Vince", "Will", "Zach", "Zae"
+    "Kelley", "Lauren", "Mickey", "Morgan", "Rachel", "Rylie", "Vince", "Will", "Zach", "Zae"
     # Replace these with your actual 20 houseguests
 ]
 
