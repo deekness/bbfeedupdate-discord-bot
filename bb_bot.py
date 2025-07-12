@@ -1673,14 +1673,25 @@ class PredictionManager:
             closes_at = datetime.now() + timedelta(hours=duration_hours)
             options_json = json.dumps(options)
             
-            cursor.execute("""
-                INSERT INTO predictions 
-                (title, description, prediction_type, options, created_by, closes_at, guild_id, week_number)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (title, description, prediction_type.value, options_json, 
-                  created_by, closes_at, guild_id, week_number))
-            
-            prediction_id = cursor.lastrowid
+            if self.use_postgresql:
+                cursor.execute("""
+                    INSERT INTO predictions 
+                    (title, description, prediction_type, options, created_by, closes_at, guild_id, week_number)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING prediction_id
+                """, (title, description, prediction_type.value, options_json, 
+                      created_by, closes_at, guild_id, week_number))
+                
+                prediction_id = cursor.fetchone()[0]
+            else:
+                cursor.execute("""
+                    INSERT INTO predictions 
+                    (title, description, prediction_type, options, created_by, closes_at, guild_id, week_number)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """, (title, description, prediction_type.value, options_json, 
+                      created_by, closes_at, guild_id, week_number))
+                
+                prediction_id = cursor.lastrowid
             conn.commit()
             
             logger.info(f"Created prediction poll: {title} (ID: {prediction_id})")
