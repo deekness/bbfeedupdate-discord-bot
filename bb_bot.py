@@ -4362,23 +4362,23 @@ async def save_queue_state(self):
         logger.error(f"Error saving queue state: {e}")
 
     async def save_queue_state(self):
-    """Save current queue state to database"""
-    try:
-        # Use the same database connection as prediction manager
-        conn = None
-        if hasattr(self, 'db') and hasattr(self.db, 'get_connection'):
-            conn = self.db.get_connection()
-        else:
-            # If not available, use config to get connection
-            database_url = os.getenv('DATABASE_URL')
-            if database_url:
-                import psycopg2
-                import psycopg2.extras
-                conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
-        
-        if not conn:
-            logger.warning("No database connection available for queue persistence")
-            return
+        """Save current queue state to database"""
+        try:
+            # Use the same database connection as prediction manager
+            conn = None
+            if hasattr(self, 'db') and hasattr(self.db, 'get_connection'):
+                conn = self.db.get_connection()
+            else:
+                # If not available, use config to get connection
+                database_url = os.getenv('DATABASE_URL')
+                if database_url:
+                    import psycopg2
+                    import psycopg2.extras
+                    conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+            
+            if not conn:
+                logger.warning("No database connection available for queue persistence")
+                return
             
         cursor = conn.cursor()
         
