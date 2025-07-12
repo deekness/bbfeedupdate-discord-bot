@@ -1972,12 +1972,20 @@ class PredictionManager:
             predictions = []
             for row in cursor.fetchall():
                 pred_id, title, desc, pred_type, options_json, closes_at, week_num = row
+                
+                # Safely parse JSON
+                try:
+                    options = json.loads(options_json) if options_json else []
+                except (json.JSONDecodeError, TypeError) as e:
+                    logger.warning(f"Invalid JSON in options for prediction {pred_id}: {options_json}")
+                    options = []
+                
                 predictions.append({
                     'id': pred_id,
                     'title': title,
                     'description': desc,
                     'type': pred_type,
-                    'options': json.loads(options_json),
+                    'options': options,
                     'closes_at': closes_at,
                     'week_number': week_num
                 })
