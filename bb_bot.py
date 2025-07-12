@@ -6086,6 +6086,7 @@ class BBDiscordBot(commands.Bot):
                 ("/resolvepoll", "Resolve a poll and award points (Admin only)"),
                 ("/leaderboard", "View prediction leaderboards"),
                 ("/mypredictions", "View your prediction history"),
+                ("/pollsummary", "Show a summary of all active polls (Admin/Owner only)"),
                 ("/ask", "Ask questions about the current Big Brother game state")
             ]
             
@@ -6895,6 +6896,82 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error showing user predictions: {e}")
                 await interaction.followup.send("Error retrieving your predictions.", ephemeral=True)
 
+        @self.tree.command(name="pollsummary", description="Show a summary of all active polls (Admin/Owner only)")
+        async def pollsummary_slash(interaction: discord.Interaction):
+            """Show a summary of all active polls publicly"""
+            try:
+                if not self.is_owner_or_admin(interaction.user, interaction):
+                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                    return
+                    
+                await interaction.response.defer()
+                
+                active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
+                
+                if not active_predictions:
+                    embed = discord.Embed(
+                        title="📊 Active Prediction Polls",
+                        description="No active polls right now.",
+                        color=0x95a5a6
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                embed = discord.Embed(
+                    title="🗳️ Active Prediction Polls",
+                    description=f"**{len(active_predictions)} active polls** - Use `/predict` to participate!",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                for prediction in active_predictions:
+                    # Calculate time left
+                    closes_at = prediction['closes_at']
+                    if isinstance(closes_at, str):
+                        closes_at = datetime.fromisoformat(closes_at)
+                    
+                    time_left = closes_at - datetime.now()
+                    if time_left.total_seconds() > 0:
+                        hours_left = int(time_left.total_seconds() / 3600)
+                        minutes_left = int((time_left.total_seconds() % 3600) / 60)
+                        time_str = f"{hours_left}h {minutes_left}m remaining"
+                    else:
+                        time_str = "Closed"
+                    
+                    # Get point value
+                    point_values = {
+                        'season_winner': 20,
+                        'first_boot': 15,
+                        'weekly_hoh': 5,
+                        'weekly_veto': 3,
+                        'weekly_eviction': 2
+                    }
+                    points = point_values.get(prediction['type'], 5)
+                    
+                    # Add field for each poll
+                    embed.add_field(
+                        name=f"🎯 {prediction['title']}",
+                        value=f"**{time_str}** • {points} points • ID: {prediction['id']}\n"
+                              f"{len(prediction['options'])} options available",
+                        inline=False
+                    )
+                
+                embed.add_field(
+                    name="💡 How to Participate",
+                    value="Use `/predict` to make your predictions privately!\n"
+                          "Use `/polls` to see detailed poll information.",
+                    inline=False
+                )
+                
+                embed.set_footer(text="Prediction System • Points awarded for correct predictions")
+                
+                await interaction.followup.send(embed=embed)
+                
+            except Exception as e:
+                logger.error(f"Error showing poll summary: {e}")
+                await interaction.followup.send("Error retrieving poll summary.")
+
+        
         @self.tree.command(name="ask", description="Ask questions about the current Big Brother game")
         @discord.app_commands.describe(question="Your question about the current game state")
         async def ask_slash(interaction: discord.Interaction, question: str):
