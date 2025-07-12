@@ -1522,70 +1522,123 @@ class PredictionManager:
         PredictionType.WEEKLY_EVICTION: 2
     }
     
-    def __init__(self, db_path: str = "bb_updates.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "bb_updates.db", database_url: str = None, use_postgresql: bool = False):
+        if use_postgresql and database_url:
+            self.database_url = database_url
+            self.use_postgresql = True
+        else:
+            self.db_path = db_path
+            self.use_postgresql = False
         self.init_prediction_tables()
     
     def get_connection(self):
         """Get database connection with datetime support"""
-        conn = sqlite3.connect(
-            self.db_path,
-            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-        )
-        return conn
+        if self.use_postgresql:
+            import psycopg2
+            import psycopg2.extras
+            return psycopg2.connect(self.database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            conn = sqlite3.connect(
+                self.db_path,
+                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+            )
+            return conn
     
     def init_prediction_tables(self):
         """Initialize prediction system database tables"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Predictions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS predictions (
-                prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                title TEXT NOT NULL,
-                description TEXT,
-                prediction_type TEXT NOT NULL,
-                options TEXT NOT NULL,
-                created_by INTEGER NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                closes_at TIMESTAMP NOT NULL,
-                status TEXT DEFAULT 'active',
-                correct_option TEXT,
-                week_number INTEGER,
-                guild_id INTEGER NOT NULL
-            )
-        """)
+        if self.use_postgresql:
+            # PostgreSQL syntax
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    prediction_id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    prediction_type TEXT NOT NULL,
+                    options TEXT NOT NULL,
+                    created_by BIGINT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    closes_at TIMESTAMP NOT NULL,
+                    status TEXT DEFAULT 'active',
+                    correct_option TEXT,
+                    week_number INTEGER,
+                    guild_id BIGINT NOT NULL
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_predictions (
+                    user_id BIGINT NOT NULL,
+                    prediction_id INTEGER NOT NULL,
+                    option TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, prediction_id),
+                    FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_leaderboard (
+                    user_id BIGINT NOT NULL,
+                    guild_id BIGINT NOT NULL,
+                    week_number INTEGER NOT NULL,
+                    season_points INTEGER DEFAULT 0,
+                    weekly_points INTEGER DEFAULT 0,
+                    correct_predictions INTEGER DEFAULT 0,
+                    total_predictions INTEGER DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, guild_id, week_number)
+                )
+            """)
+        else:
+            # SQLite syntax (your original code)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    prediction_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    prediction_type TEXT NOT NULL,
+                    options TEXT NOT NULL,
+                    created_by INTEGER NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    closes_at TIMESTAMP NOT NULL,
+                    status TEXT DEFAULT 'active',
+                    correct_option TEXT,
+                    week_number INTEGER,
+                    guild_id INTEGER NOT NULL
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_predictions (
+                    user_id INTEGER NOT NULL,
+                    prediction_id INTEGER NOT NULL,
+                    option TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, prediction_id),
+                    FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_leaderboard (
+                    user_id INTEGER NOT NULL,
+                    guild_id INTEGER NOT NULL,
+                    week_number INTEGER NOT NULL,
+                    season_points INTEGER DEFAULT 0,
+                    weekly_points INTEGER DEFAULT 0,
+                    correct_predictions INTEGER DEFAULT 0,
+                    total_predictions INTEGER DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, guild_id, week_number)
+                )
+            """)
         
-        # User predictions table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS user_predictions (
-                user_id INTEGER NOT NULL,
-                prediction_id INTEGER NOT NULL,
-                option TEXT NOT NULL,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, prediction_id),
-                FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id)
-            )
-        """)
-        
-        # Leaderboard table for tracking points
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS prediction_leaderboard (
-                user_id INTEGER NOT NULL,
-                guild_id INTEGER NOT NULL,
-                week_number INTEGER NOT NULL,
-                season_points INTEGER DEFAULT 0,
-                weekly_points INTEGER DEFAULT 0,
-                correct_predictions INTEGER DEFAULT 0,
-                total_predictions INTEGER DEFAULT 0,
-                last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (user_id, guild_id, week_number)
-            )
-        """)
-        
-        # Create indexes
+        # Create indexes (same for both)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_status ON predictions(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_closes_at ON predictions(closes_at)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_user_predictions_user ON user_predictions(user_id)")
