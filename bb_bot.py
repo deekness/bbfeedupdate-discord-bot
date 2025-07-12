@@ -1682,7 +1682,12 @@ class PredictionManager:
                 """, (title, description, prediction_type.value, options_json, 
                       created_by, closes_at, guild_id, week_number))
                 
-                prediction_id = cursor.fetchone()[0]
+                result = cursor.fetchone()
+                if result:
+                    prediction_id = result[0] if isinstance(result, tuple) else result['prediction_id']
+                else:
+                    logger.error("No prediction_id returned from PostgreSQL insert")
+                    raise Exception("Failed to get prediction ID")
             else:
                 cursor.execute("""
                     INSERT INTO predictions 
