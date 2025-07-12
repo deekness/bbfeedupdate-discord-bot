@@ -2110,11 +2110,18 @@ class PredictionManager:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
-                UPDATE predictions 
-                SET status = ? 
-                WHERE status = ? AND closes_at <= ?
-            """, (PredictionStatus.CLOSED.value, PredictionStatus.ACTIVE.value, datetime.now()))
+            if self.use_postgresql:
+                cursor.execute("""
+                    UPDATE predictions 
+                    SET status = %s 
+                    WHERE status = %s AND closes_at <= %s
+                """, (PredictionStatus.CLOSED.value, PredictionStatus.ACTIVE.value, datetime.now()))
+            else:
+                cursor.execute("""
+                    UPDATE predictions 
+                    SET status = ? 
+                    WHERE status = ? AND closes_at <= ?
+                """, (PredictionStatus.CLOSED.value, PredictionStatus.ACTIVE.value, datetime.now()))
             
             closed_count = cursor.rowcount
             conn.commit()
