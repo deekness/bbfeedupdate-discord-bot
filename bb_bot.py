@@ -2002,7 +2002,7 @@ class PredictionManager:
         """Calculate current BB week (you may want to adjust this logic)"""
         # For now, using a simple calculation from season start
         # You can modify this based on actual BB season dates
-        season_start = datetime(2025, 7, 1)  # Adjust for actual season
+        season_start = datetime(2025, 7, 8)  # Adjust for actual season
         current_date = datetime.now()
         week_number = ((current_date - season_start).days // 7) + 1
         return max(1, week_number)
@@ -2529,7 +2529,7 @@ class UpdateBatcher:
         updates_text = "\n".join(formatted_updates)
         
         # Calculate current day (simplified)
-        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 8).date()).days + 1)
         
         # Build structured prompt
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
@@ -6771,6 +6771,11 @@ class BBDiscordBot(commands.Bot):
         
         return new_updates
     
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready before starting daily recap task"""
+        await self.wait_until_ready()
+    
     @tasks.loop(hours=24)
     async def daily_recap_task(self):
         """Daily recap task that runs at 8:01 AM Pacific Time"""
@@ -6782,9 +6787,14 @@ class BBDiscordBot(commands.Bot):
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
-            # Check if it's the right time (8:01 AM Pacific)
-            if now_pacific.hour != 8 or now_pacific.minute != 1:
+            logger.debug(f"Daily recap check: Current time is {now_pacific.strftime('%I:%M %p')} Pacific")
+
+            # Check if it's around 8:00 AM Pacific (8:00-8:05 AM window)
+            if not (now_pacific.hour == 8 and 0 <= now_pacific.minute <= 5):
+                logger.debug(f"Not time for daily recap yet (current: {now_pacific.hour}:{now_pacific.minute:02d})")
                 return
+            
+            logger.info("Daily recap time window - proceeding with recap generation")
             
             logger.info("Starting daily recap generation")
             
@@ -6801,7 +6811,7 @@ class BBDiscordBot(commands.Bot):
             
             # Calculate day number (days since season start)
             # For now, we'll use a simple calculation - you might want to adjust this
-            season_start = datetime(2025, 7, 1)  # Adjust this date for actual season start
+            season_start = datetime(2025, 7, 8)  # Adjust this date for actual season start
             day_number = (end_time.date() - season_start.date()).days + 1
             
             # Create daily recap
