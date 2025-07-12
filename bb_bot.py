@@ -6771,10 +6771,6 @@ class BBDiscordBot(commands.Bot):
         
         return new_updates
     
-    @daily_recap_task.before_loop
-    async def before_daily_recap_task(self):
-        """Wait for bot to be ready before starting daily recap task"""
-        await self.wait_until_ready()
     
     @tasks.loop(hours=24)
     async def daily_recap_task(self):
@@ -6825,6 +6821,11 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in daily recap task: {e}")
             logger.error(traceback.format_exc())
+    
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready before starting daily recap task"""
+        await self.wait_until_ready()
     
     @tasks.loop(minutes=30)
     async def auto_close_predictions_task(self):
