@@ -5897,6 +5897,11 @@ class BBDiscordBot(commands.Bot):
     def setup_commands(self):
         """Setup all slash commands"""
         
+        # Prevent duplicate registration
+        if hasattr(self, '_commands_setup') and self._commands_setup:
+            logger.warning("Commands already setup, skipping duplicate registration")
+            return
+        
         @self.tree.command(name="status", description="Show bot status and statistics")
         async def status_slash(interaction: discord.Interaction):
             """Show bot status"""
