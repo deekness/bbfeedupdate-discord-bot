@@ -1798,11 +1798,12 @@ class PredictionManager:
         
         try:
             # Set busy timeout for this connection
-            conn.execute("PRAGMA busy_timeout = 10000")
+            if not self.use_postgresql:
+                conn.execute("PRAGMA busy_timeout = 10000")
             cursor = conn.cursor()
             
             # Get prediction details
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT prediction_type, options, status, guild_id, week_number
                 FROM predictions WHERE prediction_id = ?
             """, (prediction_id,))
@@ -1811,35 +1812,58 @@ class PredictionManager:
             if not result:
                 return False, 0, []
             
-            pred_type, options_json, status, guild_id, week_number = result
-            options = json.loads(options_json)
+            # Handle result based on database type
+            if self.use_postgresql:
+                pred_type = result['prediction_type']
+                options_json = result['options']
+                status = result['status']
+                guild_id = result['guild_id']
+                week_number = result['week_number']
+            else:
+                pred_type, options_json, status, guild_id, week_number = result
+            
+            # Parse options safely
+            try:
+                options = json.loads(options_json) if options_json else []
+            except (json.JSONDecodeError, TypeError):
+                logger.error(f"Invalid options JSON for prediction {prediction_id}")
+                return False, 0, []
             
             # Validate correct option
             if correct_option not in options:
                 return False, 0, []
             
             # Get users who predicted correctly BEFORE updating the prediction
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT user_id FROM user_predictions 
                 WHERE prediction_id = ? AND option = ?
             """, (prediction_id, correct_option))
             
-            correct_user_ids = [row[0] for row in cursor.fetchall()]
+            # Handle user IDs result
+            if self.use_postgresql:
+                correct_user_ids = [row['user_id'] for row in cursor.fetchall()]
+            else:
+                correct_user_ids = [row[0] for row in cursor.fetchall()]
             
             # Update prediction status
-            cursor.execute("""
+            self._execute_query(cursor, """
                 UPDATE predictions 
                 SET status = ?, correct_option = ?
                 WHERE prediction_id = ?
             """, (PredictionStatus.RESOLVED.value, correct_option, prediction_id))
             
             # Get all user predictions for this poll
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT user_id, option FROM user_predictions 
                 WHERE prediction_id = ?
             """, (prediction_id,))
             
-            user_predictions = cursor.fetchall()
+            # Handle user predictions result
+            if self.use_postgresql:
+                user_predictions = [(row['user_id'], row['option']) for row in cursor.fetchall()]
+            else:
+                user_predictions = cursor.fetchall()
+            
             conn.commit()
             
             # Calculate points for correct predictions
@@ -1971,7 +1995,18 @@ class PredictionManager:
             
             predictions = []
             for row in cursor.fetchall():
-                pred_id, title, desc, pred_type, options_json, closes_at, week_num = row
+                if self.use_postgresql:
+                    # PostgreSQL returns RealDictCursor results
+                    pred_id = row['prediction_id']
+                    title = row['title']
+                    desc = row['description']
+                    pred_type = row['prediction_type']
+                    options_json = row['options']
+                    closes_at = row['closes_at']
+                    week_num = row['week_number']
+                else:
+                    # SQLite returns tuple
+                    pred_id, title, desc, pred_type, options_json, closes_at, week_num = row
                 
                 # Safely parse JSON
                 try:
@@ -1979,6 +2014,14 @@ class PredictionManager:
                 except (json.JSONDecodeError, TypeError) as e:
                     logger.warning(f"Invalid JSON in options for prediction {pred_id}: {options_json}")
                     options = []
+                
+                # Handle datetime conversion
+                if isinstance(closes_at, str):
+                    try:
+                        closes_at = datetime.fromisoformat(closes_at)
+                    except ValueError:
+                        logger.warning(f"Invalid date format for prediction {pred_id}: {closes_at}")
+                        closes_at = datetime.now()
                 
                 predictions.append({
                     'id': pred_id,
@@ -2010,7 +2053,12 @@ class PredictionManager:
             """, (user_id, prediction_id))
             
             result = cursor.fetchone()
-            return result[0] if result else None
+            if result:
+                if self.use_postgresql:
+                    return result['option']
+                else:
+                    return result[0]
+            return None
             
         except Exception as e:
             logger.error(f"Error getting user prediction: {e}")
@@ -2024,7 +2072,7 @@ class PredictionManager:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT user_id, 
                        SUM(season_points) as total_points,
                        SUM(correct_predictions) as total_correct,
@@ -2038,7 +2086,17 @@ class PredictionManager:
             
             leaderboard = []
             for row in cursor.fetchall():
-                user_id, points, correct, total = row
+                if self.use_postgresql:
+                    user_id = row['user_id']
+                    points = row['total_points'] or 0
+                    correct = row['total_correct'] or 0
+                    total = row['total_predictions'] or 0
+                else:
+                    user_id, points, correct, total = row
+                    points = points or 0
+                    correct = correct or 0
+                    total = total or 0
+                
                 accuracy = (correct / total * 100) if total > 0 else 0
                 leaderboard.append({
                     'user_id': user_id,
@@ -2099,7 +2157,7 @@ class PredictionManager:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT p.title, p.prediction_type, up.option, p.correct_option, 
                        p.status, p.created_at, p.week_number
                 FROM user_predictions up
@@ -2111,7 +2169,16 @@ class PredictionManager:
             
             history = []
             for row in cursor.fetchall():
-                title, pred_type, user_option, correct_option, status, created_at, week_num = row
+                if self.use_postgresql:
+                    title = row['title']
+                    pred_type = row['prediction_type']
+                    user_option = row['option']
+                    correct_option = row['correct_option']
+                    status = row['status']
+                    created_at = row['created_at']
+                    week_num = row['week_number']
+                else:
+                    title, pred_type, user_option, correct_option, status, created_at, week_num = row
                 
                 is_correct = None
                 if status == PredictionStatus.RESOLVED.value and correct_option:
