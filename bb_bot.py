@@ -5876,8 +5876,6 @@ class BBDiscordBot(commands.Bot):
         signal.signal(signal.SIGTERM, self.signal_handler)
         signal.signal(signal.SIGINT, self.signal_handler)
             
-        self.remove_command('help')
-        self.setup_commands()
     
     def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
         """Check if user is bot owner or has admin permissions"""
