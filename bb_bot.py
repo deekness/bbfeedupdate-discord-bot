@@ -6631,11 +6631,6 @@ class BBDiscordBot(commands.Bot):
         
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
-        self.update_batcher.db = self.db
-        async def restore_queues():
-            await self.update_batcher.restore_queue_state()
-
-        self.loop.create_task(restore_queues())
         
         
 
@@ -6666,6 +6661,20 @@ class BBDiscordBot(commands.Bot):
         signal.signal(signal.SIGTERM, self.signal_handler)
         signal.signal(signal.SIGINT, self.signal_handler)
             
+    
+    async def setup_hook(self):
+        """Setup hook called when bot is ready"""
+        try:
+            # Give the batcher access to database
+            self.update_batcher.db = self.db
+            
+            # Restore queue state on startup
+            await self.update_batcher.restore_queue_state()
+            
+            logger.info("Bot setup completed with queue restoration")
+            
+        except Exception as e:
+            logger.error(f"Error in setup hook: {e}")
     
     def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
         """Check if user is bot owner or has admin permissions"""
@@ -7827,6 +7836,19 @@ class BBDiscordBot(commands.Bot):
             logger.info("RSS feed monitoring and daily recap and prediction auto-close tasks started")
         except Exception as e:
             logger.error(f"Error starting background tasks: {e}")
+
+        if not hasattr(self, '_cleanup_task_started'):
+            self._cleanup_task_started = True
+            self.loop.create_task(self._periodic_cleanup())
+        
+    async def _periodic_cleanup(self):
+        """Periodic cleanup of old checkpoints"""
+        while not self.is_shutting_down:
+            try:
+                await asyncio.sleep(3600)  # Run every hour
+                await self.update_batcher.clear_old_checkpoints()
+            except Exception as e:
+                logger.error(f"Error in periodic cleanup: {e}")
     
     def create_content_hash(self, title: str, description: str) -> str:
         """Create a unique hash for content deduplication"""
