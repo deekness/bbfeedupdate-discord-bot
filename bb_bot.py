@@ -6616,7 +6616,7 @@ class BBDiscordBot(commands.Bot):
         async def polls_slash(interaction: discord.Interaction):
             """View active polls"""
             try:
-                await interaction.response.defer()
+                await interaction.response.defer(ephemeral=True)  # Changed to ephemeral=True
                 
                 active_predictions = self.prediction_manager.get_active_predictions(interaction.guild.id)
                 
@@ -6626,7 +6626,7 @@ class BBDiscordBot(commands.Bot):
                         description="No active polls right now.",
                         color=0x95a5a6
                     )
-                    await interaction.followup.send(embed=embed)
+                    await interaction.followup.send(embed=embed, ephemeral=True)  # Added ephemeral=True
                     return
                 
                 # Show up to 5 active polls
@@ -6636,16 +6636,17 @@ class BBDiscordBot(commands.Bot):
                     )
                     
                     embed = self.prediction_manager.create_prediction_embed(prediction, user_prediction)
-                    await interaction.followup.send(embed=embed)
+                    await interaction.followup.send(embed=embed, ephemeral=True)  # Added ephemeral=True
                 
                 if len(active_predictions) > 5:
                     await interaction.followup.send(
-                        f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict <id> <option>` to vote.*"
+                        f"*Showing 5 of {len(active_predictions)} active polls. Use `/predict` to make your predictions.*",
+                        ephemeral=True  # Added ephemeral=True
                     )
                 
             except Exception as e:
                 logger.error(f"Error showing polls: {e}")
-                await interaction.followup.send("Error retrieving polls.")
+                await interaction.followup.send("Error retrieving polls.", ephemeral=True)  # Added ephemeral=True
 
         @self.tree.command(name="closepoll", description="Manually close a prediction poll (Admin only)")
         async def closepoll_slash(interaction: discord.Interaction):
