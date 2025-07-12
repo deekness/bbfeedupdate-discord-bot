@@ -4380,7 +4380,7 @@ async def save_queue_state(self):
                 logger.warning("No database connection available for queue persistence")
                 return
             
-        cursor = conn.cursor()
+            cursor = conn.cursor()
         
         # Save highlights queue
         highlights_data = {
