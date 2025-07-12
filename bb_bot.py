@@ -1725,8 +1725,20 @@ class PredictionManager:
             if not result:
                 return False
             
-            status, closes_at, options_json = result
-            options = json.loads(options_json)
+            # Handle result based on database type
+            if self.use_postgresql:
+                status = result['status']
+                closes_at = result['closes_at']
+                options_json = result['options']
+            else:
+                status, closes_at, options_json = result
+            
+            # Safely parse JSON options
+            try:
+                options = json.loads(options_json) if options_json else []
+            except (json.JSONDecodeError, TypeError) as e:
+                logger.error(f"Invalid JSON in options for prediction {prediction_id}: {options_json}")
+                return False
             
             # Check if prediction is still active and not closed
             if status != PredictionStatus.ACTIVE.value:
@@ -1741,7 +1753,7 @@ class PredictionManager:
             
             # Insert or update user prediction
             if self.use_postgresql:
-                self._execute_query(cursor, "", (), """
+                self._execute_query(cursor, "", (user_id, prediction_id, option), """
                     INSERT INTO user_predictions 
                     (user_id, prediction_id, option, updated_at)
                     VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
