@@ -766,48 +766,86 @@ class AllianceTracker:
         conn = self.get_connection()
         cursor = conn.cursor()
         
-        # Main alliances table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS alliances (
-                alliance_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT,
-                formed_date TIMESTAMP,
-                dissolved_date TIMESTAMP,
-                status TEXT DEFAULT 'active',
-                confidence_level INTEGER DEFAULT 50,
-                last_activity TIMESTAMP,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        """)
+        if self.use_postgresql:
+            # PostgreSQL syntax
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliances (
+                    alliance_id SERIAL PRIMARY KEY,
+                    name TEXT,
+                    formed_date TIMESTAMP,
+                    dissolved_date TIMESTAMP,
+                    status TEXT DEFAULT 'active',
+                    confidence_level INTEGER DEFAULT 50,
+                    last_activity TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliance_members (
+                    alliance_id INTEGER,
+                    houseguest_name TEXT,
+                    joined_date TIMESTAMP,
+                    left_date TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
+                    UNIQUE(alliance_id, houseguest_name)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliance_events (
+                    event_id SERIAL PRIMARY KEY,
+                    alliance_id INTEGER,
+                    event_type TEXT,
+                    description TEXT,
+                    involved_houseguests TEXT,
+                    timestamp TIMESTAMP,
+                    update_hash TEXT,
+                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
+                )
+            """)
+        else:
+            # SQLite syntax (your original code)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliances (
+                    alliance_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT,
+                    formed_date TIMESTAMP,
+                    dissolved_date TIMESTAMP,
+                    status TEXT DEFAULT 'active',
+                    confidence_level INTEGER DEFAULT 50,
+                    last_activity TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliance_members (
+                    alliance_id INTEGER,
+                    houseguest_name TEXT,
+                    joined_date TIMESTAMP,
+                    left_date TIMESTAMP,
+                    is_active BOOLEAN DEFAULT 1,
+                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
+                    UNIQUE(alliance_id, houseguest_name)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliance_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    alliance_id INTEGER,
+                    event_type TEXT,
+                    description TEXT,
+                    involved_houseguests TEXT,
+                    timestamp TIMESTAMP,
+                    update_hash TEXT,
+                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
+                )
+            """)
         
-        # Alliance members table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS alliance_members (
-                alliance_id INTEGER,
-                houseguest_name TEXT,
-                joined_date TIMESTAMP,
-                left_date TIMESTAMP,
-                is_active BOOLEAN DEFAULT 1,
-                FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
-                UNIQUE(alliance_id, houseguest_name)
-            )
-        """)
-        
-        # Alliance events table
-        cursor.execute("""
-            CREATE TABLE IF NOT EXISTS alliance_events (
-                event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                alliance_id INTEGER,
-                event_type TEXT,
-                description TEXT,
-                involved_houseguests TEXT,
-                timestamp TIMESTAMP,
-                update_hash TEXT,
-                FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
-            )
-        """)
-        
-        # Create indexes
+        # Create indexes (same for both)
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_status ON alliances(status)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members ON alliance_members(houseguest_name)")
         cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_events_type ON alliance_events(event_type)")
