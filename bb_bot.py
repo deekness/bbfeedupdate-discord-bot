@@ -1544,6 +1544,19 @@ class PredictionManager:
             )
             return conn
     
+    def _execute_query(self, cursor, query_sqlite, params, query_postgresql=None):
+        """Execute query with proper syntax for current database"""
+        if self.use_postgresql:
+            if query_postgresql:
+                # Use custom PostgreSQL query if provided
+                cursor.execute(query_postgresql, params)
+            else:
+                # Convert SQLite ? to PostgreSQL %s
+                pg_query = query_sqlite.replace('?', '%s')
+                cursor.execute(pg_query, params)
+        else:
+            cursor.execute(query_sqlite, params)
+    
     def init_prediction_tables(self):
         """Initialize prediction system database tables"""
         conn = self.get_connection()
@@ -1687,7 +1700,7 @@ class PredictionManager:
         
         try:
             # Check if prediction exists and is active
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT status, closes_at, options FROM predictions 
                 WHERE prediction_id = ?
             """, (prediction_id,))
@@ -1711,11 +1724,20 @@ class PredictionManager:
                 return False
             
             # Insert or update user prediction
-            cursor.execute("""
-                INSERT OR REPLACE INTO user_predictions 
-                (user_id, prediction_id, option, updated_at)
-                VALUES (?, ?, ?, CURRENT_TIMESTAMP)
-            """, (user_id, prediction_id, option))
+            if self.use_postgresql:
+                self._execute_query(cursor, "", (), """
+                    INSERT INTO user_predictions 
+                    (user_id, prediction_id, option, updated_at)
+                    VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
+                    ON CONFLICT (user_id, prediction_id) 
+                    DO UPDATE SET option = EXCLUDED.option, updated_at = CURRENT_TIMESTAMP
+                """)
+            else:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO user_predictions 
+                    (user_id, prediction_id, option, updated_at)
+                    VALUES (?, ?, ?, CURRENT_TIMESTAMP)
+                """, (user_id, prediction_id, option))
             
             conn.commit()
             logger.info(f"User {user_id} predicted '{option}' for prediction {prediction_id}")
@@ -1923,7 +1945,7 @@ class PredictionManager:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT prediction_id, title, description, prediction_type, 
                        options, closes_at, week_number
                 FROM predictions 
@@ -1958,7 +1980,7 @@ class PredictionManager:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
+            self._execute_query(cursor, """
                 SELECT option FROM user_predictions 
                 WHERE user_id = ? AND prediction_id = ?
             """, (user_id, prediction_id))
