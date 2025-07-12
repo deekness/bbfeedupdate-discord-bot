@@ -741,19 +741,25 @@ class AllianceTracker:
         r"(?:The|the) ([\w\s]+) \([\w\s,]+\)",  # The Core (Chelsie, Cam, etc)
     ]
     
-    def __init__(self, db_path: str = "bb_updates.db"):
-        self.db_path = db_path
+    def __init__(self, db_path: str = "bb_updates.db", database_url: str = None, use_postgresql: bool = False):
+        if use_postgresql and database_url:
+            self.database_url = database_url
+            self.use_postgresql = True
+        else:
+            self.db_path = db_path
+            self.use_postgresql = False
         self.init_alliance_tables()
-        self._alliance_cache = {}
-        self._member_cache = defaultdict(set)  # houseguest -> alliance_ids
     
     def get_connection(self):
         """Get database connection with datetime support"""
-        conn = sqlite3.connect(
-            self.db_path,
-            detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
-        )
-        return conn
+        if self.use_postgresql:
+            return psycopg2.connect(self.database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            conn = sqlite3.connect(
+                self.db_path,
+                detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES
+            )
+            return conn
     
     def init_alliance_tables(self):
         """Initialize alliance tracking tables"""
@@ -3968,6 +3974,214 @@ class BBDatabase:
             logger.error(f"Database query error: {e}")
             return []
 
+import psycopg2
+import psycopg2.extras
+from urllib.parse import urlparse
+
+class PostgreSQLDatabase:
+    """PostgreSQL database handler for Railway"""
+    
+    def __init__(self, database_url: str):
+        self.database_url = database_url
+        self.connection_timeout = 30
+        self.init_database()
+    
+    def get_connection(self):
+        """Get PostgreSQL connection"""
+        try:
+            conn = psycopg2.connect(
+                self.database_url,
+                connect_timeout=self.connection_timeout,
+                cursor_factory=psycopg2.extras.RealDictCursor
+            )
+            return conn
+        except Exception as e:
+            logger.error(f"PostgreSQL connection error: {e}")
+            raise
+    
+    def init_database(self):
+        """Initialize PostgreSQL tables"""
+        conn = self.get_connection()
+        try:
+            cursor = conn.cursor()
+            
+            # Updates table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS updates (
+                    id SERIAL PRIMARY KEY,
+                    content_hash VARCHAR(32) UNIQUE,
+                    title TEXT,
+                    description TEXT,
+                    link TEXT,
+                    pub_date TIMESTAMP,
+                    author TEXT,
+                    importance_score INTEGER DEFAULT 1,
+                    categories TEXT,
+                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Predictions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS predictions (
+                    prediction_id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    description TEXT,
+                    prediction_type VARCHAR(50) NOT NULL,
+                    options TEXT NOT NULL,
+                    created_by BIGINT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    closes_at TIMESTAMP NOT NULL,
+                    status VARCHAR(20) DEFAULT 'active',
+                    correct_option TEXT,
+                    week_number INTEGER,
+                    guild_id BIGINT NOT NULL
+                )
+            """)
+            
+            # User predictions table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS user_predictions (
+                    user_id BIGINT NOT NULL,
+                    prediction_id INTEGER NOT NULL,
+                    option TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, prediction_id),
+                    FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id)
+                )
+            """)
+            
+            # Prediction leaderboard table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_leaderboard (
+                    user_id BIGINT NOT NULL,
+                    guild_id BIGINT NOT NULL,
+                    week_number INTEGER NOT NULL,
+                    season_points INTEGER DEFAULT 0,
+                    weekly_points INTEGER DEFAULT 0,
+                    correct_predictions INTEGER DEFAULT 0,
+                    total_predictions INTEGER DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY (user_id, guild_id, week_number)
+                )
+            """)
+            
+            # Alliance tables
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliances (
+                    alliance_id SERIAL PRIMARY KEY,
+                    name TEXT,
+                    formed_date TIMESTAMP,
+                    dissolved_date TIMESTAMP,
+                    status TEXT DEFAULT 'active',
+                    confidence_level INTEGER DEFAULT 50,
+                    last_activity TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliance_members (
+                    alliance_id INTEGER,
+                    houseguest_name TEXT,
+                    joined_date TIMESTAMP,
+                    left_date TIMESTAMP,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
+                    UNIQUE(alliance_id, houseguest_name)
+                )
+            """)
+            
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS alliance_events (
+                    event_id SERIAL PRIMARY KEY,
+                    alliance_id INTEGER,
+                    event_type TEXT,
+                    description TEXT,
+                    involved_houseguests TEXT,
+                    timestamp TIMESTAMP,
+                    update_hash TEXT,
+                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
+                )
+            """)
+            
+            # Create indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_hash ON updates(content_hash)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_date ON updates(pub_date)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_guild ON predictions(guild_id, status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_status ON alliances(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members ON alliance_members(houseguest_name)")
+            
+            conn.commit()
+            logger.info("PostgreSQL database initialized successfully")
+            
+        except Exception as e:
+            logger.error(f"PostgreSQL initialization error: {e}")
+            raise
+        finally:
+            conn.close()
+    
+    # Add the same methods as BBDatabase but with PostgreSQL syntax
+    def is_duplicate(self, content_hash: str) -> bool:
+        """Check if update already exists"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("SELECT 1 FROM updates WHERE content_hash = %s", (content_hash,))
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result is not None
+            
+        except Exception as e:
+            logger.error(f"PostgreSQL duplicate check error: {e}")
+            return False
+    
+    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
+        """Store a new update"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            categories_str = ",".join(categories) if categories else ""
+            
+            cursor.execute("""
+                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """, (update.content_hash, update.title, update.description, 
+                  update.link, update.pub_date, update.author, importance_score, categories_str))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"PostgreSQL store error: {e}")
+            raise
+    
+    def get_recent_updates(self, hours: int) -> List[BBUpdate]:
+        """Get updates from the last N hours"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author
+                FROM updates 
+                WHERE pub_date > NOW() - INTERVAL '%s hours'
+                ORDER BY pub_date DESC
+            """, (hours,))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [BBUpdate(*row) for row in results]
+            
+        except Exception as e:
+            logger.error(f"PostgreSQL query error: {e}")
+            return []
+
 class HouseguestSelectionView(discord.ui.View):
     def __init__(self, prediction_type, duration_hours, week_number, title, description, prediction_manager, config):
         super().__init__(timeout=300)  # 5 minute timeout
@@ -5625,12 +5839,24 @@ class BBDiscordBot(commands.Bot):
         super().__init__(command_prefix='!bb', intents=intents)
         
         self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
-        self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
+        
+        # Use PostgreSQL if DATABASE_URL exists, otherwise SQLite
+        database_url = os.getenv('DATABASE_URL')
+        if database_url:
+            logger.info("Using PostgreSQL database")
+            self.db = PostgreSQLDatabase(database_url)
+            self.alliance_tracker = AllianceTracker(database_url=database_url, use_postgresql=True)
+            self.prediction_manager = PredictionManager(database_url=database_url, use_postgresql=True)
+        else:
+            logger.info("Using SQLite database")
+            self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
+            self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
+            self.prediction_manager = PredictionManager(self.config.get('database_path', 'bb_updates.db'))
+        
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
-        self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
-        self.prediction_manager = PredictionManager(self.config.get('database_path', 'bb_updates.db'))
         
+        # Rest of your existing initialization code stays the same...
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
         self.total_updates_processed = 0
@@ -5641,6 +5867,17 @@ class BBDiscordBot(commands.Bot):
         
         self.remove_command('help')
         self.setup_commands()
+            
+            self.is_shutting_down = False
+            self.last_successful_check = datetime.now()
+            self.total_updates_processed = 0
+            self.consecutive_errors = 0
+            
+            signal.signal(signal.SIGTERM, self.signal_handler)
+            signal.signal(signal.SIGINT, self.signal_handler)
+            
+            self.remove_command('help')
+            self.setup_commands()
     
     def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
         """Check if user is bot owner or has admin permissions"""
