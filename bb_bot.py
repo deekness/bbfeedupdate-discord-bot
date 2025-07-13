@@ -710,6 +710,392 @@ class BBAnalyzer:
         
         return min(score, 10)
 
+class HistoricalContextTracker:
+    """Tracks historical context for Big Brother events"""
+    
+    # Event type constants
+    EVENT_TYPES = {
+        'HOH_WIN': 'hoh_win',
+        'VETO_WIN': 'veto_win', 
+        'NOMINATION': 'nomination',
+        'EVICTION': 'eviction',
+        'ALLIANCE_FORM': 'alliance_form',
+        'ALLIANCE_BREAK': 'alliance_break',
+        'SHOWMANCE_START': 'showmance_start',
+        'SHOWMANCE_END': 'showmance_end',
+        'FIGHT': 'fight',
+        'BETRAYAL': 'betrayal'
+    }
+    
+    # Competition detection patterns
+    COMPETITION_PATTERNS = [
+        (r'(\w+)\s+wins?\s+(?:the\s+)?hoh', 'HOH_WIN'),
+        (r'(\w+)\s+wins?\s+(?:the\s+)?(?:power\s+of\s+)?veto', 'VETO_WIN'),
+        (r'(\w+)\s+wins?\s+(?:the\s+)?pov', 'VETO_WIN'),
+        (r'(\w+)\s+(?:is\s+)?nominated?', 'NOMINATION'),
+        (r'(\w+)\s+(?:gets?\s+)?evicted', 'EVICTION'),
+        (r'(\w+)\s+(?:was\s+)?eliminated', 'EVICTION')
+    ]
+    
+    # Social event patterns  
+    SOCIAL_PATTERNS = [
+        (r'(\w+)\s+and\s+(\w+)\s+(?:kiss|kissed|make\s+out)', 'SHOWMANCE_START'),
+        (r'(\w+)\s+and\s+(\w+)\s+(?:fight|argue|confrontation)', 'FIGHT'),
+        (r'(\w+)\s+betrays?\s+(\w+)', 'BETRAYAL'),
+        (r'(\w+)\s+(?:throws?\s+)?(\w+)\s+under\s+the\s+bus', 'BETRAYAL')
+    ]
+    
+    def __init__(self, database_url: str = None, use_postgresql: bool = True):
+        self.database_url = database_url
+        self.use_postgresql = use_postgresql
+        
+    def get_connection(self):
+        """Get database connection"""
+        if self.use_postgresql and self.database_url:
+            import psycopg2
+            import psycopg2.extras
+            return psycopg2.connect(self.database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            # Fallback for SQLite - you'd need to implement this
+            raise NotImplementedError("SQLite context tracking not implemented")
+    
+    async def analyze_update_for_events(self, update: BBUpdate) -> List[Dict]:
+        """Analyze an update for trackable events"""
+        detected_events = []
+        content = f"{update.title} {update.description}".lower()
+        
+        # Skip finale/voting updates (like we do for alliances)
+        skip_phrases = [
+            'votes for', 'voted for', 'to be the winner', 'winner of big brother',
+            'jury vote', 'crown the winner', 'wins bb', 'finale', 'final vote'
+        ]
+        
+        if any(phrase in content for phrase in skip_phrases):
+            return []
+        
+        # Detect competition events
+        for pattern, event_type in self.COMPETITION_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                houseguest = match.group(1).strip().title()
+                
+                # Filter out common false positives
+                if houseguest not in EXCLUDE_WORDS and len(houseguest) > 2:
+                    detected_events.append({
+                        'type': self.EVENT_TYPES[event_type],
+                        'houseguest': houseguest,
+                        'description': f"{houseguest} {event_type.lower().replace('_', ' ')}",
+                        'update': update,
+                        'confidence': self._calculate_event_confidence(event_type, content)
+                    })
+        
+        # Detect social events (involving 2+ people)
+        for pattern, event_type in self.SOCIAL_PATTERNS:
+            matches = re.finditer(pattern, content, re.IGNORECASE)
+            for match in matches:
+                if len(match.groups()) >= 2:
+                    hg1 = match.group(1).strip().title()
+                    hg2 = match.group(2).strip().title()
+                    
+                    if (hg1 not in EXCLUDE_WORDS and hg2 not in EXCLUDE_WORDS and 
+                        len(hg1) > 2 and len(hg2) > 2):
+                        detected_events.append({
+                            'type': self.EVENT_TYPES[event_type],
+                            'houseguests': [hg1, hg2],
+                            'description': f"{hg1} and {hg2} {event_type.lower().replace('_', ' ')}",
+                            'update': update,
+                            'confidence': self._calculate_event_confidence(event_type, content)
+                        })
+        
+        return detected_events
+    
+    def _calculate_event_confidence(self, event_type: str, content: str) -> int:
+        """Calculate confidence level for detected event"""
+        confidence_map = {
+            'HOH_WIN': 90,
+            'VETO_WIN': 90, 
+            'NOMINATION': 85,
+            'EVICTION': 95,
+            'ALLIANCE_FORM': 70,
+            'ALLIANCE_BREAK': 75,
+            'SHOWMANCE_START': 80,
+            'FIGHT': 85,
+            'BETRAYAL': 80
+        }
+        
+        base_confidence = confidence_map.get(event_type, 60)
+        
+        # Boost confidence for certain keywords
+        boost_words = {
+            'HOH_WIN': ['officially', 'crowned', 'winner'],
+            'VETO_WIN': ['wins', 'winner', 'golden'],
+            'NOMINATION': ['ceremony', 'officially', 'nominated'],
+            'EVICTION': ['evicted', 'eliminated', 'voted out']
+        }
+        
+        if event_type in boost_words:
+            for word in boost_words[event_type]:
+                if word in content:
+                    base_confidence += 5
+        
+        return min(base_confidence, 100)
+    
+    async def record_event(self, event_data: Dict) -> bool:
+        """Record an event in the database"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Calculate current week and day
+            current_week = self._get_current_week()
+            current_day = self._get_current_day()
+            
+            # Record in houseguest_events table
+            if 'houseguest' in event_data:
+                # Single houseguest event
+                cursor.execute("""
+                    INSERT INTO houseguest_events 
+                    (houseguest_name, event_type, description, week_number, season_day, update_hash, metadata)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    RETURNING event_id
+                """, (
+                    event_data['houseguest'],
+                    event_data['type'],
+                    event_data['description'],
+                    current_week,
+                    current_day,
+                    event_data['update'].content_hash,
+                    json.dumps({
+                        'confidence': event_data['confidence'],
+                        'update_title': event_data['update'].title
+                    })
+                ))
+                
+                event_id = cursor.fetchone()[0]
+                
+                # Update statistics
+                await self._update_houseguest_stats(cursor, event_data['houseguest'], event_data['type'])
+                
+            elif 'houseguests' in event_data:
+                # Multi-houseguest event
+                for hg in event_data['houseguests']:
+                    cursor.execute("""
+                        INSERT INTO houseguest_events 
+                        (houseguest_name, event_type, description, week_number, season_day, update_hash, metadata)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (
+                        hg,
+                        event_data['type'],
+                        event_data['description'],
+                        current_week,
+                        current_day,
+                        event_data['update'].content_hash,
+                        json.dumps({
+                            'confidence': event_data['confidence'],
+                            'other_houseguests': [h for h in event_data['houseguests'] if h != hg],
+                            'update_title': event_data['update'].title
+                        })
+                    ))
+                
+                # Update relationship tracking for social events
+                if len(event_data['houseguests']) == 2:
+                    await self._update_relationship(cursor, event_data['houseguests'], event_data['type'])
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info(f"Recorded event: {event_data['type']} - {event_data['description']}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error recording event: {e}")
+            return False
+    
+    async def _update_houseguest_stats(self, cursor, houseguest: str, event_type: str):
+        """Update running statistics for a houseguest"""
+        stat_type = event_type.lower()
+        
+        cursor.execute("""
+            INSERT INTO houseguest_stats (houseguest_name, stat_type, stat_value, season_total)
+            VALUES (%s, %s, 1, 1)
+            ON CONFLICT (houseguest_name, stat_type)
+            DO UPDATE SET 
+                stat_value = houseguest_stats.stat_value + 1,
+                season_total = houseguest_stats.season_total + 1,
+                last_updated = CURRENT_TIMESTAMP
+        """, (houseguest, stat_type))
+    
+    async def _update_relationship(self, cursor, houseguests: List[str], event_type: str):
+        """Update relationship tracking between houseguests"""
+        if len(houseguests) != 2:
+            return
+        
+        # Ensure consistent ordering
+        hg1, hg2 = sorted(houseguests)
+        
+        # Determine relationship type and strength change
+        relationship_map = {
+            'showmance_start': ('showmance', +20),
+            'fight': ('conflict', -15),
+            'betrayal': ('betrayal', -25),
+            'alliance_form': ('alliance', +15)
+        }
+        
+        rel_type, strength_change = relationship_map.get(event_type, ('unknown', 0))
+        
+        cursor.execute("""
+            INSERT INTO houseguest_relationships 
+            (houseguest_1, houseguest_2, relationship_type, strength_score, duration_days)
+            VALUES (%s, %s, %s, %s, 0)
+            ON CONFLICT (houseguest_1, houseguest_2)
+            DO UPDATE SET
+                strength_score = GREATEST(0, LEAST(100, houseguest_relationships.strength_score + %s)),
+                last_updated = CURRENT_TIMESTAMP,
+                duration_days = EXTRACT(DAYS FROM (CURRENT_TIMESTAMP - houseguest_relationships.first_detected))
+        """, (hg1, hg2, rel_type, 50 + strength_change, strength_change))
+    
+    async def get_historical_context(self, houseguest: str, event_type: str = None) -> str:
+        """Get historical context for a houseguest and event type"""
+        try:
+            # Check cache first
+            cache_key = f"{houseguest}_{event_type or 'general'}"
+            cached_context = await self._get_cached_context(cache_key)
+            if cached_context:
+                return cached_context
+            
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            context_parts = []
+            
+            if event_type == 'hoh_win':
+                # Get HOH win count
+                cursor.execute("""
+                    SELECT season_total FROM houseguest_stats 
+                    WHERE houseguest_name = %s AND stat_type = 'hoh_win'
+                """, (houseguest,))
+                
+                result = cursor.fetchone()
+                if result and result['season_total'] > 1:
+                    count = result['season_total']
+                    ordinal = self._get_ordinal(count)
+                    context_parts.append(f"This is {houseguest}'s {ordinal} HOH win this season")
+                elif not result:
+                    context_parts.append(f"This is {houseguest}'s first HOH win")
+            
+            elif event_type == 'nomination':
+                # Get nomination count
+                cursor.execute("""
+                    SELECT season_total FROM houseguest_stats 
+                    WHERE houseguest_name = %s AND stat_type = 'nomination'
+                """, (houseguest,))
+                
+                result = cursor.fetchone()
+                if result and result['season_total'] > 1:
+                    count = result['season_total']
+                    ordinal = self._get_ordinal(count)
+                    context_parts.append(f"{houseguest} has been nominated {ordinal} time this season")
+                elif not result:
+                    context_parts.append(f"This is {houseguest}'s first nomination")
+            
+            # Get recent alliance context
+            cursor.execute("""
+                SELECT hr.houseguest_1, hr.houseguest_2, hr.relationship_type, hr.duration_days
+                FROM houseguest_relationships hr
+                WHERE (hr.houseguest_1 = %s OR hr.houseguest_2 = %s)
+                  AND hr.status = 'active'
+                  AND hr.relationship_type = 'alliance'
+                ORDER BY hr.strength_score DESC
+                LIMIT 2
+            """, (houseguest, houseguest))
+            
+            relationships = cursor.fetchall()
+            for rel in relationships:
+                other_hg = rel['houseguest_2'] if rel['houseguest_1'] == houseguest else rel['houseguest_1']
+                if rel['duration_days'] > 7:
+                    context_parts.append(f"{houseguest} and {other_hg} have been allies for {rel['duration_days']} days")
+            
+            conn.close()
+            
+            # Combine context parts
+            context = ". ".join(context_parts)
+            
+            # Cache the result
+            if context:
+                await self._cache_context(cache_key, context, 300)  # Cache for 5 minutes
+            
+            return context
+            
+        except Exception as e:
+            logger.error(f"Error getting historical context: {e}")
+            return ""
+    
+    async def _get_cached_context(self, cache_key: str) -> Optional[str]:
+        """Get cached context if still valid"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT context_text FROM context_cache 
+                WHERE cache_key = %s AND expires_at > CURRENT_TIMESTAMP
+            """, (cache_key,))
+            
+            result = cursor.fetchone()
+            conn.close()
+            
+            return result['context_text'] if result else None
+            
+        except Exception as e:
+            logger.debug(f"Cache lookup failed: {e}")
+            return None
+    
+    async def _cache_context(self, cache_key: str, context: str, ttl_seconds: int):
+        """Cache context for performance"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            expires_at = datetime.now() + timedelta(seconds=ttl_seconds)
+            
+            cursor.execute("""
+                INSERT INTO context_cache (cache_key, context_text, expires_at)
+                VALUES (%s, %s, %s)
+                ON CONFLICT (cache_key)
+                DO UPDATE SET 
+                    context_text = EXCLUDED.context_text,
+                    expires_at = EXCLUDED.expires_at,
+                    created_at = CURRENT_TIMESTAMP
+            """, (cache_key, context, expires_at))
+            
+            conn.commit()
+            conn.close()
+            
+        except Exception as e:
+            logger.debug(f"Context caching failed: {e}")
+    
+    def _get_ordinal(self, number: int) -> str:
+        """Convert number to ordinal (1st, 2nd, 3rd, etc.)"""
+        if 10 <= number % 100 <= 20:
+            suffix = 'th'
+        else:
+            suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(number % 10, 'th')
+        return f"{number}{suffix}"
+    
+    def _get_current_week(self) -> int:
+        """Calculate current BB week"""
+        season_start = datetime(2025, 7, 8)  # Adjust for actual season
+        current_date = datetime.now()
+        week_number = ((current_date - season_start).days // 7) + 1
+        return max(1, week_number)
+    
+    def _get_current_day(self) -> int:
+        """Calculate current season day"""
+        season_start = datetime(2025, 7, 8)  # Adjust for actual season
+        current_date = datetime.now()
+        day_number = (current_date - season_start).days + 1
+        return max(1, day_number)
+
 class AllianceTracker:
     """Tracks and analyzes Big Brother alliances"""
     
@@ -6323,11 +6709,14 @@ class BBDiscordBot(commands.Bot):
             self.db = PostgreSQLDatabase(database_url)
             self.alliance_tracker = AllianceTracker(database_url=database_url, use_postgresql=True)
             self.prediction_manager = PredictionManager(database_url=database_url, use_postgresql=True)
+            self.context_tracker = HistoricalContextTracker(database_url=database_url, use_postgresql=True)
         else:
             logger.info("Using SQLite database")
             self.db = BBDatabase(self.config.get('database_path', 'bb_updates.db'))
             self.alliance_tracker = AllianceTracker(self.config.get('database_path', 'bb_updates.db'))
             self.prediction_manager = PredictionManager(self.config.get('database_path', 'bb_updates.db'))
+            self.context_tracker = None
+            logger.warning("Historical context tracking disabled - no database URL")
         
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
