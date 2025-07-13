@@ -5286,9 +5286,9 @@ class BBDatabase:
             logger.error(f"Database query error: {e}")
             return []
 
-import psycopg2
-import psycopg2.extras
-from urllib.parse import urlparse
+        import psycopg2
+        import psycopg2.extras
+        from urllib.parse import urlparse
 
     def get_updates_in_timeframe(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
         """Get all updates within a specific timeframe"""
