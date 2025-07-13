@@ -8512,7 +8512,92 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error testing context: {e}")
                 await interaction.followup.send("Error testing context integration.", ephemeral=True)
     
-        
+        @self.tree.command(name="recreatecontexttables", description="Recreate context tables (Owner only)")
+        async def recreate_context_tables(interaction: discord.Interaction):
+            """Recreate context tables"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                database_url = os.getenv('DATABASE_URL')
+                if not database_url:
+                    await interaction.followup.send("No database URL available", ephemeral=True)
+                    return
+                
+                import psycopg2
+                conn = psycopg2.connect(database_url)
+                cursor = conn.cursor()
+                
+                # Drop and recreate the missing tables
+                cursor.execute("DROP TABLE IF EXISTS context_cache")
+                cursor.execute("DROP TABLE IF EXISTS houseguest_relationships")
+                cursor.execute("DROP TABLE IF EXISTS houseguest_stats") 
+                cursor.execute("DROP TABLE IF EXISTS houseguest_events")
+                
+                # Recreate them with the correct schema
+                cursor.execute("""
+                    CREATE TABLE houseguest_events (
+                        event_id SERIAL PRIMARY KEY,
+                        houseguest_name VARCHAR(100) NOT NULL,
+                        event_type VARCHAR(50) NOT NULL,
+                        description TEXT,
+                        week_number INTEGER,
+                        season_day INTEGER,
+                        update_hash VARCHAR(32),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        metadata JSONB
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE houseguest_stats (
+                        stat_id SERIAL PRIMARY KEY,
+                        houseguest_name VARCHAR(100) NOT NULL,
+                        stat_type VARCHAR(50) NOT NULL,
+                        stat_value INTEGER DEFAULT 0,
+                        season_total INTEGER DEFAULT 0,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        UNIQUE(houseguest_name, stat_type)
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE houseguest_relationships (
+                        relationship_id SERIAL PRIMARY KEY,
+                        houseguest_1 VARCHAR(100) NOT NULL,
+                        houseguest_2 VARCHAR(100) NOT NULL,
+                        relationship_type VARCHAR(50) NOT NULL,
+                        strength_score INTEGER DEFAULT 50,
+                        first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        status VARCHAR(20) DEFAULT 'active',
+                        duration_days INTEGER DEFAULT 0,
+                        CHECK (houseguest_1 < houseguest_2)
+                    )
+                """)
+                
+                cursor.execute("""
+                    CREATE TABLE context_cache (
+                        cache_id SERIAL PRIMARY KEY,
+                        cache_key VARCHAR(100) NOT NULL UNIQUE,
+                        context_text TEXT NOT NULL,
+                        expires_at TIMESTAMP,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                conn.commit()
+                conn.close()
+                
+                await interaction.followup.send("✅ Context tables recreated successfully!", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error recreating tables: {e}")
+                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
         # I'll continue with the rest of the commands in the next step...
         # For now, this should fix your immediate startup error
 
