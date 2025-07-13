@@ -2863,7 +2863,7 @@ class UpdateBatcher:
         """Check if we should send hourly summary at the top of each hour"""
         now = datetime.now()
         
-        # Check if we're at the beginning of a new hour (within first 5 minutes)
+        # Check if we're at the beginning of a new hour (within first 5 minutes for reliability)
         if now.minute <= 5:
             # Get the hour we should be summarizing (previous hour)
             current_hour = now.replace(minute=0, second=0, microsecond=0)
@@ -2950,14 +2950,16 @@ class UpdateBatcher:
         embeds = []
         
         try:
-            # Use your existing LLM logic but with the timeframe updates
+            # Try context-aware structured format first
             if self.llm_client and await self._can_make_llm_request():
                 try:
+                    logger.info("Using LLM for hourly summary")
                     embeds = await self._create_llm_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
                 except Exception as e:
                     logger.error(f"LLM hourly summary failed: {e}")
                     embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
             else:
+                logger.info("Using pattern-based hourly summary")
                 embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
         except Exception as e:
             logger.error(f"All hourly summary methods failed: {e}")
@@ -5140,6 +5142,133 @@ async def save_queue_state(self):
                 value=" • ".join(analysis['key_players'][:5]),
                 inline=False
             )
+        
+        embed.set_footer(text=f"Hourly Summary • {hour_period}")
+        
+        return [embed]
+
+    async def _create_llm_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Create LLM-powered hourly summary for specific timeframe"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Format the updates
+        updates_text = "\n".join([
+            f"{self._extract_correct_time(u)} - {u.title}"
+            for u in updates[:20]  # Limit to prevent token overflow
+        ])
+        
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        prompt = f"""You are a Big Brother superfan creating an hourly summary.
+    
+    HOUR PERIOD: {hour_period}
+    UPDATES FROM THIS HOUR ({len(updates)} total):
+    {updates_text}
+    
+    Create a comprehensive summary for this specific hour period:
+    
+    {{
+        "headline": "Headline for {hour_period}",
+        "summary": "3-4 sentence summary of what happened during {hour_period}",
+        "key_players": ["houseguests", "central", "to", "this", "hour"],
+        "strategic_importance": 7,
+        "hour_highlights": "Key moments that happened during {hour_period}"
+    }}
+    
+    Focus specifically on what happened during {hour_period}."""
+    
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=1000,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        analysis = self._parse_llm_response(response.content[0].text)
+        return self._create_timeframe_embed(analysis, len(updates), hour_start, hour_end)
+    
+    def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Pattern-based hourly summary for timeframe"""
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        # Use your existing pattern logic
+        categories = defaultdict(list)
+        for update in updates:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        # Get key players
+        all_houseguests = set()
+        for update in updates:
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            all_houseguests.update(hgs[:3])
+        
+        analysis = {
+            "headline": f"Big Brother Activity During {hour_period}",
+            "summary": f"{len(updates)} updates occurred during {hour_period}",
+            "key_players": list(all_houseguests)[:5],
+            "strategic_importance": 5,
+            "categories": categories
+        }
+        
+        return self._create_timeframe_embed(analysis, len(updates), hour_start, hour_end)
+    
+    def _create_basic_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Basic fallback summary"""
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        analysis = {
+            "headline": f"Updates from {hour_period}",
+            "summary": f"{len(updates)} updates during this hour",
+            "key_players": [],
+            "strategic_importance": 3
+        }
+        
+        return self._create_timeframe_embed(analysis, len(updates), hour_start, hour_end)
+    
+    def _create_timeframe_embed(self, analysis: dict, update_count: int, hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Create embed for timeframe-based summary"""
+        hour_display = hour_end.strftime("%I %p").lstrip('0')
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Summary - {hour_display}",
+            description=f"**{hour_period}** • {update_count} updates",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(
+            name="📰 Hour Headline", 
+            value=analysis.get('headline', 'Activity during this hour'),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📋 Summary",
+            value=analysis.get('summary', 'Updates occurred during this period'),
+            inline=False
+        )
+        
+        if analysis.get('key_players'):
+            embed.add_field(
+                name="⭐ Key Players",
+                value=" • ".join([f"**{player}**" for player in analysis['key_players'][:5]]),
+                inline=False
+            )
+        
+        # Add importance rating
+        importance = analysis.get('strategic_importance', 5)
+        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+        importance_icon = importance_icons[min(importance - 1, 9)] if importance >= 1 else "📝"
+        
+        embed.add_field(
+            name="📊 Hour Importance",
+            value=f"{importance_icon} **{importance}/10**",
+            inline=False
+        )
         
         embed.set_footer(text=f"Hourly Summary • {hour_period}")
         
