@@ -3305,11 +3305,11 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         # Create main embed
         if summary_type == "hourly_summary":
             title = f"Chen Bot's House Summary - {current_hour} 🏠"
-            description = f"<:julie:1393437755840925726>"
+            description = f""
             footer_text = f"Chen Bot's House Summary • {current_hour}"
         else:
             title = f"Chen Bot's House Summary - {current_hour} 🏠"
-            description = f"<:julie:1393437755840925726>"
+            description = f""
             footer_text = "Chen Bot's Summary"
         
         embed = discord.Embed(
@@ -5120,7 +5120,7 @@ async def save_queue_state(self):
         # Keep your original title format exactly
         embed = discord.Embed(
             title=f"Chen Bot's House Summary - {hour_display} 🏠",
-            description=f"<:julie:1393437755840925726>",  # Your original description
+            description=f"",  # Your original description
             color=0x9b59b6,  # Keep your original color
             timestamp=datetime.now()
         )
