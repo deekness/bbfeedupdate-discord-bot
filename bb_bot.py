@@ -6287,7 +6287,10 @@ class BBDiscordBot(commands.Bot):
             # Give the batcher access to database
             self.update_batcher.db = self.db
             
-            # Restore queue state inline (since the method seems to be missing)
+            # Ensure summary tables exist first
+            await self.ensure_summary_tables_exist()
+            
+            # Now restore queue state
             await self.restore_queues_inline()
             
             logger.info("Bot setup completed with queue restoration")
@@ -7811,6 +7814,56 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in RSS check: {e}")
             self.consecutive_errors += 1
+
+    async def ensure_summary_tables_exist(self):
+        """Ensure summary tables exist before trying to use them"""
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                return
+                
+            import psycopg2
+            conn = psycopg2.connect(database_url)
+            cursor = conn.cursor()
+            
+            # Create summary_checkpoints table if it doesn't exist
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS summary_checkpoints (
+                    checkpoint_id SERIAL PRIMARY KEY,
+                    summary_type VARCHAR(50) NOT NULL UNIQUE,
+                    last_processed_update_id INTEGER,
+                    queue_state JSONB,
+                    queue_size INTEGER DEFAULT 0,
+                    last_summary_time TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create summary_metrics table if it doesn't exist
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS summary_metrics (
+                    metric_id SERIAL PRIMARY KEY,
+                    summary_type VARCHAR(50) NOT NULL,
+                    update_count INTEGER,
+                    llm_tokens_used INTEGER,
+                    processing_time_ms INTEGER,
+                    summary_quality_score FLOAT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            
+            # Create indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_checkpoints_type ON summary_checkpoints(summary_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON summary_metrics(summary_type, created_at)")
+            
+            conn.commit()
+            conn.close()
+            
+            logger.info("Summary persistence tables ensured to exist")
+            
+        except Exception as e:
+            logger.error(f"Error ensuring summary tables exist: {e}")
 
 # Create bot instance
 bot = BBDiscordBot()
