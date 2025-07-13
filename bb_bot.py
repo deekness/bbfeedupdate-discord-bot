@@ -6633,14 +6633,6 @@ class BBDiscordBot(commands.Bot):
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
         
         
-
-        # Add this after self.update_batcher = UpdateBatcher(self.analyzer, self.config)
-        async def restore_queues():
-            await self.update_batcher.restore_queue_state()
-        
-        # Add this line
-        asyncio.create_task(restore_queues())
-        
         # Rest of your existing initialization code stays the same...
         self.is_shutting_down = False
         self.last_successful_check = datetime.now()
