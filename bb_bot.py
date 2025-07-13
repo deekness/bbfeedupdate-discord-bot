@@ -8777,12 +8777,13 @@ class BBDiscordBot(commands.Bot):
                         alliance_id = self.alliance_tracker.process_alliance_event(event)
                         if alliance_id:
                             logger.info(f"Alliance event processed: {event['type'].value}")
-                            
-                if hasattr(self.update_batcher, 'context_tracker') and self.update_batcher.context_tracker:
-                    await self.update_batcher.process_update_for_context(update)
+                    
+                    # Add context tracking here (INSIDE the try block)
+                    if hasattr(self.update_batcher, 'context_tracker') and self.update_batcher.context_tracker:
+                        await self.update_batcher.process_update_for_context(update)
                     
                     self.total_updates_processed += 1
-                
+                    
                 except Exception as e:
                     logger.error(f"Error processing update: {e}")
                     self.consecutive_errors += 1
