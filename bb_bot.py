@@ -4515,9 +4515,82 @@ class PostgreSQLDatabase:
             
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_checkpoints_type ON summary_checkpoints(summary_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON summary_metrics(summary_type, created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON summary_metrics(summary_type, created_at)"
             
             logger.info("Summary persistence tables created")
+
+            # Add these tables to your PostgreSQLDatabase.init_database() method
+            # Place them after your existing table creation code
+            
+            # Houseguest events tracking table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS houseguest_events (
+                    event_id SERIAL PRIMARY KEY,
+                    houseguest_name VARCHAR(100) NOT NULL,
+                    event_type VARCHAR(50) NOT NULL,
+                    event_subtype VARCHAR(50),
+                    description TEXT,
+                    week_number INTEGER,
+                    season_day INTEGER,
+                    update_hash VARCHAR(32),
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    metadata JSONB
+                )
+            """)
+            
+            # Houseguest statistics table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS houseguest_stats (
+                    stat_id SERIAL PRIMARY KEY,
+                    houseguest_name VARCHAR(100) NOT NULL,
+                    stat_type VARCHAR(50) NOT NULL,
+                    stat_value INTEGER DEFAULT 0,
+                    season_total INTEGER DEFAULT 0,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(houseguest_name, stat_type)
+                )
+            """)
+            
+            # Relationship tracking table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS houseguest_relationships (
+                    relationship_id SERIAL PRIMARY KEY,
+                    houseguest_1 VARCHAR(100) NOT NULL,
+                    houseguest_2 VARCHAR(100) NOT NULL,
+                    relationship_type VARCHAR(50) NOT NULL,
+                    strength_score INTEGER DEFAULT 50,
+                    first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    status VARCHAR(20) DEFAULT 'active',
+                    duration_days INTEGER DEFAULT 0,
+                    CHECK (houseguest_1 < houseguest_2)
+                )
+            """)
+            
+            # Context cache table (for performance)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS context_cache (
+                    cache_id SERIAL PRIMARY KEY,
+                    houseguest_name VARCHAR(100) NOT NULL,
+                    context_type VARCHAR(50) NOT NULL,
+                    context_text TEXT NOT NULL,
+                    cache_key VARCHAR(100) NOT NULL,
+                    expires_at TIMESTAMP,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(cache_key)
+                )
+            """)
+            
+            # Create indexes for performance
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_houseguest ON houseguest_events(houseguest_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON houseguest_events(event_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_date ON houseguest_events(created_at)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_stats_houseguest ON houseguest_stats(houseguest_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_relationships_hg1 ON houseguest_relationships(houseguest_1)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_relationships_hg2 ON houseguest_relationships(houseguest_2)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_cache_key ON context_cache(cache_key)")
+            
+            logger.info("Historical context tracking tables created")
             
         except Exception as e:
             logger.error(f"PostgreSQL initialization error: {e}")
