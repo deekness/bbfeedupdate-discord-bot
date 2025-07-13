@@ -4515,7 +4515,7 @@ class PostgreSQLDatabase:
             
             # Create indexes
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_checkpoints_type ON summary_checkpoints(summary_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON summary_metrics(summary_type, created_at)""
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON summary_metrics(summary_type, created_at)"
             
             logger.info("Summary persistence tables created")
 
