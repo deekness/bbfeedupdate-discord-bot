@@ -2807,28 +2807,24 @@ class UpdateBatcher:
         self.analyzer = analyzer
         self.config = config
         
-        # Two separate queues for different batching strategies
-        self.highlights_queue = []  # For 25-update highlights
-        self.hourly_queue = []      # For hourly summaries
+        # Keep highlights queue for 25-update batches (remove hourly_queue)
+        self.highlights_queue = []
         
         self.last_batch_time = datetime.now()
         self.last_hourly_summary = datetime.now()
         
-        # Replace the set with LRU cache
+        # Rest stays the same...
         max_hashes = config.get('max_processed_hashes', 10000)
         self.processed_hashes_cache = LRUCache(capacity=max_hashes)
         
-        # Initialize rate limiter
         self.rate_limiter = RateLimiter(
             max_requests_per_minute=config.get('llm_requests_per_minute', 10),
             max_requests_per_hour=config.get('llm_requests_per_hour', 100)
         )
         
-        # Initialize Anthropic client
         self.llm_client = None
         self.llm_model = config.get('llm_model', 'claude-3-haiku-20240307')
         self._init_llm_client()
-
         self.context_tracker = None
     
     def _init_llm_client(self):
@@ -2864,14 +2860,14 @@ class UpdateBatcher:
         """Check if we should send hourly summary at the top of each hour"""
         now = datetime.now()
         
-        # Check if we're at the beginning of a new hour (within first 2 minutes)
-        if now.minute <= 2:
-            # Check if we haven't sent a summary this hour yet
-            last_summary_hour = self.last_hourly_summary.replace(minute=0, second=0, microsecond=0)
+        # Check if we're at the beginning of a new hour (within first 5 minutes)
+        if now.minute <= 5:
+            # Get the hour we should be summarizing (previous hour)
             current_hour = now.replace(minute=0, second=0, microsecond=0)
+            last_summary_hour = self.last_hourly_summary.replace(minute=0, second=0, microsecond=0)
             
-            # Send if it's a new hour and we have updates
-            if current_hour > last_summary_hour and len(self.hourly_queue) > 0:
+            # Send if it's a new hour and we haven't sent summary for this hour yet
+            if current_hour > last_summary_hour:
                 return True
         
         return False
@@ -2882,16 +2878,14 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
-        """Add update to both queues if not already processed"""
+        """Add update to highlights queue if not already processed"""
         if not await self.processed_hashes_cache.contains(update.content_hash):
-            # Add to both queues
             self.highlights_queue.append(update)
-            self.hourly_queue.append(update)
             await self.processed_hashes_cache.add(update.content_hash)
             
             # Log cache stats periodically
             cache_stats = self.processed_hashes_cache.get_stats()
-            if cache_stats['size'] % 1000 == 0:  # Log every 1000 entries
+            if cache_stats['size'] % 1000 == 0:
                 logger.info(f"Hash cache stats: {cache_stats}")
     
     async def _can_make_llm_request(self) -> bool:
@@ -2929,42 +2923,47 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary with historical context integration"""
-        if not self.hourly_queue:
-            logger.warning("No updates in hourly queue for summary")
+        """Create comprehensive hourly summary for the previous hour period"""
+        now = datetime.now()
+        
+        # Define the hour period we're summarizing (previous hour)
+        summary_hour = now.replace(minute=0, second=0, microsecond=0)
+        hour_start = summary_hour - timedelta(hours=1)  # Previous hour start
+        hour_end = summary_hour  # Current hour start (exclusive)
+        
+        logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
+        
+        # Get updates from the database for this specific hour period
+        hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
+        
+        if not hourly_updates:
+            logger.info(f"No updates found for hour period {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
+            # Still update the timestamp so we don't keep trying
+            self.last_hourly_summary = now
             return []
-    
-        logger.info(f"Creating context-aware hourly summary with {len(self.hourly_queue)} updates")
-    
+        
+        logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
+        
         embeds = []
-    
+        
         try:
-            # Try context-aware structured format first (PHASE 3 ENHANCEMENT)
+            # Use your existing LLM logic but with the timeframe updates
             if self.llm_client and await self._can_make_llm_request():
                 try:
-                    logger.info("Using context-aware structured format for hourly summary")
-                    embeds = await self._create_context_aware_structured_summary("hourly_summary")
+                    embeds = await self._create_llm_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
                 except Exception as e:
-                    logger.error(f"Context-aware summary failed: {e}")
-                    # Fallback to enhanced pattern with basic context
-                    embeds = await self._create_enhanced_pattern_summary_with_context()
+                    logger.error(f"LLM hourly summary failed: {e}")
+                    embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
             else:
-                # No LLM available, use enhanced pattern-based with basic context
-                logger.info("Using enhanced pattern-based summary with basic context")
-                embeds = await self._create_enhanced_pattern_summary_with_context()
-    
+                embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
         except Exception as e:
-            logger.error(f"All context-aware summary methods failed: {e}")
-            # Final fallback to original method
-            embeds = self._create_enhanced_pattern_hourly_summary()
+            logger.error(f"All hourly summary methods failed: {e}")
+            embeds = self._create_basic_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
     
-        # Clear hourly queue after processing
-        processed_count = len(self.hourly_queue)
-        await self.save_queue_state()
-        self.hourly_queue.clear()
-        self.last_hourly_summary = datetime.now()
-    
-        logger.info(f"Created context-aware hourly summary from {processed_count} updates")
+        # Update timestamp
+        self.last_hourly_summary = now
+        
+        logger.info(f"Created hourly summary from {len(hourly_updates)} updates")
         return embeds
 
     async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
@@ -5033,6 +5032,116 @@ async def save_queue_state(self):
         except Exception as e:
             logger.error(f"Error processing update for context: {e}")
 
+    async def _create_llm_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Create LLM-powered hourly summary for specific timeframe"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Format the updates
+        updates_text = "\n".join([
+            f"{self._extract_correct_time(u)} - {u.title}"
+            for u in updates
+        ])
+        
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        prompt = f"""You are a Big Brother superfan creating an hourly summary.
+    
+    HOUR PERIOD: {hour_period}
+    UPDATES FROM THIS HOUR ({len(updates)} total):
+    {updates_text}
+    
+    Create a comprehensive summary for this specific hour period:
+    
+    {{
+        "headline": "Headline for {hour_period}",
+        "summary": "3-4 sentence summary of what happened during {hour_period}",
+        "key_players": ["houseguests", "central", "to", "this", "hour"],
+        "strategic_importance": 7,
+        "hour_highlights": "Key moments that happened during {hour_period}"
+    }}
+    
+    Focus specifically on what happened during {hour_period}."""
+    
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=1000,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        analysis = self._parse_llm_response(response.content[0].text)
+        return self._create_timeframe_embed(analysis, len(updates), hour_start, hour_end)
+    
+    def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Pattern-based hourly summary for timeframe"""
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        # Use your existing pattern logic
+        categories = defaultdict(list)
+        for update in updates:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        analysis = {
+            "headline": f"Big Brother Activity During {hour_period}",
+            "summary": f"{len(updates)} updates occurred during {hour_period}",
+            "key_players": [],
+            "strategic_importance": 5,
+            "categories": categories
+        }
+        
+        return self._create_timeframe_embed(analysis, len(updates), hour_start, hour_end)
+    
+    def _create_basic_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Basic fallback summary"""
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        analysis = {
+            "headline": f"Updates from {hour_period}",
+            "summary": f"{len(updates)} updates during this hour",
+            "key_players": [],
+            "strategic_importance": 3
+        }
+        
+        return self._create_timeframe_embed(analysis, len(updates), hour_start, hour_end)
+    
+    def _create_timeframe_embed(self, analysis: dict, update_count: int, hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Create embed for timeframe-based summary"""
+        hour_display = hour_end.strftime("%I %p").lstrip('0')
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Summary - {hour_display}",
+            description=f"**{hour_period}** • {update_count} updates",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(
+            name="📰 Hour Headline", 
+            value=analysis.get('headline', 'Activity during this hour'),
+            inline=False
+        )
+        
+        embed.add_field(
+            name="📋 Summary",
+            value=analysis.get('summary', 'Updates occurred during this period'),
+            inline=False
+        )
+        
+        if analysis.get('key_players'):
+            embed.add_field(
+                name="⭐ Key Players",
+                value=" • ".join(analysis['key_players'][:5]),
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Hourly Summary • {hour_period}")
+        
+        return [embed]
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
@@ -5180,6 +5289,55 @@ class BBDatabase:
 import psycopg2
 import psycopg2.extras
 from urllib.parse import urlparse
+
+    def get_updates_in_timeframe(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates within a specific timeframe"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if hasattr(self, 'use_postgresql') and self.use_postgresql:
+                # PostgreSQL syntax
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author
+                    FROM updates 
+                    WHERE pub_date >= %s AND pub_date < %s
+                    ORDER BY pub_date ASC
+                """, (start_time, end_time))
+            else:
+                # SQLite syntax
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author
+                    FROM updates 
+                    WHERE pub_date >= ? AND pub_date < ?
+                    ORDER BY pub_date ASC
+                """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                if hasattr(self, 'use_postgresql') and self.use_postgresql:
+                    # PostgreSQL returns RealDictCursor results
+                    update = BBUpdate(
+                        title=row['title'],
+                        description=row['description'], 
+                        link=row['link'],
+                        pub_date=row['pub_date'],
+                        content_hash=row['content_hash'],
+                        author=row['author']
+                    )
+                else:
+                    # SQLite returns tuple
+                    update = BBUpdate(*row)
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database timeframe query error: {e}")
+            return []
 
 class PostgreSQLDatabase:
     """PostgreSQL database handler for Railway"""
@@ -5490,6 +5648,55 @@ class PostgreSQLDatabase:
             
         except Exception as e:
             logger.error(f"PostgreSQL query error: {e}")
+            return []
+
+    def get_updates_in_timeframe(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates within a specific timeframe"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            if hasattr(self, 'use_postgresql') and self.use_postgresql:
+                # PostgreSQL syntax
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author
+                    FROM updates 
+                    WHERE pub_date >= %s AND pub_date < %s
+                    ORDER BY pub_date ASC
+                """, (start_time, end_time))
+            else:
+                # SQLite syntax
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author
+                    FROM updates 
+                    WHERE pub_date >= ? AND pub_date < ?
+                    ORDER BY pub_date ASC
+                """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                if hasattr(self, 'use_postgresql') and self.use_postgresql:
+                    # PostgreSQL returns RealDictCursor results
+                    update = BBUpdate(
+                        title=row['title'],
+                        description=row['description'], 
+                        link=row['link'],
+                        pub_date=row['pub_date'],
+                        content_hash=row['content_hash'],
+                        author=row['author']
+                    )
+                else:
+                    # SQLite returns tuple
+                    update = BBUpdate(*row)
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database timeframe query error: {e}")
             return []
 
 class HouseguestSelectionView(discord.ui.View):
