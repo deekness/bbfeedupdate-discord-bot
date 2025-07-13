@@ -7869,7 +7869,6 @@ class BBDiscordBot(commands.Bot):
 
         @self.tree.command(name="forcebatch", description="Force send any queued updates")
         async def forcebatch_slash(interaction: discord.Interaction):
-            """Force send batch update"""
             try:
                 if not self.is_owner_or_admin(interaction.user, interaction):
                     await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
@@ -7878,10 +7877,9 @@ class BBDiscordBot(commands.Bot):
                 await interaction.response.defer(ephemeral=True)
                 
                 highlights_size = len(self.update_batcher.highlights_queue)
-                hourly_size = len(self.update_batcher.hourly_queue)
                 
-                if highlights_size == 0 and hourly_size == 0:
-                    await interaction.followup.send("No updates in either queue to send.", ephemeral=True)
+                if highlights_size == 0:
+                    await interaction.followup.send("No updates in highlights queue to send.", ephemeral=True)
                     return
                 
                 sent_embeds = 0
@@ -7891,16 +7889,7 @@ class BBDiscordBot(commands.Bot):
                     await self.send_highlights_batch()
                     sent_embeds += 1
                 
-                # Force send hourly summary if any exist
-                if hourly_size > 0:
-                    await self.send_hourly_summary()
-                    sent_embeds += 1
-                
-                response_msg = f"Force sent updates!\n"
-                if highlights_size > 0:
-                    response_msg += f"• Highlights batch: {highlights_size} updates\n"
-                if hourly_size > 0:
-                    response_msg += f"• Hourly summary: {hourly_size} updates\n"
+                response_msg = f"Force sent highlights batch: {highlights_size} updates\n"
                 response_msg += f"Total embeds sent: {sent_embeds}"
                 
                 await interaction.followup.send(response_msg, ephemeral=True)
