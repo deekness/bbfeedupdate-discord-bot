@@ -6287,13 +6287,107 @@ class BBDiscordBot(commands.Bot):
             # Give the batcher access to database
             self.update_batcher.db = self.db
             
-            # Restore queue state on startup
-            await self.update_batcher.restore_queue_state()
+            # Restore queue state inline (since the method seems to be missing)
+            await self.restore_queues_inline()
             
             logger.info("Bot setup completed with queue restoration")
             
         except Exception as e:
             logger.error(f"Error in setup hook: {e}")
+    
+    async def restore_queues_inline(self):
+        """Restore queue state inline"""
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                logger.info("No database URL for queue restoration")
+                return
+                
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+            cursor = conn.cursor()
+            
+            # Restore highlights queue
+            cursor.execute("""
+                SELECT queue_state, last_summary_time 
+                FROM summary_checkpoints 
+                WHERE summary_type = %s
+                ORDER BY updated_at DESC 
+                LIMIT 1
+            """, ('highlights',))
+            
+            result = cursor.fetchone()
+            if result and result['queue_state']:
+                try:
+                    highlights_data = json.loads(result['queue_state']) if isinstance(result['queue_state'], str) else result['queue_state']
+                    
+                    # Clear and restore highlights queue
+                    self.update_batcher.highlights_queue.clear()
+                    for update_data in highlights_data.get('updates', []):
+                        update = BBUpdate(
+                            title=update_data['title'],
+                            description=update_data['description'],
+                            link=update_data['link'],
+                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            content_hash=update_data['content_hash'],
+                            author=update_data['author']
+                        )
+                        self.update_batcher.highlights_queue.append(update)
+                    
+                    # Restore last batch time
+                    if result['last_summary_time']:
+                        self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
+                    
+                    logger.info(f"Restored {len(self.update_batcher.highlights_queue)} highlights from database")
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing highlights queue data: {e}")
+            else:
+                logger.info("No highlights queue state to restore")
+            
+            # Restore hourly queue
+            cursor.execute("""
+                SELECT queue_state, last_summary_time 
+                FROM summary_checkpoints 
+                WHERE summary_type = %s
+                ORDER BY updated_at DESC 
+                LIMIT 1
+            """, ('hourly',))
+            
+            result = cursor.fetchone()
+            if result and result['queue_state']:
+                try:
+                    hourly_data = json.loads(result['queue_state']) if isinstance(result['queue_state'], str) else result['queue_state']
+                    
+                    # Clear and restore hourly queue
+                    self.update_batcher.hourly_queue.clear()
+                    for update_data in hourly_data.get('updates', []):
+                        update = BBUpdate(
+                            title=update_data['title'],
+                            description=update_data['description'],
+                            link=update_data['link'],
+                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            content_hash=update_data['content_hash'],
+                            author=update_data['author']
+                        )
+                        self.update_batcher.hourly_queue.append(update)
+                    
+                    # Restore last hourly summary time
+                    if result['last_summary_time']:
+                        self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
+                    
+                    logger.info(f"Restored {len(self.update_batcher.hourly_queue)} hourly updates from database")
+                    
+                except Exception as e:
+                    logger.error(f"Error parsing hourly queue data: {e}")
+            else:
+                logger.info("No hourly queue state to restore")
+            
+            conn.close()
+            
+        except Exception as e:
+            logger.error(f"Error restoring queue state: {e}")
     
     def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
         """Check if user is bot owner or has admin permissions"""
