@@ -2828,6 +2828,8 @@ class UpdateBatcher:
         self.llm_client = None
         self.llm_model = config.get('llm_model', 'claude-3-haiku-20240307')
         self._init_llm_client()
+
+        self.context_tracker = None
     
     def _init_llm_client(self):
         """Initialize LLM client with proper error handling"""
@@ -2927,41 +2929,42 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary using structured format"""
+        """Create comprehensive hourly summary with historical context integration"""
         if not self.hourly_queue:
             logger.warning("No updates in hourly queue for summary")
             return []
-
-        logger.info(f"Creating hourly summary with {len(self.hourly_queue)} updates")
-
+    
+        logger.info(f"Creating context-aware hourly summary with {len(self.hourly_queue)} updates")
+    
         embeds = []
-
+    
         try:
-            # Try structured contextual format first
+            # Try context-aware structured format first (PHASE 3 ENHANCEMENT)
             if self.llm_client and await self._can_make_llm_request():
                 try:
-                    logger.info("Using structured contextual format for hourly summary")
-                    embeds = await self._create_forced_structured_summary("hourly_summary")
+                    logger.info("Using context-aware structured format for hourly summary")
+                    embeds = await self._create_context_aware_structured_summary("hourly_summary")
                 except Exception as e:
-                    logger.error(f"Structured summary failed: {e}")
-                    # Fallback to narrative LLM summary
-                    embeds = await self._create_llm_hourly_summary_fallback()
+                    logger.error(f"Context-aware summary failed: {e}")
+                    # Fallback to enhanced pattern with basic context
+                    embeds = await self._create_enhanced_pattern_summary_with_context()
             else:
-                # No LLM available, use enhanced pattern-based
-                logger.info("Using enhanced pattern-based hourly summary")
-                embeds = self._create_enhanced_pattern_hourly_summary()
-
+                # No LLM available, use enhanced pattern-based with basic context
+                logger.info("Using enhanced pattern-based summary with basic context")
+                embeds = await self._create_enhanced_pattern_summary_with_context()
+    
         except Exception as e:
-            logger.error(f"All hourly summary methods failed: {e}")
+            logger.error(f"All context-aware summary methods failed: {e}")
+            # Final fallback to original method
             embeds = self._create_enhanced_pattern_hourly_summary()
-
+    
         # Clear hourly queue after processing
         processed_count = len(self.hourly_queue)
         await self.save_queue_state()
         self.hourly_queue.clear()
         self.last_hourly_summary = datetime.now()
-
-        logger.info(f"Created hourly summary from {processed_count} updates")
+    
+        logger.info(f"Created context-aware hourly summary from {processed_count} updates")
         return embeds
 
     async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
@@ -4584,6 +4587,451 @@ async def save_queue_state(self):
                 
         except Exception as e:
             logger.error(f"Error cleaning checkpoints: {e}")
+
+
+
+    async def _create_context_aware_structured_summary(self, summary_type: str) -> List[discord.Embed]:
+        """Create structured summary with historical context integration"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Sort updates chronologically
+        sorted_updates = sorted(self.hourly_queue, key=lambda x: x.pub_date)
+        
+        # STEP 1: Detect events and gather context
+        all_detected_events = []
+        contextual_info = {}
+        
+        for update in sorted_updates:
+            # Detect events using context tracker
+            if hasattr(self, 'context_tracker') and self.context_tracker:
+                events = await self.context_tracker.analyze_update_for_events(update)
+                all_detected_events.extend(events)
+                
+                # For each detected event, gather historical context
+                for event in events:
+                    if 'houseguest' in event:
+                        hg = event['houseguest']
+                        if hg not in contextual_info:
+                            context = await self.context_tracker.get_historical_context(hg, event['type'])
+                            contextual_info[hg] = context
+        
+        # STEP 2: Format updates with enhanced context awareness
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates, 1):
+            time_str = self._extract_correct_time(update)
+            time_str = time_str.lstrip('0')
+            
+            # Enhanced title with context hints
+            title = update.title
+            enhanced_title = await self._enhance_title_with_context(title, contextual_info)
+            
+            formatted_updates.append(f"{i}. {time_str} - {enhanced_title}")
+            if update.description and update.description != update.title:
+                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+                formatted_updates.append(f"   {desc}")
+        
+        updates_text = "\n".join(formatted_updates)
+        
+        # STEP 3: Create context-enriched historical summary
+        historical_context_summary = await self._create_historical_context_summary(all_detected_events, contextual_info)
+        
+        # Calculate current day
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 8).date()).days + 1)
+        
+        # STEP 4: Enhanced prompt with historical context
+        prompt = f"""You are a Big Brother superfan analyst with access to HISTORICAL CONTEXT creating an hourly summary for Day {current_day}.
+    
+    NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
+    {updates_text}
+    
+    HISTORICAL CONTEXT FOR THIS HOUR:
+    {historical_context_summary}
+    
+    Create a comprehensive summary that leverages this historical context to tell a richer story.
+    
+    Provide your analysis in this EXACT JSON format:
+    
+    {{
+        "headline": "Context-aware headline that references relevant history when appropriate",
+        "strategic_analysis": "Analysis that connects current moves to past events and patterns. Reference historical context when relevant (e.g., 'This is X's 3rd HOH', 'After being betrayed last week by Y'). Use null if no strategic developments.",
+        "alliance_dynamics": "Alliance analysis that references formation dates, past betrayals, and relationship history. Use null if no alliance developments.",
+        "entertainment_highlights": "Entertaining moments with context about recurring dynamics or callbacks to past events. Use null if no entertainment moments.",
+        "showmance_updates": "Romance developments with timeline context (how long they've been together, past drama, etc.). Use null if no romance developments.",
+        "house_culture": "Daily culture moments that build on established house traditions or inside jokes. Use null if no cultural developments.",
+        "key_players": ["List", "of", "houseguests", "central", "to", "developments"],
+        "overall_importance": 8,
+        "importance_explanation": "Explanation that considers both immediate events AND their historical significance",
+        "context_integration": "Brief note on how historical context enhanced this summary"
+    }}
+    
+    CRITICAL INSTRUCTIONS:
+    - Weave in historical context naturally - don't force it if not relevant
+    - When referencing past events, be specific (e.g., "3rd nomination" not "multiple nominations")
+    - Connect current events to past patterns when meaningful
+    - Use null for sections without substantial content
+    - Overall importance should consider historical significance, not just immediate drama
+    - Make the summary feel like it's written by someone who's been following all season"""
+    
+        # Call LLM
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model="claude-3-haiku-20240307",
+            max_tokens=1200,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        response_text = response.content[0].text
+        
+        try:
+            # Parse JSON response
+            analysis_data = self._parse_structured_llm_response(response_text)
+            
+            # Create enhanced structured embed
+            embeds = self._create_context_aware_summary_embed(
+                analysis_data, len(self.hourly_queue), summary_type, historical_context_summary
+            )
+            
+            logger.info(f"Created context-aware {summary_type} summary with historical context")
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"Failed to parse context-aware response: {e}")
+            logger.error(f"Raw response: {response_text}")
+            # Fallback to enhanced pattern-based
+            return await self._create_enhanced_pattern_summary_with_context()
+    
+    async def _enhance_title_with_context(self, title: str, contextual_info: dict) -> str:
+        """Enhance update title with brief context hints"""
+        # Look for houseguest names in title and add context hints
+        enhanced_title = title
+        
+        for houseguest, context in contextual_info.items():
+            if houseguest.lower() in title.lower() and context:
+                # Add brief context hint in parentheses
+                context_hint = context[:30] + "..." if len(context) > 30 else context
+                if context_hint and "first" not in context_hint.lower():
+                    # Only add hint for non-first events
+                    enhanced_title = title  # Keep original for now, LLM will handle context
+        
+        return enhanced_title
+    
+    async def _create_historical_context_summary(self, detected_events: List[dict], contextual_info: dict) -> str:
+        """Create a summary of relevant historical context for this hour"""
+        if not detected_events and not contextual_info:
+            return "No significant historical context detected for this hour."
+        
+        context_parts = []
+        
+        # Summarize detected events
+        if detected_events:
+            event_summary = f"Detected {len(detected_events)} significant events this hour: "
+            event_types = [event['type'] for event in detected_events]
+            unique_types = list(set(event_types))
+            event_summary += ", ".join(unique_types)
+            context_parts.append(event_summary)
+        
+        # Add key historical context
+        if contextual_info:
+            for houseguest, context in list(contextual_info.items())[:3]:  # Limit to top 3
+                if context and len(context) > 10:
+                    context_parts.append(f"{houseguest}: {context}")
+        
+        return " | ".join(context_parts) if context_parts else "Standard house activity with no major historical patterns."
+    
+    def _create_context_aware_summary_embed(self, analysis_data: dict, update_count: int, 
+                                           summary_type: str, historical_context: str) -> List[discord.Embed]:
+        """Create context-aware summary embed with historical context integration"""
+        pacific_tz = pytz.timezone('US/Pacific')
+        current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
+        
+        # Determine embed color based on importance
+        importance = analysis_data.get('overall_importance', 5)
+        if importance >= 9:
+            color = 0xff1744  # Red for explosive hours
+        elif importance >= 7:
+            color = 0xff9800  # Orange for high activity
+        elif importance >= 4:
+            color = 0x3498db  # Blue for moderate activity
+        else:
+            color = 0x95a5a6  # Gray for quiet hours
+        
+        # Create main embed with context awareness indicator
+        title = f"Chen Bot's Contextual Summary - {current_hour} 🧠"
+        description = f"*Historical context integrated*"
+        
+        embed = discord.Embed(
+            title=title,
+            description=description,
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Add headline
+        headline = analysis_data.get('headline', 'Big Brother Update')
+        embed.add_field(
+            name="📰 Headline",
+            value=headline,
+            inline=False
+        )
+        
+        # Add context-aware sections
+        sections = [
+            ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
+            ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
+            ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
+            ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
+            ("🏠 House Culture", analysis_data.get('house_culture'))
+        ]
+        
+        for section_name, content in sections:
+            if content and content.strip() and content.lower() not in ['null', 'none', 'nothing']:
+                if len(content) > 1000:
+                    content = content[:997] + "..."
+                embed.add_field(
+                    name=section_name,
+                    value=content,
+                    inline=False
+                )
+        
+        # Add key players
+        key_players = analysis_data.get('key_players', [])
+        if key_players:
+            if len(key_players) <= 6:
+                players_text = " • ".join([f"**{player}**" for player in key_players])
+            else:
+                players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
+        else:
+            players_text = "No specific houseguests highlighted"
+        
+        embed.add_field(
+            name="⭐ Key Players",
+            value=players_text,
+            inline=False
+        )
+        
+        # Enhanced importance rating with context consideration
+        custom_emoji = "<:chunky:1392638440582942974>"
+        icon_count = min(importance, 10)
+        importance_text = custom_emoji * icon_count + f" **{importance}/10**"
+        
+        explanation = analysis_data.get('importance_explanation', '')
+        if explanation:
+            importance_text += f"\n*{explanation}*"
+        
+        embed.add_field(
+            name="📊 Overall Importance",
+            value=importance_text,
+            inline=False
+        )
+        
+        # Add historical context integration note
+        context_integration = analysis_data.get('context_integration', '')
+        if context_integration:
+            embed.add_field(
+                name="🧠 Context Integration",
+                value=f"*{context_integration}*",
+                inline=False
+            )
+        
+        # Enhanced footer
+        embed.set_footer(text=f"Chen Bot's Contextual Summary • {current_hour} • Historical Context Enabled")
+        
+        return [embed]
+    
+    async def _create_enhanced_pattern_summary_with_context(self) -> List[discord.Embed]:
+        """Enhanced pattern-based summary with basic context integration"""
+        logger.info("Creating enhanced pattern-based summary with context")
+        
+        # Group updates by categories
+        categories = defaultdict(list)
+        for update in self.hourly_queue:
+            update_categories = self.analyzer.categorize_update(update)
+            for category in update_categories:
+                categories[category].append(update)
+        
+        current_hour = datetime.now().strftime("%I %p").lstrip('0')
+        
+        custom_emoji = "<:takingnotes:916186747770130443>"
+        title = f"Chen Bot's Enhanced Summary - {current_hour}"
+        
+        embed = discord.Embed(
+            title=title,
+            description=f"**{len(self.hourly_queue)} updates this hour** • {custom_emoji} *With basic context*",
+            color=0x95a5a6,
+            timestamp=datetime.now()
+        )
+        
+        # Add headline with basic context awareness
+        if self.hourly_queue:
+            top_update = max(self.hourly_queue, key=lambda x: self.analyzer.analyze_strategic_importance(x))
+            headline = await self._create_context_aware_headline(top_update, len(self.hourly_queue))
+            embed.add_field(
+                name="📰 Headline",
+                value=headline,
+                inline=False
+            )
+        
+        # Create enhanced narratives for categories
+        section_mapping = {
+            "🎯 Strategy": "🎯 Strategic Analysis",
+            "🤝 Alliance": "🤝 Alliance Dynamics", 
+            "🎬 Entertainment": "🎬 Entertainment Highlights",
+            "💕 Romance": "💕 Showmance Updates",
+            "📝 General": "🏠 House Culture"
+        }
+        
+        for category, updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True):
+            if updates and len(updates) > 0:
+                narrative_summary = await self._create_context_aware_category_narrative(category, updates)
+                if narrative_summary and narrative_summary.strip():
+                    section_name = section_mapping.get(category, category)
+                    embed.add_field(
+                        name=section_name,
+                        value=narrative_summary,
+                        inline=False
+                    )
+        
+        # Add key players with basic context
+        all_houseguests = set()
+        for update in self.hourly_queue:
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            all_houseguests.update(hgs[:3])
+        
+        if all_houseguests:
+            players_text = " • ".join([f"**{hg}**" for hg in list(all_houseguests)[:6]])
+            if len(all_houseguests) > 6:
+                players_text += f" • +{len(all_houseguests)-6} more"
+        else:
+            players_text = "No specific houseguests highlighted"
+        
+        embed.add_field(
+            name="⭐ Key Players",
+            value=players_text,
+            inline=False
+        )
+        
+        # Enhanced importance rating
+        total_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in self.hourly_queue)
+        avg_importance = int(total_importance / len(self.hourly_queue)) if self.hourly_queue else 1
+        
+        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+        importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
+        
+        if avg_importance >= 7:
+            activity_desc = "High drama and strategic activity with historical significance"
+        elif avg_importance >= 5:
+            activity_desc = "Moderate activity building on season patterns"
+        elif avg_importance >= 3:
+            activity_desc = "Steady house activity with some context"
+        else:
+            activity_desc = "Routine activities maintaining house dynamics"
+        
+        embed.add_field(
+            name="📊 Overall Importance",
+            value=f"{importance_icon} **{avg_importance}/10**\n*{activity_desc}*",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Chen Bot's Enhanced Summary • {current_hour} • Basic Context Integration")
+        
+        return [embed]
+    
+    async def _create_context_aware_headline(self, top_update: BBUpdate, total_updates: int) -> str:
+        """Create a context-aware headline"""
+        title = top_update.title
+        title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+        
+        # Try to get basic context for the headline
+        houseguests = self.analyzer.extract_houseguests(title)
+        if houseguests and hasattr(self, 'context_tracker') and self.context_tracker:
+            try:
+                # Get quick context for first mentioned houseguest
+                context = await self.context_tracker.get_historical_context(houseguests[0])
+                if context and "first" not in context.lower():
+                    return f"Continuing Season Patterns: {title}"
+            except Exception as e:
+                logger.debug(f"Context lookup failed for headline: {e}")
+        
+        # Fallback to pattern-based headlines
+        content = title.lower()
+        if any(word in content for word in ['winner', 'wins', 'victory', 'champion']):
+            return f"Competition Results Shape Power Dynamics"
+        elif any(word in content for word in ['alliance', 'strategy', 'target']):
+            return f"Strategic Developments Continue Season Narrative" 
+        else:
+            return f"Big Brother House Activity Continues"
+    
+    async def _create_context_aware_category_narrative(self, category: str, updates: List) -> str:
+        """Create context-aware narrative for a category"""
+        if not updates:
+            return ""
+        
+        # Get top 3 most important updates
+        top_updates = sorted(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:3]
+        
+        narratives = []
+        for update in top_updates:
+            time_str = self._extract_correct_time(update)
+            title = update.title
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            
+            # Try to add basic context
+            enhanced_title = await self._add_basic_context_to_title(title)
+            
+            if len(enhanced_title) > 120:
+                enhanced_title = enhanced_title[:117] + "..."
+            
+            narratives.append(f"**{time_str}**: {enhanced_title}")
+        
+        return "\n".join(narratives)
+    
+    async def _add_basic_context_to_title(self, title: str) -> str:
+        """Add basic context hints to a title"""
+        if not hasattr(self, 'context_tracker') or not self.context_tracker:
+            return title
+        
+        try:
+            # Extract houseguests from title
+            houseguests = self.analyzer.extract_houseguests(title)
+            if not houseguests:
+                return title
+            
+            # For performance, only check first houseguest
+            hg = houseguests[0]
+            
+            # Quick context check
+            if 'nomination' in title.lower():
+                context = await self.context_tracker.get_historical_context(hg, 'nomination')
+                if context and "first" not in context.lower():
+                    return f"{title} ({context[:20]}...)"
+            elif 'hoh' in title.lower():
+                context = await self.context_tracker.get_historical_context(hg, 'hoh_win')
+                if context and "first" not in context.lower():
+                    return f"{title} ({context[:20]}...)"
+            
+            return title
+            
+        except Exception as e:
+            logger.debug(f"Basic context addition failed: {e}")
+            return title
+
+    async def process_update_for_context(self, update: BBUpdate):
+        """Process update for historical context tracking"""
+        if not self.context_tracker:
+            return
+        
+        try:
+            # Detect and record events
+            detected_events = await self.context_tracker.analyze_update_for_events(update)
+            
+            for event in detected_events:
+                success = await self.context_tracker.record_event(event)
+                if success:
+                    logger.info(f"Recorded context event: {event['type']} - {event.get('description', 'No description')}")
+        except Exception as e:
+            logger.error(f"Error processing update for context: {e}")
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
@@ -6720,6 +7168,13 @@ class BBDiscordBot(commands.Bot):
         
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
+        if self.context_tracker:
+            self.update_batcher.context_tracker = self.context_tracker
+        else:
+            logger.warning("Context tracker not available - summaries will not include historical context")
+
+        
+
         
         
         # Rest of your existing initialization code stays the same...
@@ -7985,6 +8440,77 @@ class BBDiscordBot(commands.Bot):
                 )
                 
                 await interaction.followup.send(embed=error_embed)
+
+        @self.tree.command(name="testcontext", description="Test historical context integration (Admin only)")
+        async def test_context_slash(interaction: discord.Interaction, houseguest: str = ""):
+            """Test context integration"""
+            try:
+                if not self.is_owner_or_admin(interaction.user, interaction):
+                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                if not self.context_tracker:
+                    await interaction.followup.send("❌ Context tracker not available", ephemeral=True)
+                    return
+                
+                embed = discord.Embed(
+                    title="🧠 Context Integration Test",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                if houseguest:
+                    # Test specific houseguest context
+                    houseguest = houseguest.strip().title()
+                    context = await self.context_tracker.get_historical_context(houseguest)
+                    
+                    embed.add_field(
+                        name=f"Context for {houseguest}",
+                        value=context if context else "No historical context found",
+                        inline=False
+                    )
+                else:
+                    # Test recent events
+                    recent_updates = self.db.get_recent_updates(2)
+                    if recent_updates:
+                        test_update = recent_updates[0]
+                        detected_events = await self.context_tracker.analyze_update_for_events(test_update)
+                        
+                        embed.add_field(
+                            name="Recent Update Analysis",
+                            value=f"**Update**: {test_update.title[:100]}...\n**Events Detected**: {len(detected_events)}",
+                            inline=False
+                        )
+                        
+                        if detected_events:
+                            events_text = "\n".join([f"• {event['type']}: {event.get('description', 'No description')}" for event in detected_events[:3]])
+                            embed.add_field(
+                                name="Detected Events",
+                                value=events_text,
+                                inline=False
+                            )
+                    else:
+                        embed.add_field(
+                            name="Test Status",
+                            value="No recent updates to analyze",
+                            inline=False
+                        )
+                
+                # Show integration status
+                integration_status = "✅ Active" if hasattr(self.update_batcher, 'context_tracker') and self.update_batcher.context_tracker else "❌ Not Connected"
+                embed.add_field(
+                    name="Integration Status",
+                    value=f"Context Tracker: {integration_status}",
+                    inline=False
+                )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error testing context: {e}")
+                await interaction.followup.send("Error testing context integration.", ephemeral=True)
     
         
         # I'll continue with the rest of the commands in the next step...
@@ -8251,7 +8777,10 @@ class BBDiscordBot(commands.Bot):
                         alliance_id = self.alliance_tracker.process_alliance_event(event)
                         if alliance_id:
                             logger.info(f"Alliance event processed: {event['type'].value}")
-                
+                            
+                if hasattr(self.update_batcher, 'context_tracker') and self.update_batcher.context_tracker:
+                    await self.update_batcher.process_update_for_context(update)
+                    
                     self.total_updates_processed += 1
                 
                 except Exception as e:
