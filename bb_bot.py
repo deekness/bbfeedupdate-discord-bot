@@ -3581,7 +3581,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
     def _create_structured_summary_embed(self, analysis_data: dict, update_count: int, summary_type: str) -> List[discord.Embed]:
         """Create structured summary embed that only includes sections with content"""
         pacific_tz = pytz.timezone('US/Pacific')
-        current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
+        current_hour_pacific = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
         current_day = max(1, (datetime.now().date() - datetime(2025, 7, 1).date()).days + 1)
         
         # Determine embed color based on importance
@@ -3596,12 +3596,13 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             color = 0x95a5a6  # Gray for quiet hours
         
         # Create main embed
+        # Create main embed with PACIFIC TIME
         if summary_type == "hourly_summary":
-            title = f"Chen Bot's House Summary - {current_hour} 🏠"
+            title = f"Chen Bot's House Summary - {current_hour_pacific} 🏠"
             description = f""
-            footer_text = f"Chen Bot's House Summary • {current_hour}"
+            footer_text = f"Chen Bot's House Summary • {current_hour_pacific}"
         else:
-            title = f"Chen Bot's House Summary - {current_hour} 🏠"
+            title = f"Chen Bot's House Summary - {current_hour_pacific} 🏠"
             description = f""
             footer_text = "Chen Bot's Summary"
         
