@@ -2994,12 +2994,14 @@ class UpdateBatcher:
         logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
         # Get updates from the database for this specific hour period
-        hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
+        if hasattr(self, 'db') and self.db:
+            hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
+        else:
+            # Fallback to hourly_queue if no database access
+            hourly_updates = self.hourly_queue.copy()
         
         if not hourly_updates:
             logger.info(f"No updates found for hour period {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
-            # Still update the timestamp so we don't keep trying
-            self.last_hourly_summary = now
             return []
         
         logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
@@ -3007,24 +3009,21 @@ class UpdateBatcher:
         embeds = []
         
         try:
-            # Try context-aware structured format first
+            # Try LLM summary first
             if self.llm_client and await self._can_make_llm_request():
                 try:
                     logger.info("Using LLM for hourly summary")
-                    embeds = await self._create_llm_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+                    embeds = await self._create_llm_hourly_summary_simple(hourly_updates, hour_start, hour_end)
                 except Exception as e:
                     logger.error(f"LLM hourly summary failed: {e}")
-                    embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+                    embeds = self._create_pattern_hourly_summary_simple(hourly_updates, hour_start, hour_end)
             else:
                 logger.info("Using pattern-based hourly summary")
-                embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+                embeds = self._create_pattern_hourly_summary_simple(hourly_updates, hour_start, hour_end)
         except Exception as e:
             logger.error(f"All hourly summary methods failed: {e}")
-            embeds = self._create_basic_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+            embeds = self._create_basic_hourly_summary_simple(hourly_updates, hour_start, hour_end)
     
-        # Update timestamp
-        self.last_hourly_summary = now
-        
         logger.info(f"Created hourly summary from {len(hourly_updates)} updates")
         return embeds
 
@@ -5389,6 +5388,68 @@ async def save_queue_state(self):
                     logger.info(f"Recorded context event: {event['type']} - {event.get('description', 'No description')}")
         except Exception as e:
             logger.error(f"Error processing update for context: {e}")
+
+
+    async def _create_llm_hourly_summary_simple(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Simple LLM hourly summary"""
+        await self.rate_limiter.wait_if_needed()
+        
+        updates_text = "\n".join([f"{self._extract_correct_time(u)} - {u.title}" for u in updates[:15]])
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        prompt = f"""Create a brief hourly summary for {hour_period}:
+    
+    {updates_text}
+    
+    Provide a 2-3 sentence summary of the key events during {hour_period}."""
+    
+        response = await asyncio.to_thread(
+            self.llm_client.messages.create,
+            model=self.llm_model,
+            max_tokens=300,
+            temperature=0.3,
+            messages=[{"role": "user", "content": prompt}]
+        )
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Summary - {hour_end.strftime('%I %p').lstrip('0')}",
+            description=response.content[0].text,
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        return [embed]
+    
+    def _create_pattern_hourly_summary_simple(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Simple pattern-based hourly summary"""
+        hour_display = hour_end.strftime("%I %p").lstrip('0')
+        
+        # Get top 5 most important updates
+        top_updates = sorted(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:5]
+        
+        summary_text = "\n".join([f"• {update.title[:100]}..." if len(update.title) > 100 else f"• {update.title}" for update in top_updates])
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Summary - {hour_display}",
+            description=f"**{len(updates)} updates this hour**\n\n{summary_text}",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        return [embed]
+    
+    def _create_basic_hourly_summary_simple(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Basic fallback hourly summary"""
+        hour_display = hour_end.strftime("%I %p").lstrip('0')
+        
+        embed = discord.Embed(
+            title=f"📊 Hourly Summary - {hour_display}",
+            description=f"**{len(updates)} updates occurred this hour**",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        return [embed]
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
