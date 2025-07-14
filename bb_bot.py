@@ -10351,6 +10351,9 @@ class BBDiscordBot(commands.Bot):
             for embed in embeds:
                 await channel.send(embed=embed)
             
+            self.highlights_queue.clear()
+            self.last_batch_time = datetime.now()
+            
             # ONLY clear queue after Discord success
             processed_count = len(self.update_batcher.highlights_queue)
             self.update_batcher.highlights_queue.clear()
