@@ -5450,6 +5450,99 @@ async def save_queue_state(self):
         except Exception as e:
             logger.error(f"Error cleaning checkpoints: {e}")
 
+    async def save_queue_state(self):
+            """Save current queue state to database"""
+            try:
+                # Use the same database connection as prediction manager
+                conn = None
+                if hasattr(self, 'db') and hasattr(self.db, 'get_connection'):
+                    conn = self.db.get_connection()
+                else:
+                    # If not available, use config to get connection
+                    database_url = os.getenv('DATABASE_URL')
+                    if database_url:
+                        import psycopg2
+                        import psycopg2.extras
+                        conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+                
+                if not conn:
+                    logger.warning("No database connection available for queue persistence")
+                    return
+                    
+                cursor = conn.cursor()
+                
+                # Save highlights queue
+                highlights_data = {
+                    'updates': [
+                        {
+                            'title': update.title,
+                            'description': update.description,
+                            'link': update.link,
+                            'pub_date': update.pub_date.isoformat(),
+                            'content_hash': update.content_hash,
+                            'author': update.author
+                        }
+                        for update in self.highlights_queue
+                    ]
+                }
+                
+                cursor.execute("""
+                    INSERT INTO summary_checkpoints 
+                    (summary_type, queue_state, queue_size, last_summary_time)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (summary_type) 
+                    DO UPDATE SET 
+                        queue_state = EXCLUDED.queue_state,
+                        queue_size = EXCLUDED.queue_size,
+                        last_summary_time = EXCLUDED.last_summary_time,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (
+                    'highlights',
+                    json.dumps(highlights_data),
+                    len(self.highlights_queue),
+                    self.last_batch_time.isoformat()
+                ))
+                
+                # Save hourly queue
+                hourly_data = {
+                    'updates': [
+                        {
+                            'title': update.title,
+                            'description': update.description,
+                            'link': update.link,
+                            'pub_date': update.pub_date.isoformat(),
+                            'content_hash': update.content_hash,
+                            'author': update.author
+                        }
+                        for update in self.hourly_queue
+                    ]
+                }
+                
+                cursor.execute("""
+                    INSERT INTO summary_checkpoints 
+                    (summary_type, queue_state, queue_size, last_summary_time)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (summary_type) 
+                    DO UPDATE SET 
+                        queue_state = EXCLUDED.queue_state,
+                        queue_size = EXCLUDED.queue_size,
+                        last_summary_time = EXCLUDED.last_summary_time,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (
+                    'hourly',
+                    json.dumps(hourly_data),
+                    len(self.hourly_queue),
+                    self.last_hourly_summary.isoformat()
+                ))
+                
+                conn.commit()
+                conn.close()
+                
+                logger.info(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
+                
+            except Exception as e:
+                logger.error(f"Error saving queue state: {e}")
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
