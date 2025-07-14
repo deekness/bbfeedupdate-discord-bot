@@ -8297,7 +8297,7 @@ class BBDiscordBot(commands.Bot):
                 
                 # Create the embed
                 embed = discord.Embed(
-                    title="🎯 ZING!",
+                    title=":robot: ZING!",
                     description=zing_text,
                     color=0xff1744 if final_target == interaction.user else 0xff9800
                 )
