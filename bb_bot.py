@@ -369,403 +369,7 @@ def setup_logging():
 
 logger = setup_logging()
 
-class BlueskyClient:
-    """Client for interacting with Bluesky's AT Protocol API"""
-    
-    def __init__(self, username: str = None, password: str = None):
-        self.base_url = "https://bsky.social/xrpc"
-        self.session = None
-        self.access_token = None
-        self.refresh_token = None
-        self.username = username
-        self.password = password
-        
-        # Session for HTTP requests with retry logic
-        self.http_session = requests.Session()
-        retry_strategy = requests.adapters.Retry(
-            total=3,
-            backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504]
-        )
-        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
-        self.http_session.mount("http://", adapter)
-        self.http_session.mount("https://", adapter)
-        
-        self.http_session.headers.update({
-            'User-Agent': 'BigBrotherBot/1.0',
-            'Content-Type': 'application/json'
-        })
-    
-    async def authenticate(self) -> bool:
-        """Authenticate with Bluesky if credentials provided"""
-        if not self.username or not self.password:
-            logger.info("No Bluesky credentials provided - running in read-only mode")
-            return True
-        
-        try:
-            response = self.http_session.post(
-                f"{self.base_url}/com.atproto.server.createSession",
-                json={
-                    "identifier": self.username,
-                    "password": self.password
-                },
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                self.access_token = data.get('accessJwt')
-                self.refresh_token = data.get('refreshJwt')
-                
-                # Update session headers
-                self.http_session.headers.update({
-                    'Authorization': f'Bearer {self.access_token}'
-                })
-                
-                logger.info("Successfully authenticated with Bluesky")
-                return True
-            else:
-                logger.error(f"Bluesky authentication failed: {response.status_code}")
-                return False
-                
-        except Exception as e:
-            logger.error(f"Error authenticating with Bluesky: {e}")
-            return False
-    
-    def get_profile_posts(self, handle: str, limit: int = 30) -> List[Dict[str, Any]]:
-        """Get posts from a specific profile"""
-        try:
-            # Convert handle to DID if needed
-            if not handle.startswith('did:'):
-                response = self.http_session.get(
-                    f"{self.base_url}/com.atproto.identity.resolveHandle",
-                    params={"handle": handle},
-                    timeout=10
-                )
-                
-                if response.status_code != 200:
-                    logger.error(f"Failed to resolve handle {handle}: {response.status_code}")
-                    return []
-                
-                did = response.json().get('did')
-            else:
-                did = handle
-            
-            # Get posts from the profile
-            response = self.http_session.get(
-                f"{self.base_url}/app.bsky.feed.getAuthorFeed",
-                params={
-                    "actor": did,
-                    "limit": limit,
-                    "filter": "posts_no_replies"
-                },
-                timeout=15
-            )
-            
-            if response.status_code == 200:
-                data = response.json()
-                return data.get('feed', [])
-            else:
-                logger.warning(f"Failed to get posts for {handle}: {response.status_code}")
-                return []
-                
-        except Exception as e:
-            logger.error(f"Error getting posts for {handle}: {e}")
-            return []
 
-class UnifiedContentMonitor:
-    """Unified monitor that combines RSS and Bluesky content"""
-    
-    def __init__(self, bot_instance):
-        self.bot = bot_instance
-        self.analyzer = bot_instance.analyzer
-        
-        # Initialize Bluesky client
-        bluesky_username = os.getenv('BLUESKY_USERNAME') or self.bot.config.get('bluesky_username')
-        bluesky_password = os.getenv('BLUESKY_PASSWORD') or self.bot.config.get('bluesky_password')
-        self.bluesky_client = BlueskyClient(bluesky_username, bluesky_password)
-        
-        # Configure monitored Bluesky accounts
-        self.monitored_accounts = [
-            # Major BB News/Update Accounts
-            "bigbrothernetwork.bsky.social",
-            "realitytvwrapped.bsky.social", 
-            "bbscreencaps.bsky.social",
-            "hamsterwatch.bsky.social",
-            "onlinebigbrother.bsky.social",
-            "realitysteve.bsky.social",
-            "@hamsterwatch.com‬",
-            "‪@pooyaism.bsky.social‬",
-            "@bblionotev.bsky.social‬",
-            "‪@bigbroaccess.bsky.social‬‬",
-            "‪@thebbpresident.bsky.social‬‬‬",
-           
-            
-            # Add more accounts as you discover them
-            # You can add individual contestant accounts if they join Bluesky
-        ]
-        
-        # BB-related keywords for filtering
-        self.bb_keywords = [
-            "big brother", "bb27", "#bb27", "bb 27", "#bigbrother",
-            "houseguest", "hoh", "veto", "eviction", "nomination", 
-            "backdoor", "alliance", "showmance", "feeds", "live feeds",
-            "diary room", "have not", "america's favorite", "jury",
-            "finale", "pov", "power of veto", "head of household"
-        ]
-        
-        # Track last check times
-        self.last_check_times = {}
-        
-        # Stats
-        self.total_bluesky_updates = 0
-        self.bluesky_auth_status = False
-    
-    async def check_all_sources(self) -> List[BBUpdate]:
-        """Check both RSS and Bluesky sources and return unified updates"""
-        all_updates = []
-        
-        # 1. Check RSS (your existing logic)
-        rss_updates = await self._check_rss_feed()
-        all_updates.extend(rss_updates)
-        
-        # 2. Check Bluesky accounts
-        bluesky_updates = await self._check_bluesky_accounts()
-        all_updates.extend(bluesky_updates)
-        
-        # 3. Filter duplicates across ALL sources
-        new_updates = await self._filter_all_duplicates(all_updates)
-        
-        logger.info(f"Content check: {len(rss_updates)} RSS, {len(bluesky_updates)} Bluesky, {len(new_updates)} new total")
-        
-        return new_updates
-    
-    async def _check_rss_feed(self) -> List[BBUpdate]:
-        """Check RSS feed (your existing logic, extracted)"""
-        try:
-            feed = feedparser.parse(self.bot.rss_url)
-            
-            if not feed.entries:
-                return []
-            
-            updates = self.bot.process_rss_entries(feed.entries)
-            return updates
-            
-        except Exception as e:
-            logger.error(f"Error checking RSS feed: {e}")
-            return []
-    
-    async def _check_bluesky_accounts(self) -> List[BBUpdate]:
-        """Check all monitored Bluesky accounts"""
-        all_bluesky_updates = []
-        
-        # Authenticate if needed
-        if not self.bluesky_auth_status:
-            self.bluesky_auth_status = await self.bluesky_client.authenticate()
-        
-        if not self.bluesky_auth_status:
-            logger.debug("Bluesky not authenticated, skipping check")
-            return []
-        
-        for account in self.monitored_accounts:
-            try:
-                posts = self.bluesky_client.get_profile_posts(account, limit=20)
-                account_updates = await self._process_account_posts(account, posts)
-                all_bluesky_updates.extend(account_updates)
-                
-                # Small delay between accounts to be respectful
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
-                logger.error(f"Error checking Bluesky account {account}: {e}")
-                continue
-        
-        self.total_bluesky_updates += len(all_bluesky_updates)
-        return all_bluesky_updates
-    
-    async def _process_account_posts(self, account: str, posts: List[Dict]) -> List[BBUpdate]:
-        """Process posts from a specific Bluesky account"""
-        updates = []
-        last_check = self.last_check_times.get(account, datetime.now() - timedelta(hours=6))
-        
-        for post_data in posts:
-            try:
-                post = post_data.get('post', {})
-                record = post.get('record', {})
-                
-                # Extract post data
-                text = record.get('text', '')
-                created_at = record.get('createdAt', '')
-                uri = post.get('uri', '')
-                
-                # Parse timestamp
-                try:
-                    post_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                    post_time = post_time.replace(tzinfo=None)
-                except:
-                    post_time = datetime.now()
-                
-                # Skip if post is older than last check
-                if post_time <= last_check:
-                    continue
-                
-                # Skip if not BB related
-                if not self._is_bb_related(text):
-                    continue
-                
-                # Clean and format the content
-                cleaned_text = self._clean_bluesky_text(text)
-                
-                # Create title that mirrors RSS format
-                title = f"{self._extract_time_from_post(post_time)} - {cleaned_text}"
-                if len(title) > 200:
-                    title = title[:197] + "..."
-                
-                # Create BBUpdate object that integrates seamlessly
-                description = cleaned_text
-                link = f"https://bsky.app/profile/{account}/post/{uri.split('/')[-1]}"
-                content_hash = self._create_bluesky_hash(text, created_at, account)
-                
-                update = BBUpdate(
-                    title=title,
-                    description=description,
-                    link=link,
-                    pub_date=post_time,
-                    content_hash=content_hash,
-                    author=f"@{account.split('.')[0]}"  # Clean up handle
-                )
-                
-                updates.append(update)
-                
-            except Exception as e:
-                logger.error(f"Error processing post from {account}: {e}")
-                continue
-        
-        # Update last check time for this account
-        if updates:
-            self.last_check_times[account] = max(update.pub_date for update in updates)
-            logger.debug(f"Found {len(updates)} new updates from @{account}")
-        
-        return updates
-    
-    async def _filter_all_duplicates(self, all_updates: List[BBUpdate]) -> List[BBUpdate]:
-        """Filter duplicates across RSS and Bluesky using enhanced detection"""
-        new_updates = []
-        
-        for update in all_updates:
-            # Check database first
-            if self.bot.db.is_duplicate(update.content_hash):
-                continue
-            
-            # Check cache
-            if await self.bot.update_batcher.processed_hashes_cache.contains(update.content_hash):
-                continue
-            
-            # Check for content similarity across sources
-            if not await self._is_content_duplicate(update, new_updates):
-                new_updates.append(update)
-        
-        return new_updates
-    
-    async def _is_content_duplicate(self, new_update: BBUpdate, existing_updates: List[BBUpdate]) -> bool:
-        """Check if content is duplicate based on semantic similarity"""
-        new_content = new_update.description.lower()
-        
-        # Remove common variations for comparison
-        new_content_cleaned = self._normalize_content_for_comparison(new_content)
-        
-        for existing in existing_updates:
-            existing_content = self._normalize_content_for_comparison(existing.description.lower())
-            
-            # Check for high similarity (adjust threshold as needed)
-            similarity = self._calculate_content_similarity(new_content_cleaned, existing_content)
-            if similarity > 0.85:  # 85% similarity threshold
-                logger.debug(f"Filtered duplicate content: {similarity:.2f} similarity")
-                return True
-        
-        return False
-    
-    def _normalize_content_for_comparison(self, content: str) -> str:
-        """Normalize content for duplicate detection"""
-        import re
-        
-        # Remove timestamps, URLs, mentions
-        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
-        content = re.sub(r'https?://\S+', '', content)
-        content = re.sub(r'@\w+', '', content)
-        content = re.sub(r'#\w+', '', content)
-        
-        # Remove extra whitespace
-        content = re.sub(r'\s+', ' ', content).strip()
-        
-        return content
-    
-    def _calculate_content_similarity(self, text1: str, text2: str) -> float:
-        """Calculate similarity between two texts (simple implementation)"""
-        if not text1 or not text2:
-            return 0.0
-        
-        # Simple word-based similarity
-        words1 = set(text1.split())
-        words2 = set(text2.split())
-        
-        if not words1 or not words2:
-            return 0.0
-        
-        intersection = words1.intersection(words2)
-        union = words1.union(words2)
-        
-        return len(intersection) / len(union) if union else 0.0
-    
-    def _is_bb_related(self, text: str) -> bool:
-        """Enhanced BB content detection"""
-        text_lower = text.lower()
-        
-        # Direct keyword match
-        if any(keyword in text_lower for keyword in self.bb_keywords):
-            return True
-        
-        # Check for houseguest names (if you have a current list)
-        # You can expand this with actual BB27 houseguest names
-        bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
-                     "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
-                     "rylie", "vince", "will", "zach", "zae"]  # Add actual names
-        
-        for name in bb27_names:
-            if name in text_lower:
-                return True
-        
-        return False
-    
-    def _clean_bluesky_text(self, text: str) -> str:
-        """Clean and format Bluesky text for better integration"""
-        # Remove excessive line breaks
-        text = re.sub(r'\n+', ' ', text)
-        
-        # Clean up extra spaces
-        text = re.sub(r'\s+', ' ', text).strip()
-        
-        return text
-    
-    def _extract_time_from_post(self, post_time: datetime) -> str:
-        """Extract time in format that matches RSS entries"""
-        return post_time.strftime("%I:%M %p PST")
-    
-    def _create_bluesky_hash(self, text: str, created_at: str, author: str) -> str:
-        """Create unique hash for Bluesky posts"""
-        import hashlib
-        content = f"bluesky|{author}|{text}|{created_at}"
-        return hashlib.md5(content.encode()).hexdigest()
-    
-    def get_stats(self) -> Dict[str, Any]:
-        """Get monitoring statistics"""
-        return {
-            "monitored_accounts": len(self.monitored_accounts),
-            "accounts_with_activity": len(self.last_check_times),
-            "total_bluesky_updates": self.total_bluesky_updates,
-            "authentication_status": self.bluesky_auth_status,
-            "last_check_times": dict(self.last_check_times)
-        }
 
 # Alliance tracking enums
 class AllianceStatus(Enum):
@@ -1041,6 +645,398 @@ class BBUpdate:
     pub_date: datetime
     content_hash: str
     author: str = ""
+
+class BlueskyClient:
+    """Client for interacting with Bluesky's AT Protocol API"""
+    
+    def __init__(self, username: str = None, password: str = None):
+        self.base_url = "https://bsky.social/xrpc"
+        self.session = None
+        self.access_token = None
+        self.refresh_token = None
+        self.username = username
+        self.password = password
+        
+        # Session for HTTP requests with retry logic
+        self.http_session = requests.Session()
+        retry_strategy = requests.adapters.Retry(
+            total=3,
+            backoff_factor=1,
+            status_forcelist=[429, 500, 502, 503, 504]
+        )
+        adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
+        self.http_session.mount("http://", adapter)
+        self.http_session.mount("https://", adapter)
+        
+        self.http_session.headers.update({
+            'User-Agent': 'BigBrotherBot/1.0',
+            'Content-Type': 'application/json'
+        })
+    
+    async def authenticate(self) -> bool:
+        """Authenticate with Bluesky if credentials provided"""
+        if not self.username or not self.password:
+            logger.info("No Bluesky credentials provided - running in read-only mode")
+            return True
+        
+        try:
+            response = self.http_session.post(
+                f"{self.base_url}/com.atproto.server.createSession",
+                json={
+                    "identifier": self.username,
+                    "password": self.password
+                },
+                timeout=10
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.access_token = data.get('accessJwt')
+                self.refresh_token = data.get('refreshJwt')
+                
+                # Update session headers
+                self.http_session.headers.update({
+                    'Authorization': f'Bearer {self.access_token}'
+                })
+                
+                logger.info("Successfully authenticated with Bluesky")
+                return True
+            else:
+                logger.error(f"Bluesky authentication failed: {response.status_code}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"Error authenticating with Bluesky: {e}")
+            return False
+    
+    def get_profile_posts(self, handle: str, limit: int = 30) -> List[Dict[str, Any]]:
+        """Get posts from a specific profile"""
+        try:
+            # Convert handle to DID if needed
+            if not handle.startswith('did:'):
+                response = self.http_session.get(
+                    f"{self.base_url}/com.atproto.identity.resolveHandle",
+                    params={"handle": handle},
+                    timeout=10
+                )
+                
+                if response.status_code != 200:
+                    logger.error(f"Failed to resolve handle {handle}: {response.status_code}")
+                    return []
+                
+                did = response.json().get('did')
+            else:
+                did = handle
+            
+            # Get posts from the profile
+            response = self.http_session.get(
+                f"{self.base_url}/app.bsky.feed.getAuthorFeed",
+                params={
+                    "actor": did,
+                    "limit": limit,
+                    "filter": "posts_no_replies"
+                },
+                timeout=15
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('feed', [])
+            else:
+                logger.warning(f"Failed to get posts for {handle}: {response.status_code}")
+                return []
+                
+        except Exception as e:
+            logger.error(f"Error getting posts for {handle}: {e}")
+            return []
+
+class UnifiedContentMonitor:
+    """Unified monitor that combines RSS and Bluesky content"""
+    
+    def __init__(self, bot_instance):
+        self.bot = bot_instance
+        self.analyzer = bot_instance.analyzer
+        
+        # Initialize Bluesky client
+        bluesky_username = os.getenv('BLUESKY_USERNAME') or self.bot.config.get('bluesky_username')
+        bluesky_password = os.getenv('BLUESKY_PASSWORD') or self.bot.config.get('bluesky_password')
+        self.bluesky_client = BlueskyClient(bluesky_username, bluesky_password)
+        
+        # Configure monitored Bluesky accounts
+        self.monitored_accounts = [
+            # Major BB News/Update Accounts
+            "bigbrothernetwork.bsky.social",
+            "realitytvwrapped.bsky.social", 
+            "bbscreencaps.bsky.social",
+            "hamsterwatch.bsky.social",
+            "onlinebigbrother.bsky.social",
+            "realitysteve.bsky.social",
+            
+            # Add more accounts as you discover them
+            # You can add individual contestant accounts if they join Bluesky
+        ]
+        
+        # BB-related keywords for filtering
+        self.bb_keywords = [
+            "big brother", "bb27", "#bb27", "bb 27", "#bigbrother",
+            "houseguest", "hoh", "veto", "eviction", "nomination", 
+            "backdoor", "alliance", "showmance", "feeds", "live feeds",
+            "diary room", "have not", "america's favorite", "jury",
+            "finale", "pov", "power of veto", "head of household"
+        ]
+        
+        # Track last check times
+        self.last_check_times = {}
+        
+        # Stats
+        self.total_bluesky_updates = 0
+        self.bluesky_auth_status = False
+    
+    async def check_all_sources(self) -> List[BBUpdate]:
+        """Check both RSS and Bluesky sources and return unified updates"""
+        all_updates = []
+        
+        # 1. Check RSS (your existing logic)
+        rss_updates = await self._check_rss_feed()
+        all_updates.extend(rss_updates)
+        
+        # 2. Check Bluesky accounts
+        bluesky_updates = await self._check_bluesky_accounts()
+        all_updates.extend(bluesky_updates)
+        
+        # 3. Filter duplicates across ALL sources
+        new_updates = await self._filter_all_duplicates(all_updates)
+        
+        logger.info(f"Content check: {len(rss_updates)} RSS, {len(bluesky_updates)} Bluesky, {len(new_updates)} new total")
+        
+        return new_updates
+    
+    async def _check_rss_feed(self) -> List[BBUpdate]:
+        """Check RSS feed (your existing logic, extracted)"""
+        try:
+            feed = feedparser.parse(self.bot.rss_url)
+            
+            if not feed.entries:
+                return []
+            
+            updates = self.bot.process_rss_entries(feed.entries)
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Error checking RSS feed: {e}")
+            return []
+    
+    async def _check_bluesky_accounts(self) -> List[BBUpdate]:
+        """Check all monitored Bluesky accounts"""
+        all_bluesky_updates = []
+        
+        # Authenticate if needed
+        if not self.bluesky_auth_status:
+            self.bluesky_auth_status = await self.bluesky_client.authenticate()
+        
+        if not self.bluesky_auth_status:
+            logger.debug("Bluesky not authenticated, skipping check")
+            return []
+        
+        for account in self.monitored_accounts:
+            try:
+                posts = self.bluesky_client.get_profile_posts(account, limit=20)
+                account_updates = await self._process_account_posts(account, posts)
+                all_bluesky_updates.extend(account_updates)
+                
+                # Small delay between accounts to be respectful
+                await asyncio.sleep(0.5)
+                
+            except Exception as e:
+                logger.error(f"Error checking Bluesky account {account}: {e}")
+                continue
+        
+        self.total_bluesky_updates += len(all_bluesky_updates)
+        return all_bluesky_updates
+    
+    async def _process_account_posts(self, account: str, posts: List[Dict]) -> List[BBUpdate]:
+        """Process posts from a specific Bluesky account"""
+        updates = []
+        last_check = self.last_check_times.get(account, datetime.now() - timedelta(hours=6))
+        
+        for post_data in posts:
+            try:
+                post = post_data.get('post', {})
+                record = post.get('record', {})
+                
+                # Extract post data
+                text = record.get('text', '')
+                created_at = record.get('createdAt', '')
+                uri = post.get('uri', '')
+                
+                # Parse timestamp
+                try:
+                    post_time = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    post_time = post_time.replace(tzinfo=None)
+                except:
+                    post_time = datetime.now()
+                
+                # Skip if post is older than last check
+                if post_time <= last_check:
+                    continue
+                
+                # Skip if not BB related
+                if not self._is_bb_related(text):
+                    continue
+                
+                # Clean and format the content
+                cleaned_text = self._clean_bluesky_text(text)
+                
+                # Create title that mirrors RSS format
+                title = f"{self._extract_time_from_post(post_time)} - {cleaned_text}"
+                if len(title) > 200:
+                    title = title[:197] + "..."
+                
+                # Create BBUpdate object that integrates seamlessly
+                description = cleaned_text
+                link = f"https://bsky.app/profile/{account}/post/{uri.split('/')[-1]}"
+                content_hash = self._create_bluesky_hash(text, created_at, account)
+                
+                update = BBUpdate(
+                    title=title,
+                    description=description,
+                    link=link,
+                    pub_date=post_time,
+                    content_hash=content_hash,
+                    author=f"@{account.split('.')[0]}"  # Clean up handle
+                )
+                
+                updates.append(update)
+                
+            except Exception as e:
+                logger.error(f"Error processing post from {account}: {e}")
+                continue
+        
+        # Update last check time for this account
+        if updates:
+            self.last_check_times[account] = max(update.pub_date for update in updates)
+            logger.debug(f"Found {len(updates)} new updates from @{account}")
+        
+        return updates
+    
+    async def _filter_all_duplicates(self, all_updates: List[BBUpdate]) -> List[BBUpdate]:
+        """Filter duplicates across RSS and Bluesky using enhanced detection"""
+        new_updates = []
+        
+        for update in all_updates:
+            # Check database first
+            if self.bot.db.is_duplicate(update.content_hash):
+                continue
+            
+            # Check cache
+            if await self.bot.update_batcher.processed_hashes_cache.contains(update.content_hash):
+                continue
+            
+            # Check for content similarity across sources
+            if not await self._is_content_duplicate(update, new_updates):
+                new_updates.append(update)
+        
+        return new_updates
+    
+    async def _is_content_duplicate(self, new_update: BBUpdate, existing_updates: List[BBUpdate]) -> bool:
+        """Check if content is duplicate based on semantic similarity"""
+        new_content = new_update.description.lower()
+        
+        # Remove common variations for comparison
+        new_content_cleaned = self._normalize_content_for_comparison(new_content)
+        
+        for existing in existing_updates:
+            existing_content = self._normalize_content_for_comparison(existing.description.lower())
+            
+            # Check for high similarity (adjust threshold as needed)
+            similarity = self._calculate_content_similarity(new_content_cleaned, existing_content)
+            if similarity > 0.85:  # 85% similarity threshold
+                logger.debug(f"Filtered duplicate content: {similarity:.2f} similarity")
+                return True
+        
+        return False
+    
+    def _normalize_content_for_comparison(self, content: str) -> str:
+        """Normalize content for duplicate detection"""
+        import re
+        
+        # Remove timestamps, URLs, mentions
+        content = re.sub(r'\d{1,2}:\d{2}[ap]m', '', content)
+        content = re.sub(r'https?://\S+', '', content)
+        content = re.sub(r'@\w+', '', content)
+        content = re.sub(r'#\w+', '', content)
+        
+        # Remove extra whitespace
+        content = re.sub(r'\s+', ' ', content).strip()
+        
+        return content
+    
+    def _calculate_content_similarity(self, text1: str, text2: str) -> float:
+        """Calculate similarity between two texts (simple implementation)"""
+        if not text1 or not text2:
+            return 0.0
+        
+        # Simple word-based similarity
+        words1 = set(text1.split())
+        words2 = set(text2.split())
+        
+        if not words1 or not words2:
+            return 0.0
+        
+        intersection = words1.intersection(words2)
+        union = words1.union(words2)
+        
+        return len(intersection) / len(union) if union else 0.0
+    
+    def _is_bb_related(self, text: str) -> bool:
+        """Enhanced BB content detection"""
+        text_lower = text.lower()
+        
+        # Direct keyword match
+        if any(keyword in text_lower for keyword in self.bb_keywords):
+            return True
+        
+        # Check for houseguest names (if you have a current list)
+        # You can expand this with actual BB27 houseguest names
+        bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
+                     "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
+                     "rylie", "vince", "will", "zach", "zae"]  # Add actual names
+        
+        for name in bb27_names:
+            if name in text_lower:
+                return True
+        
+        return False
+    
+    def _clean_bluesky_text(self, text: str) -> str:
+        """Clean and format Bluesky text for better integration"""
+        # Remove excessive line breaks
+        text = re.sub(r'\n+', ' ', text)
+        
+        # Clean up extra spaces
+        text = re.sub(r'\s+', ' ', text).strip()
+        
+        return text
+    
+    def _extract_time_from_post(self, post_time: datetime) -> str:
+        """Extract time in format that matches RSS entries"""
+        return post_time.strftime("%I:%M %p PST")
+    
+    def _create_bluesky_hash(self, text: str, created_at: str, author: str) -> str:
+        """Create unique hash for Bluesky posts"""
+        import hashlib
+        content = f"bluesky|{author}|{text}|{created_at}"
+        return hashlib.md5(content.encode()).hexdigest()
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """Get monitoring statistics"""
+        return {
+            "monitored_accounts": len(self.monitored_accounts),
+            "accounts_with_activity": len(self.last_check_times),
+            "total_bluesky_updates": self.total_bluesky_updates,
+            "authentication_status": self.bluesky_auth_status,
+            "last_check_times": dict(self.last_check_times)
+        }
 
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights and social dynamics"""
