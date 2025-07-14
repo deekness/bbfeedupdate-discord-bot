@@ -4478,31 +4478,31 @@ def _create_category_narrative(self, category: str, updates: List) -> str:
             except Exception as e:
                 logger.error(f"Error saving queue state: {e}")
     
-        async def clear_old_checkpoints(self, days_to_keep: int = 7):
-            """Clean up old checkpoint data"""
-            try:
-                database_url = os.getenv('DATABASE_URL')
-                if not database_url:
-                    return
+    async def clear_old_checkpoints(self, days_to_keep: int = 7):
+        """Clean up old checkpoint data"""
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                return
                     
-                import psycopg2
-                conn = psycopg2.connect(database_url)
-                cursor = conn.cursor()
+            import psycopg2
+            conn = psycopg2.connect(database_url)
+            cursor = conn.cursor()
                 
-                cursor.execute("""
-                    DELETE FROM summary_checkpoints 
-                    WHERE created_at < NOW() - INTERVAL '%s days'
-                """, (days_to_keep,))
+            cursor.execute("""
+                DELETE FROM summary_checkpoints 
+                WHERE created_at < NOW() - INTERVAL '%s days'
+            """, (days_to_keep,))
                 
-                deleted_count = cursor.rowcount
-                conn.commit()
-                conn.close()
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
                 
-                if deleted_count > 0:
-                    logger.info(f"Cleaned up {deleted_count} old queue checkpoints")
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old queue checkpoints")
                     
-            except Exception as e:
-                logger.error(f"Error cleaning checkpoints: {e}")
+        except Exception as e:
+            logger.error(f"Error cleaning checkpoints: {e}")
 
 async def clear_old_checkpoints(self, days_to_keep: int = 7):
         """Clean up old checkpoint data"""
