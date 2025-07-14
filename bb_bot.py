@@ -765,7 +765,7 @@ class UnifiedContentMonitor:
         # Configure monitored Bluesky accounts
         self.monitored_accounts = [
             # Major BB News/Update Accounts
-            "bigbrothernetwork.bsky.social",
+            "@bigbrothernetwork.bsky.social‬",
             "realitytvwrapped.bsky.social", 
             "bbscreencaps.bsky.social",
             "hamsterwatch.bsky.social",
@@ -10441,7 +10441,12 @@ class BBDiscordBot(commands.Bot):
                     self.db.store_update(update, importance, categories)
                     
                     # Add to batching system (both highlights and hourly queues)
-                    await self.update_batcher.add_update(update)
+                    # Process for historical context if available
+                    if hasattr(self, 'context_tracker') and self.context_tracker:
+                        try:
+                            await self.context_tracker.analyze_update_for_events(update)
+                        except Exception as e:
+                            logger.debug(f"Context processing failed: {e}")
                 
                     # Process for alliance tracking
                     alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
