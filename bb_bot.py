@@ -9665,8 +9665,8 @@ class BBDiscordBot(commands.Bot):
                 return
             
             # Calculate day number (days since season start)
-            season_start = datetime(2025, 7, 8)  # Adjust this date for actual season start
-            day_number = (end_time.date() - season_start.date()).days + 1
+            recap_date = start_time.date()  # Use start_time (yesterday's 8 AM) for day calculation
+            day_number = (recap_date - season_start.date()).days + 1
             
             # Create daily recap
             recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
