@@ -9196,7 +9196,7 @@ class BBDiscordBot(commands.Bot):
                 return
             
             logger.info("Starting daily recap generation")        
-        try:
+            
             # Only proceed if we have an update channel configured
             if not self.config.get('update_channel_id'):
                 logger.debug("No update channel configured for daily recap")
@@ -9204,9 +9204,6 @@ class BBDiscordBot(commands.Bot):
             
             logger.info("Starting daily recap generation")
             
-            # Get Pacific timezone
-            pacific_tz = pytz.timezone('US/Pacific')
-            now_pacific = datetime.now(pacific_tz)
             
             # Calculate the day period (previous 8:00 AM to current 8:00 AM)
             end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
