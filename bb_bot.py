@@ -5,7 +5,7 @@ import asyncio
 import sqlite3
 import hashlib
 import re
-import os
+import osj
 import sys
 import signal
 from datetime import datetime, timedelta
@@ -3041,7 +3041,7 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create hourly summary - FORCE LLM VERSION"""
+        """Create hourly summary - ONLY USE CURRENT HOUR DATA"""
         now = datetime.now()
         
         # Define the hour period
@@ -3051,7 +3051,7 @@ class UpdateBatcher:
         
         logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        # Get updates from database
+        # Get updates from database FOR THIS SPECIFIC HOUR ONLY
         if hasattr(self, 'db') and self.db:
             hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
         else:
@@ -3059,16 +3059,16 @@ class UpdateBatcher:
         
         if not hourly_updates:
             logger.info(f"No updates found for hour period {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
-            return []
+            return []  # This will trigger quiet hour message
         
         logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        # FORCE LLM STRUCTURED SUMMARY
+        # FORCE LLM STRUCTURED SUMMARY using ONLY current hour data
         if self.llm_client and await self._can_make_llm_request():
             try:
-                # Temporarily replace hourly_queue with the timeframe updates
+                # Temporarily replace hourly_queue with ONLY the timeframe updates
                 original_queue = self.hourly_queue.copy()
-                self.hourly_queue = hourly_updates
+                self.hourly_queue = hourly_updates  # Only current hour updates
                 
                 # Force structured summary
                 embeds = await self._create_forced_structured_summary("hourly_summary")
@@ -3076,7 +3076,7 @@ class UpdateBatcher:
                 # Restore original queue
                 self.hourly_queue = original_queue
                 
-                logger.info(f"Created LLM hourly summary from {len(hourly_updates)} updates")
+                logger.info(f"Created LLM hourly summary from {len(hourly_updates)} updates for this hour only")
                 return embeds
                 
             except Exception as e:
@@ -9791,7 +9791,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error sending highlights batch: {e}")
 
     async def send_hourly_summary(self):
-        """Send hourly comprehensive summary"""
+        """Send hourly comprehensive summary - FIXED QUEUE CLEARING"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
             logger.warning("Update channel not configured for hourly summary")
@@ -9803,7 +9803,7 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
-            # Create hourly summary (this will automatically get the right timeframe)
+            # Create hourly summary (this gets updates from database by timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
             if embeds:  
@@ -9811,6 +9811,13 @@ class BBDiscordBot(commands.Bot):
                 for embed in embeds:
                     await channel.send(embed=embed)
                 logger.info(f"Sent hourly summary with {len(embeds)} embeds")
+                
+                # CLEAR THE HOURLY QUEUE AFTER SENDING SUMMARY
+                processed_count = len(self.update_batcher.hourly_queue)
+                self.update_batcher.hourly_queue.clear()
+                self.update_batcher.last_hourly_summary = datetime.now()
+                logger.info(f"Cleared hourly queue of {processed_count} updates after summary")
+                
             else:
                 # CREATE AND SEND A "QUIET HOUR" EMBED
                 quiet_embed = self._create_quiet_hour_embed()
