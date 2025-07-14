@@ -3089,51 +3089,51 @@ class UpdateBatcher:
         return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
 
     def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
-    """Pattern-based hourly summary for timeframe - LAST RESORT"""
-    hour_display = hour_end.strftime("%I %p").lstrip('0')
-    
-    # Get top 8 most important updates
-    top_updates = sorted(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:8]
-    
-    embed = discord.Embed(
-        title=f"Chen Bot's House Summary - {hour_display} 🏠",
-        description=f"**{len(updates)} updates this hour**",
-        color=0x9b59b6,
-        timestamp=datetime.now()
-    )
-    
-    if top_updates:
-        summary_text = []
-        for update in top_updates:
-            time_str = self._extract_correct_time(update)
-            title = update.title
-            # Clean title
-            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-            if len(title) > 100:
-                title = title[:97] + "..."
-            summary_text.append(f"**{time_str}**: {title}")
+        """Pattern-based hourly summary for timeframe - LAST RESORT"""
+        hour_display = hour_end.strftime("%I %p").lstrip('0')
         
-        embed.add_field(
-            name="🎯 Top Moments This Hour",
-            value="\n".join(summary_text),
-            inline=False
-        )
-    
-    # Add importance rating
-    if updates:
-        avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in updates) // len(updates)
-        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-        importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
+        # Get top 8 most important updates
+        top_updates = sorted(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:8]
         
-        embed.add_field(
-            name="📊 Hour Importance",
-            value=f"{importance_icon} **{avg_importance}/10**",
-            inline=False
+        embed = discord.Embed(
+            title=f"Chen Bot's House Summary - {hour_display} 🏠",
+            description=f"**{len(updates)} updates this hour**",
+            color=0x9b59b6,
+            timestamp=datetime.now()
         )
-    
-    embed.set_footer(text=f"Chen Bot's House Summary • {hour_display}")
-    
-    return [embed]
+        
+        if top_updates:
+            summary_text = []
+            for update in top_updates:
+                time_str = self._extract_correct_time(update)
+                title = update.title
+                # Clean title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                if len(title) > 100:
+                    title = title[:97] + "..."
+                summary_text.append(f"**{time_str}**: {title}")
+            
+            embed.add_field(
+                name="🎯 Top Moments This Hour",
+                value="\n".join(summary_text),
+                inline=False
+            )
+        
+        # Add importance rating
+        if updates:
+            avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in updates) // len(updates)
+            importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+            importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
+            
+            embed.add_field(
+                name="📊 Hour Importance",
+                value=f"{importance_icon} **{avg_importance}/10**",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Chen Bot's House Summary • {hour_display}")
+        
+        return [embed]
 
     async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
         """Create structured summary with forced contextual format"""
