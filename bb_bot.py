@@ -5510,7 +5510,6 @@ class BBDatabase:
             
         except Exception as e:
             logger.error(f"Database daily query error: {e}")
-            return []
     
     def get_recent_updates(self, hours: int) -> List[BBUpdate]:
         """Get updates from the last N hours"""
@@ -5933,6 +5932,42 @@ class PostgreSQLDatabase:
         except Exception as e:
             logger.error(f"Database timeframe query error: {e}")
             return []
+
+    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+        """Get all updates from a specific 24-hour period"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author, importance_score
+                FROM updates 
+                WHERE pub_date >= %s AND pub_date < %s
+                ORDER BY pub_date ASC
+            """, (start_time, end_time))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            updates = []
+            for row in results:
+                update = BBUpdate(
+                    title=row['title'],
+                    description=row['description'],
+                    link=row['link'],
+                    pub_date=row['pub_date'],
+                    content_hash=row['content_hash'],
+                    author=row['author']
+                )
+                updates.append(update)
+            
+            return updates
+            
+        except Exception as e:
+            logger.error(f"Database daily query error: {e}")
+            return []
+
+    
 
 class HouseguestSelectionView(discord.ui.View):
     def __init__(self, prediction_type, duration_hours, week_number, title, description, prediction_manager, config):
@@ -9126,30 +9161,26 @@ class BBDiscordBot(commands.Bot):
         return new_updates
     
     
-    @tasks.loop(hours=24)
+    @tasks.loop(hours=24)  # Run every 24 hours
     async def daily_recap_task(self):
-        """Daily recap task that runs at 8:01 AM Pacific Time"""
+        """Daily recap task that runs at 8:00 AM Pacific Time"""
         if self.is_shutting_down:
             return
         
         try:
-            # Get current time in Pacific timezone
-            pacific_tz = pytz.timezone('US/Pacific')
-            now_pacific = datetime.now(pacific_tz)
-            
-            logger.debug(f"Daily recap check: Current time is {now_pacific.strftime('%I:%M %p')} Pacific")
-
-            # Check if it's around 8:00 AM Pacific (8:00-8:05 AM window)
-            if not (now_pacific.hour == 8 and 0 <= now_pacific.minute <= 5):
-                logger.debug(f"Not time for daily recap yet (current: {now_pacific.hour}:{now_pacific.minute:02d})")
+            # Only proceed if we have an update channel configured
+            if not self.config.get('update_channel_id'):
+                logger.debug("No update channel configured for daily recap")
                 return
-            
-            logger.info("Daily recap time window - proceeding with recap generation")
             
             logger.info("Starting daily recap generation")
             
-            # Calculate the day period (previous 8:01 AM to current 8:01 AM)
-            end_time = now_pacific.replace(tzinfo=None)  # Current time
+            # Get Pacific timezone
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
+            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
             start_time = end_time - timedelta(hours=24)  # 24 hours ago
             
             # Get all updates from the day
@@ -9157,10 +9188,11 @@ class BBDiscordBot(commands.Bot):
             
             if not daily_updates:
                 logger.info("No updates found for daily recap")
+                # Still send a "quiet day" recap
+                await self.send_quiet_day_recap()
                 return
             
             # Calculate day number (days since season start)
-            # For now, we'll use a simple calculation - you might want to adjust this
             season_start = datetime(2025, 7, 8)  # Adjust this date for actual season start
             day_number = (end_time.date() - season_start.date()).days + 1
             
@@ -9175,6 +9207,25 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"Error in daily recap task: {e}")
             logger.error(traceback.format_exc())
+    
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready and sync to 8:00 AM Pacific"""
+        await self.wait_until_ready()
+        
+        # Calculate wait time until next 8:00 AM Pacific
+        pacific_tz = pytz.timezone('US/Pacific')
+        now_pacific = datetime.now(pacific_tz)
+        
+        # Get next 8:00 AM Pacific
+        next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now_pacific.hour >= 8:  # If it's already past 8 AM today
+            next_recap += timedelta(days=1)  # Schedule for tomorrow
+        
+        wait_seconds = (next_recap - now_pacific).total_seconds()
+        
+        logger.info(f"Daily recap task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
+        await asyncio.sleep(wait_seconds)
     
     @tasks.loop(minutes=60)  # Run every 60 minutes
     async def hourly_summary_task(self):
@@ -9343,6 +9394,64 @@ class BBDiscordBot(commands.Bot):
         embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Even quiet hours need reporting!")
         
         return embed
+    
+    async def send_quiet_day_recap(self):
+        """Send a recap for days with no updates"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            return
+        
+        try:
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found for quiet day recap")
+                return
+            
+            # Calculate day number
+            season_start = datetime(2025, 7, 8)  # Adjust for actual season
+            current_date = datetime.now().date()
+            day_number = (current_date - season_start.date()).days + 1
+            
+            quiet_messages = [
+                "Not even the ants are causing drama 🐜",
+
+            ]
+            
+            import random
+            message = random.choice(quiet_messages)
+            
+            embed = discord.Embed(
+                title=f"📅 Day {day_number} Recap",
+                description=f"**{message}**",
+                color=0x95a5a6,  # Gray for quiet days
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(
+                name="📊 Day Summary",
+                value="No significant updates detected on the live feeds today.",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🏠 House Status",
+                value="All houseguests accounted for and apparently living very quiet lives.",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="📺 Feed Activity",
+                value="The cameras were probably more active than the houseguests today.",
+                inline=False
+            )
+            
+            embed.set_footer(text=f"Daily Recap • Day {day_number} • Even quiet days make history!")
+            
+            await channel.send(embed=embed)
+            logger.info(f"Sent quiet day recap for Day {day_number}")
+            
+        except Exception as e:
+            logger.error(f"Error sending quiet day recap: {e}")
     
     @tasks.loop(minutes=2)
     async def check_rss_feed(self):
