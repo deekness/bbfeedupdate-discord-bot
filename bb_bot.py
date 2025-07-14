@@ -9292,16 +9292,57 @@ class BBDiscordBot(commands.Bot):
             # Create hourly summary (this will automatically get the right timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
-            if embeds:  # Only send if we have embeds
+            if embeds:  
+                # Send the normal summary with content
                 for embed in embeds:
                     await channel.send(embed=embed)
-                
                 logger.info(f"Sent hourly summary with {len(embeds)} embeds")
             else:
-                logger.info("No hourly summary sent (no updates in timeframe)")
+                # CREATE AND SEND A "QUIET HOUR" EMBED
+                quiet_embed = self._create_quiet_hour_embed()
+                await channel.send(embed=quiet_embed)
+                logger.info("Sent quiet hour summary (no updates)")
             
         except Exception as e:
             logger.error(f"Error sending hourly summary: {e}")
+
+    def _create_quiet_hour_embed(self):
+        """Create embed for quiet hours with no updates"""
+        import pytz
+        
+        pacific_tz = pytz.timezone('US/Pacific')
+        current_hour = datetime.now(pacific_tz).strftime("%I %p").lstrip('0')
+        
+        # Fun random messages for quiet hours
+        quiet_messages = [ 
+            "Not even the ants were causing drama this hour. 🐜",
+        ]
+        
+        import random
+        message = random.choice(quiet_messages)
+        
+        embed = discord.Embed(
+            title=f"Chen Bot's House Summary - {current_hour} 🏠",
+            description=f"**{message}**",
+            color=0x95a5a6,  # Gray for quiet hours
+            timestamp=datetime.now()
+        )
+        
+        embed.add_field(
+            name="📊 Hour Activity Level",
+            value="😴 **Quiet Hour**\n*No significant updates detected*",
+            inline=False
+        )
+        
+        embed.add_field(
+            name="🏠 House Status", 
+            value="All houseguests accounted for and... doing very little apparently.",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Chen Bot's House Summary • {current_hour} • Even quiet hours need reporting!")
+        
+        return embed
     
     @tasks.loop(minutes=2)
     async def check_rss_feed(self):
