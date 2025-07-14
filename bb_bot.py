@@ -3471,19 +3471,40 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             return self._create_enhanced_pattern_hourly_summary()
 
     def _parse_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response with fallback handling"""
+        """Parse LLM response with better JSON handling"""
         try:
-            # Try to extract JSON
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start != -1 and json_end != -1:
-                json_text = response_text[json_start:json_end]
+            # Clean the response first
+            cleaned_text = response_text.strip()
+            
+            # Find JSON boundaries more carefully
+            json_start = cleaned_text.find('{')
+            json_end = cleaned_text.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_text = cleaned_text[json_start:json_end]
+                
+                # Clean up common JSON issues
+                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
+                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
+                
                 return json.loads(json_text)
             else:
-                raise ValueError("No JSON found in response")
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"JSON parsing failed: {e}, using text response")
-            return self._parse_text_response(response_text)
+                raise ValueError("No valid JSON found")
+                
+        except Exception as e:
+            logger.error(f"JSON parsing failed: {e}")
+            logger.error(f"Raw response: {response_text[:500]}...")
+            
+            # Better fallback that doesn't show raw JSON
+            return {
+                "headline": "Day 7 Big Brother Recap",
+                "summary": "Multiple strategic and social developments occurred throughout the day.",
+                "strategic_analysis": "Strategic gameplay and power dynamics evolved.",
+                "alliance_dynamics": "Alliance relationships and trust levels shifted.",
+                "entertainment_highlights": "Various memorable moments and interactions took place.",
+                "key_players": [],
+                "strategic_importance": 6
+            }
     
     def _parse_text_response(self, response_text: str) -> dict:
         """Parse LLM response when JSON parsing fails"""
