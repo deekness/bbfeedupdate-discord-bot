@@ -2990,8 +2990,8 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
-        """Add update to both highlights and hourly queues if not already processed"""
-        if not await self.processed_hashes_cache.contains(update.content_hash):
+        # Check both cache AND database for duplicates
+        if not await self.processed_hashes_cache.contains(update.content_hash) and not self.db.is_duplicate(update.content_hash):
             # Add to highlights queue (for 25-update batches)
             self.highlights_queue.append(update)
             
@@ -3000,6 +3000,10 @@ class UpdateBatcher:
             
             # Mark as processed
             await self.processed_hashes_cache.add(update.content_hash)
+            
+            logger.debug(f"Added new update: {update.title[:50]}...")
+        else:
+            logger.debug(f"Skipped duplicate: {update.title[:50]}...")
             
             # Log cache stats periodically
             cache_stats = self.processed_hashes_cache.get_stats()
@@ -8150,7 +8154,7 @@ class BBDiscordBot(commands.Bot):
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
