@@ -3031,13 +3031,7 @@ class UpdateBatcher:
             logger.info(f"Using pattern highlights: {reason}")
             embeds = [self._create_pattern_highlights_embed()]
         
-        # Clear highlights queue after processing
-        processed_count = len(self.highlights_queue)
-        await self.save_queue_state()
-        self.highlights_queue.clear()
-        self.last_batch_time = datetime.now()
-        
-        logger.info(f"Created highlights batch from {processed_count} updates")
+        logger.info(f"Created highlights batch from {len(self.highlights_queue)} updates")
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
@@ -9780,15 +9774,28 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
+            queue_size_before = len(self.update_batcher.highlights_queue)
             embeds = await self.update_batcher.create_highlights_batch()
             
+            if not embeds:
+                logger.warning("No embeds created for highlights batch")
+                return
+            
+            # Send to Discord first
             for embed in embeds:
                 await channel.send(embed=embed)
             
-            logger.info(f"Sent highlights batch with {len(embeds)} embeds")
+            # ONLY clear queue after Discord success
+            processed_count = len(self.update_batcher.highlights_queue)
+            self.update_batcher.highlights_queue.clear()
+            self.update_batcher.last_batch_time = datetime.now()
+            await self.update_batcher.save_queue_state()
+            
+            logger.info(f"✅ Sent highlights batch: {len(embeds)} embeds, cleared {processed_count} updates from queue")
             
         except Exception as e:
             logger.error(f"Error sending highlights batch: {e}")
+            logger.error(f"Queue preserved with {len(self.update_batcher.highlights_queue)} updates")
 
     async def send_hourly_summary(self):
         """Send hourly comprehensive summary - FIXED QUEUE CLEARING"""
