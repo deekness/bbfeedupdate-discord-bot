@@ -4288,6 +4288,32 @@ def _create_category_narrative(self, category: str, updates: List) -> str:
     return "\n".join(narratives)
 
 
+async def clear_old_checkpoints(self, days_to_keep: int = 7):
+        """Clean up old checkpoint data"""
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                return
+                
+            import psycopg2
+            conn = psycopg2.connect(database_url)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM summary_checkpoints 
+                WHERE created_at < NOW() - INTERVAL '%s days'
+            """, (days_to_keep,))
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old queue checkpoints")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning checkpoints: {e}")
+
 async def save_queue_state(self):
     """Save current queue state to database"""
     try:
@@ -5281,6 +5307,7 @@ class BBDatabase:
     def __init__(self, db_path: str = "bb_updates.db"):
         self.db_path = db_path
         self.connection_timeout = 30
+        self.use_postgresql = False
         self.init_database()
     
     def get_connection(self):
@@ -5476,6 +5503,7 @@ class PostgreSQLDatabase:
     def __init__(self, database_url: str):
         self.database_url = database_url
         self.connection_timeout = 30
+        self.use_postgresql = True
         self.init_database()
     
     def get_connection(self):
@@ -5787,41 +5815,28 @@ class PostgreSQLDatabase:
             conn = self.get_connection()
             cursor = conn.cursor()
             
-            if hasattr(self, 'use_postgresql') and self.use_postgresql:
-                # PostgreSQL syntax
-                cursor.execute("""
-                    SELECT title, description, link, pub_date, content_hash, author
-                    FROM updates 
-                    WHERE pub_date >= %s AND pub_date < %s
-                    ORDER BY pub_date ASC
-                """, (start_time, end_time))
-            else:
-                # SQLite syntax
-                cursor.execute("""
-                    SELECT title, description, link, pub_date, content_hash, author
-                    FROM updates 
-                    WHERE pub_date >= ? AND pub_date < ?
-                    ORDER BY pub_date ASC
-                """, (start_time, end_time))
+            # Use PostgreSQL syntax with %s placeholders
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author
+                FROM updates 
+                WHERE pub_date >= %s AND pub_date < %s
+                ORDER BY pub_date ASC
+            """, (start_time, end_time))
             
             results = cursor.fetchall()
             conn.close()
             
             updates = []
             for row in results:
-                if hasattr(self, 'use_postgresql') and self.use_postgresql:
-                    # PostgreSQL returns RealDictCursor results
-                    update = BBUpdate(
-                        title=row['title'],
-                        description=row['description'], 
-                        link=row['link'],
-                        pub_date=row['pub_date'],
-                        content_hash=row['content_hash'],
-                        author=row['author']
-                    )
-                else:
-                    # SQLite returns tuple
-                    update = BBUpdate(*row)
+                # PostgreSQL returns RealDictCursor results
+                update = BBUpdate(
+                    title=row['title'],
+                    description=row['description'], 
+                    link=row['link'],
+                    pub_date=row['pub_date'],
+                    content_hash=row['content_hash'],
+                    author=row['author']
+                )
                 updates.append(update)
             
             return updates
@@ -7506,11 +7521,14 @@ class BBDiscordBot(commands.Bot):
         
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
+        
+        # ADD THIS LINE: Set the database reference for the batcher
+        self.update_batcher.db = self.db
+        
         if self.context_tracker:
             self.update_batcher.context_tracker = self.context_tracker
         else:
             logger.warning("Context tracker not available - summaries will not include historical context")
-
         
 
         
