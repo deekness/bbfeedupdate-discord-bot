@@ -8660,72 +8660,72 @@ class BBDiscordBot(commands.Bot):
             return
         
        @self.tree.command(name="contentstatus", description="Show unified content monitoring status")
-        async def content_status_slash(interaction: discord.Interaction):
-            """Show unified content monitoring status"""
-            try:
-                if not self.is_owner_or_admin(interaction.user, interaction):
-                    await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
-                    return
+       async def content_status_slash(interaction: discord.Interaction):
+           """Show unified content monitoring status"""
+           try:
+               if not self.is_owner_or_admin(interaction.user, interaction):
+                   await interaction.response.send_message("You need administrator permissions to use this command.", ephemeral=True)
+                   return
+            
+               await interaction.response.defer(ephemeral=True)
+            
+               # Get stats from unified monitor
+               monitor_stats = self.content_monitor.get_stats()
+            
+               embed = discord.Embed(
+                   title="📡 Unified Content Monitoring Status",
+                   color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
+                   timestamp=datetime.now()
+               )
+            
+               # RSS Status
+               embed.add_field(
+                   name="📰 RSS Feed",
+                   value=f"**Source**: {self.rss_url}\n**Status**: {'✅ Active' if self.consecutive_errors == 0 else '❌ Errors'}",
+                   inline=False
+               )
+            
+               # Bluesky Status
+               bluesky_status = "✅ Authenticated" if monitor_stats['authentication_status'] else "❌ Not authenticated"
+               embed.add_field(
+                   name="📱 Bluesky Integration",
+                   value=f"**Status**: {bluesky_status}\n"
+                         f"**Monitored Accounts**: {monitor_stats['monitored_accounts']}\n"
+                         f"**Active Accounts**: {monitor_stats['accounts_with_activity']}\n"
+                         f"**Total Updates**: {monitor_stats['total_bluesky_updates']}",
+                   inline=False
+               )
+            
+               # General Stats
+               embed.add_field(name="Total Updates Processed", value=str(self.total_updates_processed), inline=True)
+               embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
+            
+               time_since_check = datetime.now() - self.last_successful_check
+               embed.add_field(name="Last Check", value=f"{time_since_check.total_seconds():.0f}s ago", inline=True)
+            
+               # Queue Status
+               highlights_queue_size = len(self.update_batcher.highlights_queue)
+               hourly_queue_size = len(self.update_batcher.hourly_queue)
+               embed.add_field(name="Highlights Queue", value=f"{highlights_queue_size}/25", inline=True)
+               embed.add_field(name="Hourly Queue", value=str(hourly_queue_size), inline=True)
+            
+               # Show monitored accounts
+               if monitor_stats['monitored_accounts'] > 0:
+                   accounts_list = "\n".join([f"• @{acc.split('.')[0]}" for acc in self.content_monitor.monitored_accounts[:10]])
+                   if len(self.content_monitor.monitored_accounts) > 10:
+                       accounts_list += f"\n• ... and {len(self.content_monitor.monitored_accounts) - 10} more"
                 
-                await interaction.response.defer(ephemeral=True)
-                
-                # Get stats from unified monitor
-                monitor_stats = self.content_monitor.get_stats()
-                
-                embed = discord.Embed(
-                    title="📡 Unified Content Monitoring Status",
-                    color=0x2ecc71 if self.consecutive_errors == 0 else 0xe74c3c,
-                    timestamp=datetime.now()
-                )
-                
-                # RSS Status
-                embed.add_field(
-                    name="📰 RSS Feed",
-                    value=f"**Source**: {self.rss_url}\n**Status**: {'✅ Active' if self.consecutive_errors == 0 else '❌ Errors'}",
-                    inline=False
-                )
-                
-                # Bluesky Status
-                bluesky_status = "✅ Authenticated" if monitor_stats['authentication_status'] else "❌ Not authenticated"
-                embed.add_field(
-                    name="📱 Bluesky Integration",
-                    value=f"**Status**: {bluesky_status}\n"
-                          f"**Monitored Accounts**: {monitor_stats['monitored_accounts']}\n"
-                          f"**Active Accounts**: {monitor_stats['accounts_with_activity']}\n"
-                          f"**Total Updates**: {monitor_stats['total_bluesky_updates']}",
-                    inline=False
-                )
-                
-                # General Stats
-                embed.add_field(name="Total Updates Processed", value=str(self.total_updates_processed), inline=True)
-                embed.add_field(name="Consecutive Errors", value=str(self.consecutive_errors), inline=True)
-                
-                time_since_check = datetime.now() - self.last_successful_check
-                embed.add_field(name="Last Check", value=f"{time_since_check.total_seconds():.0f}s ago", inline=True)
-                
-                # Queue Status
-                highlights_queue_size = len(self.update_batcher.highlights_queue)
-                hourly_queue_size = len(self.update_batcher.hourly_queue)
-                embed.add_field(name="Highlights Queue", value=f"{highlights_queue_size}/25", inline=True)
-                embed.add_field(name="Hourly Queue", value=str(hourly_queue_size), inline=True)
-                
-                # Show monitored accounts
-                if monitor_stats['monitored_accounts'] > 0:
-                    accounts_list = "\n".join([f"• @{acc.split('.')[0]}" for acc in self.content_monitor.monitored_accounts[:10]])
-                    if len(self.content_monitor.monitored_accounts) > 10:
-                        accounts_list += f"\n• ... and {len(self.content_monitor.monitored_accounts) - 10} more"
-                    
-                    embed.add_field(
-                        name="🔍 Monitored Bluesky Accounts",
-                        value=accounts_list,
-                        inline=False
-                    )
-                
-                await interaction.followup.send(embed=embed, ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error generating content status: {e}")
-                await interaction.followup.send("Error generating status.", ephemeral=True) 
+                   embed.add_field(
+                       name="🔍 Monitored Bluesky Accounts",
+                       value=accounts_list,
+                       inline=False
+                   )
+            
+               await interaction.followup.send(embed=embed, ephemeral=True)
+            
+           except Exception as e:
+               logger.error(f"Error generating content status: {e}")
+               await interaction.followup.send("Error generating status.", ephemeral=True)  
         
         @self.tree.command(name="status", description="Show bot status and statistics")
         async def status_slash(interaction: discord.Interaction):
