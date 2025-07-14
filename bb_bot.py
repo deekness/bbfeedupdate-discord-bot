@@ -765,6 +765,7 @@ class UnifiedContentMonitor:
         # Configure monitored Bluesky accounts
         self.monitored_accounts = [
             "bigbrothernetwork.bsky.social",
+            "hamsterwatch.bsky.social",
             "pooyaism.bsky.social",
             "thebbpresident.bsky.social", 
             "bblionotev.bsky.social",
