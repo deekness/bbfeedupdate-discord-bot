@@ -9298,8 +9298,6 @@ class BBDiscordBot(commands.Bot):
                             logger.info(f"Alliance event processed: {event['type'].value}")
                     
                     # Add context tracking here (INSIDE the try block)
-                    if hasattr(self.update_batcher, 'context_tracker') and self.update_batcher.context_tracker:
-                        await self.update_batcher.process_update_for_context(update)
                     
                     self.total_updates_processed += 1
                     
