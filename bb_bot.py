@@ -3220,45 +3220,51 @@ CRITICAL INSTRUCTIONS:
             return self._create_enhanced_pattern_hourly_summary()
 
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-        """Create just highlights using LLM"""
+        """Create just highlights using LLM - CHRONOLOGICAL ORDER"""
         await self.rate_limiter.wait_if_needed()
         
-        # Prepare update data
+        # Sort updates chronologically BEFORE sending to LLM
+        sorted_updates = sorted(self.highlights_queue, key=lambda x: x.pub_date)
+        
+        # Prepare update data in chronological order
         updates_text = "\n".join([
             f"{self._extract_correct_time(u)} - {re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', u.title)}"
-            for u in self.highlights_queue
+            for u in sorted_updates
         ])
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-
-{updates_text}
-
-Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-
-HIGHLIGHT-WORTHY updates include:
-- Competition wins (HOH, POV, etc.)
-- Major strategic moves or betrayals
-- Dramatic fights or confrontations  
-- Romantic moments (first kiss, breakup, etc.)
-- Hilarious or memorable incidents
-- Game-changing twists revealed
-- Eviction results or surprise votes
-- Alliance formations or breaks
-
-For each selected update, provide:
-{{
-    "highlights": [
-        {{
-            "time": "exact time from update",
-            "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
-            "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-            "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-        }}
-    ]
-}}
-
-Be selective - these should be the updates that a superfan would want to know about from this batch."""
-
+    
+    UPDATES IN CHRONOLOGICAL ORDER (earliest first):
+    {updates_text}
+    
+    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+    
+    HIGHLIGHT-WORTHY updates include:
+    - Competition wins (HOH, POV, etc.)
+    - Major strategic moves or betrayals
+    - Dramatic fights or confrontations  
+    - Romantic moments (first kiss, breakup, etc.)
+    - Hilarious or memorable incidents
+    - Game-changing twists revealed
+    - Eviction results or surprise votes
+    - Alliance formations or breaks
+    
+    For each selected update, provide them in CHRONOLOGICAL ORDER (earliest to latest):
+    
+    {{
+        "highlights": [
+            {{
+                "time": "exact time from update",
+                "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
+                "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+                "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+            }}
+        ]
+    }}
+    
+    CRITICAL: Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest time.
+    Be selective - these should be the updates that a superfan would want to know about from this batch."""
+    
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
@@ -3275,6 +3281,22 @@ Be selective - these should be the updates that a superfan would want to know ab
                 logger.warning("No highlights in LLM response, using pattern fallback")
                 return [self._create_pattern_highlights_embed()]
             
+            # SORT THE HIGHLIGHTS BY TIME after parsing (backup enforcement)
+            highlights = highlights_data['highlights']
+            
+            # Extract time for sorting
+            def extract_time_for_sorting(highlight):
+                time_str = highlight.get('time', '00:00 AM')
+                try:
+                    # Convert to 24-hour format for proper sorting
+                    time_obj = datetime.strptime(time_str, '%I:%M %p')
+                    return time_obj.time()
+                except:
+                    return datetime.strptime('00:00', '%H:%M').time()
+            
+            # Sort highlights chronologically
+            highlights.sort(key=extract_time_for_sorting)
+            
             embed = discord.Embed(
                 title="📹 Feed Highlights - What Just Happened",
                 description=f"Key moments from the last {len(self.highlights_queue)} updates",
@@ -3282,7 +3304,7 @@ Be selective - these should be the updates that a superfan would want to know ab
                 timestamp=datetime.now()
             )
             
-            for highlight in highlights_data['highlights'][:10]:
+            for highlight in highlights[:10]:
                 title = highlight.get('title', 'Update')
                 title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
                 
@@ -3305,7 +3327,7 @@ Be selective - these should be the updates that a superfan would want to know ab
         except Exception as e:
             logger.error(f"Failed to parse highlights response: {e}")
             return [self._create_pattern_highlights_embed()]
-
+        
     async def save_queue_state(self):
         """Save current queue state to database"""
         try:
