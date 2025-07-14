@@ -1432,27 +1432,52 @@ class AllianceTracker:
         cursor = conn.cursor()
         
         try:
-            # Insert alliance
-            cursor.execute("""
-                INSERT INTO alliances (name, formed_date, status, confidence_level, last_activity)
-                VALUES (?, ?, ?, ?, ?)
-            """, (name, formed_date, AllianceStatus.ACTIVE.value, confidence, formed_date))
-            
-            alliance_id = cursor.lastrowid
+            if self.use_postgresql:
+                # PostgreSQL syntax
+                cursor.execute("""
+                    INSERT INTO alliances (name, formed_date, status, confidence_level, last_activity)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING alliance_id
+                """, (name, formed_date, AllianceStatus.ACTIVE.value, confidence, formed_date))
+                
+                result = cursor.fetchone()
+                alliance_id = result['alliance_id'] if isinstance(result, dict) else result[0]
+            else:
+                # SQLite syntax
+                cursor.execute("""
+                    INSERT INTO alliances (name, formed_date, status, confidence_level, last_activity)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (name, formed_date, AllianceStatus.ACTIVE.value, confidence, formed_date))
+                
+                alliance_id = cursor.lastrowid
             
             # Insert members
             for member in members:
-                cursor.execute("""
-                    INSERT OR IGNORE INTO alliance_members (alliance_id, houseguest_name, joined_date)
-                    VALUES (?, ?, ?)
-                """, (alliance_id, member, formed_date))
+                if self.use_postgresql:
+                    cursor.execute("""
+                        INSERT INTO alliance_members (alliance_id, houseguest_name, joined_date)
+                        VALUES (%s, %s, %s)
+                        ON CONFLICT (alliance_id, houseguest_name) DO NOTHING
+                    """, (alliance_id, member, formed_date))
+                else:
+                    cursor.execute("""
+                        INSERT OR IGNORE INTO alliance_members (alliance_id, houseguest_name, joined_date)
+                        VALUES (?, ?, ?)
+                    """, (alliance_id, member, formed_date))
             
             # Record formation event
-            cursor.execute("""
-                INSERT INTO alliance_events (alliance_id, event_type, description, involved_houseguests, timestamp)
-                VALUES (?, ?, ?, ?, ?)
-            """, (alliance_id, AllianceEventType.FORMED.value, 
-                  f"Alliance '{name}' formed", ",".join(members), formed_date))
+            if self.use_postgresql:
+                cursor.execute("""
+                    INSERT INTO alliance_events (alliance_id, event_type, description, involved_houseguests, timestamp)
+                    VALUES (%s, %s, %s, %s, %s)
+                """, (alliance_id, AllianceEventType.FORMED.value, 
+                      f"Alliance '{name}' formed", ",".join(members), formed_date))
+            else:
+                cursor.execute("""
+                    INSERT INTO alliance_events (alliance_id, event_type, description, involved_houseguests, timestamp)
+                    VALUES (?, ?, ?, ?, ?)
+                """, (alliance_id, AllianceEventType.FORMED.value, 
+                      f"Alliance '{name}' formed", ",".join(members), formed_date))
             
             conn.commit()
             logger.info(f"Created new alliance: {name} with members {members}")
@@ -1746,24 +1771,44 @@ class AllianceTracker:
         cursor = conn.cursor()
         
         try:
-            # Get all active alliances for first houseguest
-            cursor.execute("""
-                SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
-                FROM alliance_members am
-                JOIN alliances a ON am.alliance_id = a.alliance_id
-                WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
-            """, (houseguests[0], AllianceStatus.ACTIVE.value))
+            if self.use_postgresql:
+                # PostgreSQL syntax
+                cursor.execute("""
+                    SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
+                    FROM alliance_members am
+                    JOIN alliances a ON am.alliance_id = a.alliance_id
+                    WHERE am.houseguest_name = %s AND a.status = %s AND am.is_active = TRUE
+                """, (houseguests[0], AllianceStatus.ACTIVE.value))
+            else:
+                # SQLite syntax
+                cursor.execute("""
+                    SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
+                    FROM alliance_members am
+                    JOIN alliances a ON am.alliance_id = a.alliance_id
+                    WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
+                """, (houseguests[0], AllianceStatus.ACTIVE.value))
             
             for row in cursor.fetchall():
-                alliance_id = row[0]
+                if self.use_postgresql:
+                    alliance_id = row['alliance_id']
+                    name = row['name']
+                    confidence = row['confidence_level']
+                else:
+                    alliance_id, name, confidence = row
                 
                 # Check if all houseguests are in this alliance
                 all_in = True
                 for hg in houseguests[1:]:
-                    cursor.execute("""
-                        SELECT 1 FROM alliance_members
-                        WHERE alliance_id = ? AND houseguest_name = ? AND is_active = 1
-                    """, (alliance_id, hg))
+                    if self.use_postgresql:
+                        cursor.execute("""
+                            SELECT 1 FROM alliance_members
+                            WHERE alliance_id = %s AND houseguest_name = %s AND is_active = TRUE
+                        """, (alliance_id, hg))
+                    else:
+                        cursor.execute("""
+                            SELECT 1 FROM alliance_members
+                            WHERE alliance_id = ? AND houseguest_name = ? AND is_active = 1
+                        """, (alliance_id, hg))
                     
                     if not cursor.fetchone():
                         all_in = False
@@ -1772,8 +1817,8 @@ class AllianceTracker:
                 if all_in:
                     return {
                         'alliance_id': alliance_id,
-                        'name': row[1],
-                        'confidence': row[2]
+                        'name': name,
+                        'confidence': confidence
                     }
             
             return None
@@ -4299,6 +4344,22 @@ def _create_category_narrative(self, category: str, updates: List) -> str:
     
     return "\n".join(narratives)
 
+
+async def process_update_for_context(self, update: BBUpdate):
+        """Process update for historical context tracking"""
+        if not self.context_tracker:
+            return
+        
+        try:
+            # Detect and record events
+            detected_events = await self.context_tracker.analyze_update_for_events(update)
+            
+            for event in detected_events:
+                success = await self.context_tracker.record_event(event)
+                if success:
+                    logger.info(f"Recorded context event: {event['type']} - {event.get('description', 'No description')}")
+        except Exception as e:
+            logger.error(f"Error processing update for context: {e}")
 
 async def clear_old_checkpoints(self, days_to_keep: int = 7):
         """Clean up old checkpoint data"""
