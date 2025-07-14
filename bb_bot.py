@@ -776,9 +776,6 @@ class UnifiedContentMonitor:
             "toomsbb.bsky.social‬‬‬",
             "bbteamnorth.bsky.social‬‬‬‬",
             "bbnutters.bsky.social‬‬‬‬‬",
-
-            
-            
             # Add more accounts as you discover them
             # You can add individual contestant accounts if they join Bluesky
         ]
@@ -10464,7 +10461,7 @@ class BBDiscordBot(commands.Bot):
                     
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
-                        await self.update_batcher.process_update_for_context(update)
+                        pass
                     
                     self.total_updates_processed += 1
                     
