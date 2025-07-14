@@ -994,37 +994,48 @@ class UnifiedContentMonitor:
         return len(intersection) / len(union) if union else 0.0
     
     def _is_bb_related(self, text: str) -> bool:
-        """Enhanced BB content detection - focus on house activity only"""
+        """Enhanced BB content detection - all monitored accounts are trusted"""
         text_lower = text.lower()
         
-        # IMMEDIATE EXCLUSIONS: Fan commentary and social media stuff
-        fan_exclusions = [
-            "meme", "my favorite", "fan favorite", "viewers", "audience", 
-            "twitter", "social media", "my opinion", "i think", "we think", 
-            "hoping", "rooting for", "stan", "ship", "edit", "clip",
-            "remember when", "throwback", "flashback", "iconic moment",
-            "manifesting", "prayer circle", "deserves better"
-        ]
+        # Since we only monitor trusted accounts, treat all content with leniency
         
-        # If it contains fan commentary keywords, immediately exclude
-        if any(exclusion in text_lower for exclusion in fan_exclusions):
-            return False
-        
-        # HIGH PRIORITY: Direct house activity (always include)
-        house_activity_keywords = [
-            "hoh wins", "hoh winner", "head of household", 
-            "veto winner", "veto wins", "pov wins", "power of veto",
+        # IMMEDIATE INCLUSIONS: Always include these regardless of account
+        immediate_keywords = [
+            "feeds are", "feeds down", "feeds back", "live feeds",
+            "hoh wins", "hoh winner", "head of household",
+            "veto winner", "veto wins", "pov wins", "power of veto", 
             "nomination ceremony", "nominations", "nominated", "on the block",
-            "eviction", "evicted", "voted out", 
+            "eviction", "evicted", "voted out",
             "competition", "challenge", "comp wins",
             "ceremony", "veto ceremony", "veto meeting",
-            "feeds down", "feeds back", "live feeds"
+            "diary room", "dr session"
         ]
         
-        if any(keyword in text_lower for keyword in house_activity_keywords):
+        if any(keyword in text_lower for keyword in immediate_keywords):
             return True
         
-        # MEDIUM PRIORITY: Strategic gameplay
+        # STRONG EXCLUSIONS: Only block clearly promotional or off-topic content
+        strong_exclusions = [
+            "subscribe to", "follow me on", "link in bio", "check out my",
+            "patreon", "donate", "support me", "buy my", "use code",
+            "fanfic", "fanart", "not big brother", "off topic"
+        ]
+        
+        if any(exclusion in text_lower for exclusion in strong_exclusions):
+            return False
+        
+        # HOUSE ACTIVITY: Physical events and conversations
+        house_activity = [
+            "in the kitchen", "in the bedroom", "in the backyard", "in the hoh room",
+            "storage room", "have not room", "slop", "luxury competition",
+            "house meeting", "group conversation", "tells", "says", "asks",
+            "mentions", "explains", "admits", "confesses", "reveals", "discusses"
+        ]
+        
+        if any(activity in text_lower for activity in house_activity):
+            return True
+        
+        # STRATEGIC CONTENT: Allow strategic discussion freely
         strategy_keywords = [
             "alliance", "final two", "final three", "final four",
             "backdoor", "target", "targeting", "campaign", "campaigning",
@@ -1033,40 +1044,27 @@ class UnifiedContentMonitor:
         ]
         
         if any(keyword in text_lower for keyword in strategy_keywords):
-            # Must also mention a houseguest for strategic content
-            bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
-                         "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
-                         "rylie", "vince", "will", "zach", "zae"]
-            
-            if any(name in text_lower for name in bb27_names):
-                return True
-        
-        # HOUSE CONVERSATIONS: Direct quotes or conversations
-        conversation_indicators = [
-            "tells", "says", "asks", "mentions", "explains", "admits",
-            "confesses", "reveals", "discusses", "talking about"
-        ]
-        
-        if any(indicator in text_lower for indicator in conversation_indicators):
-            # Must mention at least one houseguest
-            bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
-                         "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
-                         "rylie", "vince", "will", "zach", "zae"]
-            
-            if any(name in text_lower for name in bb27_names):
-                return True
-        
-        # HOUSE SITUATIONS: Physical events in the house
-        house_situations = [
-            "in the kitchen", "in the bedroom", "in the backyard", "in the hoh room",
-            "diary room", "storage room", "have not room", "slop", "luxury competition",
-            "house meeting", "group conversation", "sleeping", "cooking", "cleaning"
-        ]
-        
-        if any(situation in text_lower for situation in house_situations):
             return True
         
-        # If none of the above criteria are met, exclude it
+        # GENERAL BB CONTENT: Allow broad Big Brother discussion
+        general_bb_keywords = [
+            "big brother", "bb27", "#bb27", "bb 27", "#bigbrother",
+            "houseguest", "houseguests", "the house", "this season",
+            "feeds", "live feeds", "camera", "hoh", "veto", "pov"
+        ]
+        
+        if any(keyword in text_lower for keyword in general_bb_keywords):
+            return True
+        
+        # HOUSEGUEST NAMES: Include if any current houseguest is mentioned
+        bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
+                     "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
+                     "rylie", "vince", "will", "zach", "zae"]
+        
+        if any(name in text_lower for name in bb27_names):
+            return True
+        
+        # DEFAULT: If none of the above criteria match, exclude
         return False
     
     def _clean_bluesky_text(self, text: str) -> str:
@@ -1100,36 +1098,18 @@ class UnifiedContentMonitor:
         }
 
     def _is_fan_commentary(self, text: str) -> bool:
-        """Detect if content is fan commentary rather than house updates"""
+        """Simplified fan commentary detection for trusted accounts only"""
         text_lower = text.lower()
         
-        # Fan commentary patterns
-        fan_patterns = [
-            "this is so", "i love", "i hate", "why does", "why is",
-            "can't believe", "obsessed with", "the way", "not me",
-            "the fact that", "y'all", "bestie", "periodt", "slay",
-            "we been knew", "it's giving", "main character energy"
+        # Since all monitored accounts are trusted, only block obvious spam/promotional content
+        spam_patterns = [
+            "subscribe", "follow me", "link in bio", "patreon", "donate",
+            "buy my", "use code", "check out my", "support me"
         ]
         
-        # Opinion/reaction patterns
-        opinion_patterns = [
-            "my thoughts", "hot take", "unpopular opinion", "am i the only one",
-            "does anyone else", "thoughts?", "opinions?", "what do we think"
-        ]
-        
-        # Meme/entertainment patterns  
-        entertainment_patterns = [
-            "meme", "iconic", "legend", "queen", "king", "mood", "vibes",
-            "energy", "sent me", "i'm crying", "i'm dead", "help me"
-        ]
-        
-        all_fan_patterns = fan_patterns + opinion_patterns + entertainment_patterns
-        
-        # Check if it's primarily fan commentary
-        fan_word_count = sum(1 for pattern in all_fan_patterns if pattern in text_lower)
-        
-        # If 2+ fan commentary indicators, it's probably fan content
-        return fan_word_count >= 2
+        # Block only if multiple spam indicators
+        spam_count = sum(1 for pattern in spam_patterns if pattern in text_lower)
+        return spam_count >= 2  # Need multiple spam indicators to block
             
         
         
