@@ -2812,6 +2812,12 @@ class UpdateBatcher:
         
         # Keep highlights queue for 25-update batches (remove hourly_queue)
         self.highlights_queue = []
+        self.hourly_queue = []
+        
+        self.last_batch_time = datetime.now()
+        self.last_hourly_summary = datetime.now()
+
+        self.hourly_queue = []
         
         self.last_batch_time = datetime.now()
         self.last_hourly_summary = datetime.now()
@@ -2881,9 +2887,15 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
-        """Add update to highlights queue if not already processed"""
+        """Add update to both highlights and hourly queues if not already processed"""
         if not await self.processed_hashes_cache.contains(update.content_hash):
+            # Add to highlights queue (for 25-update batches)
             self.highlights_queue.append(update)
+            
+            # Add to hourly queue (for hourly summaries)
+            self.hourly_queue.append(update)
+            
+            # Mark as processed
             await self.processed_hashes_cache.add(update.content_hash)
             
             # Log cache stats periodically
