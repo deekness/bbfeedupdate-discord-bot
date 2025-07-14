@@ -880,6 +880,12 @@ class UnifiedContentMonitor:
                 
                 # Skip if not BB related
                 if not self._is_bb_related(text):
+                    # Account-level filtering for content quality
+                    account_name = account.split('.')[0]  # Get username part
+                    
+                    # Skip obvious fan commentary posts even from good accounts
+                    if self._is_fan_commentary(text):
+                        continue
                     continue
                 
                 # Clean and format the content
@@ -987,23 +993,79 @@ class UnifiedContentMonitor:
         return len(intersection) / len(union) if union else 0.0
     
     def _is_bb_related(self, text: str) -> bool:
-        """Enhanced BB content detection"""
+        """Enhanced BB content detection - focus on house activity only"""
         text_lower = text.lower()
         
-        # Direct keyword match
-        if any(keyword in text_lower for keyword in self.bb_keywords):
+        # IMMEDIATE EXCLUSIONS: Fan commentary and social media stuff
+        fan_exclusions = [
+            "meme", "my favorite", "fan favorite", "viewers", "audience", 
+            "twitter", "social media", "my opinion", "i think", "we think", 
+            "hoping", "rooting for", "stan", "ship", "edit", "clip",
+            "remember when", "throwback", "flashback", "iconic moment",
+            "manifesting", "prayer circle", "deserves better"
+        ]
+        
+        # If it contains fan commentary keywords, immediately exclude
+        if any(exclusion in text_lower for exclusion in fan_exclusions):
+            return False
+        
+        # HIGH PRIORITY: Direct house activity (always include)
+        house_activity_keywords = [
+            "hoh wins", "hoh winner", "head of household", 
+            "veto winner", "veto wins", "pov wins", "power of veto",
+            "nomination ceremony", "nominations", "nominated", "on the block",
+            "eviction", "evicted", "voted out", 
+            "competition", "challenge", "comp wins",
+            "ceremony", "veto ceremony", "veto meeting",
+            "feeds down", "feeds back", "live feeds"
+        ]
+        
+        if any(keyword in text_lower for keyword in house_activity_keywords):
             return True
         
-        # Check for houseguest names (if you have a current list)
-        # You can expand this with actual BB27 houseguest names
-        bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
-                     "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
-                     "rylie", "vince", "will", "zach", "zae"]  # Add actual names
+        # MEDIUM PRIORITY: Strategic gameplay
+        strategy_keywords = [
+            "alliance", "final two", "final three", "final four",
+            "backdoor", "target", "targeting", "campaign", "campaigning",
+            "vote", "voting", "votes", "jury", "blindside",
+            "deal", "promise", "pitch", "strategy", "plan", "scheme"
+        ]
         
-        for name in bb27_names:
-            if name in text_lower:
+        if any(keyword in text_lower for keyword in strategy_keywords):
+            # Must also mention a houseguest for strategic content
+            bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
+                         "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
+                         "rylie", "vince", "will", "zach", "zae"]
+            
+            if any(name in text_lower for name in bb27_names):
                 return True
         
+        # HOUSE CONVERSATIONS: Direct quotes or conversations
+        conversation_indicators = [
+            "tells", "says", "asks", "mentions", "explains", "admits",
+            "confesses", "reveals", "discusses", "talking about"
+        ]
+        
+        if any(indicator in text_lower for indicator in conversation_indicators):
+            # Must mention at least one houseguest
+            bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
+                         "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
+                         "rylie", "vince", "will", "zach", "zae"]
+            
+            if any(name in text_lower for name in bb27_names):
+                return True
+        
+        # HOUSE SITUATIONS: Physical events in the house
+        house_situations = [
+            "in the kitchen", "in the bedroom", "in the backyard", "in the hoh room",
+            "diary room", "storage room", "have not room", "slop", "luxury competition",
+            "house meeting", "group conversation", "sleeping", "cooking", "cleaning"
+        ]
+        
+        if any(situation in text_lower for situation in house_situations):
+            return True
+        
+        # If none of the above criteria are met, exclude it
         return False
     
     def _clean_bluesky_text(self, text: str) -> str:
@@ -1036,6 +1098,40 @@ class UnifiedContentMonitor:
             "last_check_times": dict(self.last_check_times)
         }
 
+    def _is_fan_commentary(self, text: str) -> bool:
+        """Detect if content is fan commentary rather than house updates"""
+        text_lower = text.lower()
+        
+        # Fan commentary patterns
+        fan_patterns = [
+            "this is so", "i love", "i hate", "why does", "why is",
+            "can't believe", "obsessed with", "the way", "not me",
+            "the fact that", "y'all", "bestie", "periodt", "slay",
+            "we been knew", "it's giving", "main character energy"
+        ]
+        
+        # Opinion/reaction patterns
+        opinion_patterns = [
+            "my thoughts", "hot take", "unpopular opinion", "am i the only one",
+            "does anyone else", "thoughts?", "opinions?", "what do we think"
+        ]
+        
+        # Meme/entertainment patterns  
+        entertainment_patterns = [
+            "meme", "iconic", "legend", "queen", "king", "mood", "vibes",
+            "energy", "sent me", "i'm crying", "i'm dead", "help me"
+        ]
+        
+        all_fan_patterns = fan_patterns + opinion_patterns + entertainment_patterns
+        
+        # Check if it's primarily fan commentary
+        fan_word_count = sum(1 for pattern in all_fan_patterns if pattern in text_lower)
+        
+        # If 2+ fan commentary indicators, it's probably fan content
+        return fan_word_count >= 2
+            
+        
+        
 class BBAnalyzer:
     """Analyzes Big Brother updates for strategic insights and social dynamics"""
     
