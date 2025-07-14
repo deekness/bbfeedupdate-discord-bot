@@ -9056,10 +9056,11 @@ class BBDiscordBot(commands.Bot):
             self.check_rss_feed.start()
             self.daily_recap_task.start()
             self.auto_close_predictions_task.start()
-            logger.info("RSS feed monitoring and daily recap and prediction auto-close tasks started")
+            self.hourly_summary_task.start()  # ADD THIS LINE
+            logger.info("RSS feed monitoring, daily recap, prediction auto-close, and hourly summary tasks started")
         except Exception as e:
             logger.error(f"Error starting background tasks: {e}")
-
+    
         if not hasattr(self, '_cleanup_task_started'):
             self._cleanup_task_started = True
             self.loop.create_task(self._periodic_cleanup())
@@ -9175,6 +9176,38 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in daily recap task: {e}")
             logger.error(traceback.format_exc())
     
+    @tasks.loop(minutes=60)  # Run every 60 minutes
+    async def hourly_summary_task(self):
+        """Send hourly summary at the top of each hour"""
+        if self.is_shutting_down:
+            return
+        
+        try:
+            # Only proceed if we have an update channel configured
+            if not self.config.get('update_channel_id'):
+                logger.debug("No update channel configured for hourly summary")
+                return
+            
+            # Send the hourly summary
+            await self.send_hourly_summary()
+            logger.info("Hourly summary task completed successfully")
+                
+        except Exception as e:
+            logger.error(f"Error in hourly summary task: {e}")
+    
+    @hourly_summary_task.before_loop
+    async def before_hourly_summary_task(self):
+        """Wait for bot to be ready and sync to top of hour"""
+        await self.wait_until_ready()
+        
+        # Calculate wait time until next top of hour
+        now = datetime.now()
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        wait_seconds = (next_hour - now).total_seconds()
+        
+        logger.info(f"Hourly summary task will start in {wait_seconds:.0f} seconds (at {next_hour.strftime('%I:%M %p')})")
+        await asyncio.sleep(wait_seconds)
+    
     @daily_recap_task.before_loop
     async def before_daily_recap_task(self):
         """Wait for bot to be ready before starting daily recap task"""
@@ -9256,12 +9289,16 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
+            # Create hourly summary (this will automatically get the right timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
-            for embed in embeds:
-                await channel.send(embed=embed)
-            
-            logger.info(f"Sent hourly summary with {len(embeds)} embeds")
+            if embeds:  # Only send if we have embeds
+                for embed in embeds:
+                    await channel.send(embed=embed)
+                
+                logger.info(f"Sent hourly summary with {len(embeds)} embeds")
+            else:
+                logger.info("No hourly summary sent (no updates in timeframe)")
             
         except Exception as e:
             logger.error(f"Error sending hourly summary: {e}")
@@ -9309,9 +9346,6 @@ class BBDiscordBot(commands.Bot):
             if self.update_batcher.should_send_highlights():
                 await self.send_highlights_batch()
         
-            # Check for hourly summary (every hour)
-            if self.update_batcher.should_send_hourly_summary():
-                await self.send_hourly_summary()
         
             self.last_successful_check = datetime.now()
             self.consecutive_errors = 0
