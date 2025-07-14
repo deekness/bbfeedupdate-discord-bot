@@ -5,7 +5,7 @@ import asyncio
 import sqlite3
 import hashlib
 import re
-import osj
+import os
 import sys
 import signal
 from datetime import datetime, timedelta
