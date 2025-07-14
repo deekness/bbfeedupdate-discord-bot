@@ -4409,7 +4409,7 @@ def _create_category_narrative(self, category: str, updates: List) -> str:
     return "\n".join(narratives)
 
 
-async def process_update_for_context(self, update: BBUpdate):
+    async def process_update_for_context(self, update: BBUpdate):
         """Process update for historical context tracking"""
         if not self.context_tracker:
             return
@@ -4424,6 +4424,85 @@ async def process_update_for_context(self, update: BBUpdate):
                     logger.info(f"Recorded context event: {event['type']} - {event.get('description', 'No description')}")
         except Exception as e:
             logger.error(f"Error processing update for context: {e}")
+
+    async def save_queue_state(self):
+            """Save current queue state to database"""
+            try:
+                database_url = os.getenv('DATABASE_URL')
+                if not database_url:
+                    logger.debug("No database URL for queue persistence")
+                    return
+                    
+                import psycopg2
+                import psycopg2.extras
+                conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+                cursor = conn.cursor()
+                
+                # Save highlights queue
+                highlights_data = {
+                    'updates': [
+                        {
+                            'title': update.title,
+                            'description': update.description,
+                            'link': update.link,
+                            'pub_date': update.pub_date.isoformat(),
+                            'content_hash': update.content_hash,
+                            'author': update.author
+                        }
+                        for update in self.highlights_queue
+                    ]
+                }
+                
+                cursor.execute("""
+                    INSERT INTO summary_checkpoints 
+                    (summary_type, queue_state, queue_size, last_summary_time)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (summary_type) 
+                    DO UPDATE SET 
+                        queue_state = EXCLUDED.queue_state,
+                        queue_size = EXCLUDED.queue_size,
+                        last_summary_time = EXCLUDED.last_summary_time,
+                        updated_at = CURRENT_TIMESTAMP
+                """, (
+                    'highlights',
+                    json.dumps(highlights_data),
+                    len(self.highlights_queue),
+                    self.last_batch_time.isoformat()
+                ))
+                
+                conn.commit()
+                conn.close()
+                
+                logger.debug(f"Saved queue state: {len(self.highlights_queue)} highlights")
+                
+            except Exception as e:
+                logger.error(f"Error saving queue state: {e}")
+    
+        async def clear_old_checkpoints(self, days_to_keep: int = 7):
+            """Clean up old checkpoint data"""
+            try:
+                database_url = os.getenv('DATABASE_URL')
+                if not database_url:
+                    return
+                    
+                import psycopg2
+                conn = psycopg2.connect(database_url)
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    DELETE FROM summary_checkpoints 
+                    WHERE created_at < NOW() - INTERVAL '%s days'
+                """, (days_to_keep,))
+                
+                deleted_count = cursor.rowcount
+                conn.commit()
+                conn.close()
+                
+                if deleted_count > 0:
+                    logger.info(f"Cleaned up {deleted_count} old queue checkpoints")
+                    
+            except Exception as e:
+                logger.error(f"Error cleaning checkpoints: {e}")
 
 async def clear_old_checkpoints(self, days_to_keep: int = 7):
         """Clean up old checkpoint data"""
