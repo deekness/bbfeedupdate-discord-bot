@@ -3041,7 +3041,7 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create hourly summary - simplified version"""
+        """Create hourly summary - FORCE LLM VERSION"""
         now = datetime.now()
         
         # Define the hour period
@@ -3063,52 +3063,77 @@ class UpdateBatcher:
         
         logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        # Create simple summary embed
-        hour_display = hour_end.strftime("%I %p").lstrip('0')
+        # FORCE LLM STRUCTURED SUMMARY
+        if self.llm_client and await self._can_make_llm_request():
+            try:
+                # Temporarily replace hourly_queue with the timeframe updates
+                original_queue = self.hourly_queue.copy()
+                self.hourly_queue = hourly_updates
+                
+                # Force structured summary
+                embeds = await self._create_forced_structured_summary("hourly_summary")
+                
+                # Restore original queue
+                self.hourly_queue = original_queue
+                
+                logger.info(f"Created LLM hourly summary from {len(hourly_updates)} updates")
+                return embeds
+                
+            except Exception as e:
+                logger.error(f"LLM hourly summary failed: {e}")
+                # Restore original queue on error
+                self.hourly_queue = original_queue
         
-        # Get top 8 most important updates
-        top_updates = sorted(hourly_updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:8]
+        # Fallback to pattern only if LLM completely fails
+        logger.warning("Using pattern fallback for hourly summary")
+        return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+
+    def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+    """Pattern-based hourly summary for timeframe - LAST RESORT"""
+    hour_display = hour_end.strftime("%I %p").lstrip('0')
+    
+    # Get top 8 most important updates
+    top_updates = sorted(updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:8]
+    
+    embed = discord.Embed(
+        title=f"Chen Bot's House Summary - {hour_display} 🏠",
+        description=f"**{len(updates)} updates this hour**",
+        color=0x9b59b6,
+        timestamp=datetime.now()
+    )
+    
+    if top_updates:
+        summary_text = []
+        for update in top_updates:
+            time_str = self._extract_correct_time(update)
+            title = update.title
+            # Clean title
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            if len(title) > 100:
+                title = title[:97] + "..."
+            summary_text.append(f"**{time_str}**: {title}")
         
-        embed = discord.Embed(
-            title=f"Chen Bot's House Summary - {hour_display} 🏠",
-            description=f"**{len(hourly_updates)} updates this hour**",
-            color=0x9b59b6,
-            timestamp=datetime.now()
+        embed.add_field(
+            name="🎯 Top Moments This Hour",
+            value="\n".join(summary_text),
+            inline=False
         )
+    
+    # Add importance rating
+    if updates:
+        avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in updates) // len(updates)
+        importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+        importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
         
-        if top_updates:
-            summary_text = []
-            for i, update in enumerate(top_updates, 1):
-                time_str = self._extract_correct_time(update)
-                title = update.title
-                # Clean title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                if len(title) > 80:
-                    title = title[:77] + "..."
-                summary_text.append(f"**{time_str}**: {title}")
-            
-            embed.add_field(
-                name="🎯 Top Moments This Hour",
-                value="\n".join(summary_text),
-                inline=False
-            )
-        
-        # Add importance rating
-        if hourly_updates:
-            avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in hourly_updates) // len(hourly_updates)
-            importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
-            importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
-            
-            embed.add_field(
-                name="📊 Hour Importance",
-                value=f"{importance_icon} **{avg_importance}/10**",
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Chen Bot's House Summary • {hour_display}")
-        
-        logger.info(f"Created hourly summary from {len(hourly_updates)} updates")
-        return [embed]
+        embed.add_field(
+            name="📊 Hour Importance",
+            value=f"{importance_icon} **{avg_importance}/10**",
+            inline=False
+        )
+    
+    embed.set_footer(text=f"Chen Bot's House Summary • {hour_display}")
+    
+    return [embed]
 
     async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
         """Create structured summary with forced contextual format"""
