@@ -5374,6 +5374,22 @@ async def save_queue_state(self):
         
         return [embed]
 
+    async def process_update_for_context(self, update: BBUpdate):
+        """Process update for historical context tracking"""
+        if not self.context_tracker:
+            return
+        
+        try:
+            # Detect and record events
+            detected_events = await self.context_tracker.analyze_update_for_events(update)
+            
+            for event in detected_events:
+                success = await self.context_tracker.record_event(event)
+                if success:
+                    logger.info(f"Recorded context event: {event['type']} - {event.get('description', 'No description')}")
+        except Exception as e:
+            logger.error(f"Error processing update for context: {e}")
+
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
     
