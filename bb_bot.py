@@ -1829,28 +1829,46 @@ class AllianceTracker:
         finally:
             conn.close()
     
+    
     def _find_shared_alliances(self, hg1: str, hg2: str) -> List[Dict]:
         """Find alliances containing both houseguests"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
-                SELECT DISTINCT a.alliance_id, a.name
-                FROM alliance_members am1
-                JOIN alliance_members am2 ON am1.alliance_id = am2.alliance_id
-                JOIN alliances a ON am1.alliance_id = a.alliance_id
-                WHERE am1.houseguest_name = ? AND am2.houseguest_name = ?
-                      AND am1.is_active = 1 AND am2.is_active = 1
-                      AND a.status = ?
-            """, (hg1, hg2, AllianceStatus.ACTIVE.value))
+            if self.use_postgresql:
+                cursor.execute("""
+                    SELECT DISTINCT a.alliance_id, a.name
+                    FROM alliance_members am1
+                    JOIN alliance_members am2 ON am1.alliance_id = am2.alliance_id
+                    JOIN alliances a ON am1.alliance_id = a.alliance_id
+                    WHERE am1.houseguest_name = %s AND am2.houseguest_name = %s
+                          AND am1.is_active = TRUE AND am2.is_active = TRUE
+                          AND a.status = %s
+                """, (hg1, hg2, AllianceStatus.ACTIVE.value))
+            else:
+                cursor.execute("""
+                    SELECT DISTINCT a.alliance_id, a.name
+                    FROM alliance_members am1
+                    JOIN alliance_members am2 ON am1.alliance_id = am2.alliance_id
+                    JOIN alliances a ON am1.alliance_id = a.alliance_id
+                    WHERE am1.houseguest_name = ? AND am2.houseguest_name = ?
+                          AND am1.is_active = 1 AND am2.is_active = 1
+                          AND a.status = ?
+                """, (hg1, hg2, AllianceStatus.ACTIVE.value))
             
             alliances = []
             for row in cursor.fetchall():
-                alliances.append({
-                    'alliance_id': row[0],
-                    'name': row[1]
-                })
+                if self.use_postgresql:
+                    alliances.append({
+                        'alliance_id': row['alliance_id'],
+                        'name': row['name']
+                    })
+                else:
+                    alliances.append({
+                        'alliance_id': row[0],
+                        'name': row[1]
+                    })
             
             return alliances
             
