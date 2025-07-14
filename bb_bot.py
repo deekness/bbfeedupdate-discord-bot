@@ -2983,22 +2983,21 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create comprehensive hourly summary for the previous hour period"""
+        """Create hourly summary - simplified version"""
         now = datetime.now()
         
-        # Define the hour period we're summarizing (previous hour)
+        # Define the hour period
         summary_hour = now.replace(minute=0, second=0, microsecond=0)
-        hour_start = summary_hour - timedelta(hours=1)  # Previous hour start
-        hour_end = summary_hour  # Current hour start (exclusive)
+        hour_start = summary_hour - timedelta(hours=1)
+        hour_end = summary_hour
         
         logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        # Get updates from the database for this specific hour period
+        # Get updates from database
         if hasattr(self, 'db') and self.db:
             hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
         else:
-            # Fallback to hourly_queue if no database access
-            hourly_updates = self.hourly_queue.copy()
+            hourly_updates = []
         
         if not hourly_updates:
             logger.info(f"No updates found for hour period {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
@@ -3006,26 +3005,52 @@ class UpdateBatcher:
         
         logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        embeds = []
+        # Create simple summary embed
+        hour_display = hour_end.strftime("%I %p").lstrip('0')
         
-        try:
-            # Try LLM summary first
-            if self.llm_client and await self._can_make_llm_request():
-                try:
-                    logger.info("Using LLM for hourly summary")
-                    embeds = await self._create_llm_hourly_summary_simple(hourly_updates, hour_start, hour_end)
-                except Exception as e:
-                    logger.error(f"LLM hourly summary failed: {e}")
-                    embeds = self._create_pattern_hourly_summary_simple(hourly_updates, hour_start, hour_end)
-            else:
-                logger.info("Using pattern-based hourly summary")
-                embeds = self._create_pattern_hourly_summary_simple(hourly_updates, hour_start, hour_end)
-        except Exception as e:
-            logger.error(f"All hourly summary methods failed: {e}")
-            embeds = self._create_basic_hourly_summary_simple(hourly_updates, hour_start, hour_end)
-    
+        # Get top 8 most important updates
+        top_updates = sorted(hourly_updates, key=lambda x: self.analyzer.analyze_strategic_importance(x), reverse=True)[:8]
+        
+        embed = discord.Embed(
+            title=f"Chen Bot's House Summary - {hour_display} 🏠",
+            description=f"**{len(hourly_updates)} updates this hour**",
+            color=0x9b59b6,
+            timestamp=datetime.now()
+        )
+        
+        if top_updates:
+            summary_text = []
+            for i, update in enumerate(top_updates, 1):
+                time_str = self._extract_correct_time(update)
+                title = update.title
+                # Clean title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                if len(title) > 80:
+                    title = title[:77] + "..."
+                summary_text.append(f"**{time_str}**: {title}")
+            
+            embed.add_field(
+                name="🎯 Top Moments This Hour",
+                value="\n".join(summary_text),
+                inline=False
+            )
+        
+        # Add importance rating
+        if hourly_updates:
+            avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in hourly_updates) // len(hourly_updates)
+            importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+            importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
+            
+            embed.add_field(
+                name="📊 Hour Importance",
+                value=f"{importance_icon} **{avg_importance}/10**",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Chen Bot's House Summary • {hour_display}")
+        
         logger.info(f"Created hourly summary from {len(hourly_updates)} updates")
-        return embeds
+        return [embed]
 
     async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
         """Create structured summary with forced contextual format"""
@@ -5450,6 +5475,32 @@ async def save_queue_state(self):
         )
         
         return [embed]
+
+    async def clear_old_checkpoints(self, days_to_keep: int = 7):
+        """Clean up old checkpoint data"""
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                return
+                
+            import psycopg2
+            conn = psycopg2.connect(database_url)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                DELETE FROM summary_checkpoints 
+                WHERE created_at < NOW() - INTERVAL '%s days'
+            """, (days_to_keep,))
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            conn.close()
+            
+            if deleted_count > 0:
+                logger.info(f"Cleaned up {deleted_count} old queue checkpoints")
+                
+        except Exception as e:
+            logger.error(f"Error cleaning checkpoints: {e}")
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
