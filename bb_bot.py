@@ -765,12 +765,19 @@ class UnifiedContentMonitor:
         # Configure monitored Bluesky accounts
         self.monitored_accounts = [
             # Major BB News/Update Accounts
-            "bigbrothernetwork.bsky.social‬",
-            "realitytvwrapped.bsky.social", 
+            "bigbrothernetwork.bsky.social",
             "bbscreencaps.bsky.social",
             "hamsterwatch.bsky.social",
-            "onlinebigbrother.bsky.social",
-            "realitysteve.bsky.social",
+            "pooyaism.bsky.social‬",
+            "hamsterwatch.com",
+            "thebbpresident.bsky.social‬",
+            "bblionotev.bsky.social‬",
+            "bbliveupdaters.bsky.social‬‬",
+            "toomsbb.bsky.social‬‬‬",
+            "bbteamnorth.bsky.social‬‬‬‬",
+            "bbnutters.bsky.social‬‬‬‬‬",
+
+            
             
             # Add more accounts as you discover them
             # You can add individual contestant accounts if they join Bluesky
