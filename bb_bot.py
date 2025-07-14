@@ -9160,13 +9160,42 @@ class BBDiscordBot(commands.Bot):
         
         return new_updates
     
-    
-    @tasks.loop(hours=24)  # Run every 24 hours
+
+    @tasks.loop(hours=24)
     async def daily_recap_task(self):
         """Daily recap task that runs at 8:00 AM Pacific Time"""
         if self.is_shutting_down:
             return
         
+        # ADD THIS BULLETPROOF TIME CHECK:
+        try:
+            # BULLETPROOF TIME CHECK - Only run at 8:00 AM Pacific
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Only run between 7:55 AM and 8:05 AM Pacific (10-minute window)
+            if not (7 <= now_pacific.hour <= 8):
+                logger.info(f"Daily recap skipped - wrong hour: {now_pacific.strftime('%I:%M %p Pacific')} (need 8:00 AM Pacific)")
+                return
+            
+            if now_pacific.hour == 7 and now_pacific.minute < 55:
+                logger.info(f"Daily recap skipped - too early: {now_pacific.strftime('%I:%M %p Pacific')}")
+                return
+                
+            if now_pacific.hour == 8 and now_pacific.minute > 5:
+                logger.info(f"Daily recap skipped - too late: {now_pacific.strftime('%I:%M %p Pacific')}")
+                return
+            
+            # If we get here, it's the right time!
+            logger.info(f"Daily recap starting at correct time: {now_pacific.strftime('%I:%M %p Pacific')}")
+            
+            # THEN continue with your existing code starting from line 9171:
+            # Only proceed if we have an update channel configured
+            if not self.config.get('update_channel_id'):
+                logger.debug("No update channel configured for daily recap")
+                return
+            
+            logger.info("Starting daily recap generation")        
         try:
             # Only proceed if we have an update channel configured
             if not self.config.get('update_channel_id'):
@@ -9213,19 +9242,29 @@ class BBDiscordBot(commands.Bot):
         """Wait for bot to be ready and sync to 8:00 AM Pacific"""
         await self.wait_until_ready()
         
-        # Calculate wait time until next 8:00 AM Pacific
-        pacific_tz = pytz.timezone('US/Pacific')
-        now_pacific = datetime.now(pacific_tz)
-        
-        # Get next 8:00 AM Pacific
-        next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
-        if now_pacific.hour >= 8:  # If it's already past 8 AM today
-            next_recap += timedelta(days=1)  # Schedule for tomorrow
-        
-        wait_seconds = (next_recap - now_pacific).total_seconds()
-        
-        logger.info(f"Daily recap task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
-        await asyncio.sleep(wait_seconds)
+        try:
+            # Calculate wait time until next 8:00 AM Pacific
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Get next 8:00 AM Pacific
+            next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
+            
+            # If it's already past 8:00 AM today, schedule for tomorrow
+            if now_pacific.hour >= 8:
+                next_recap += timedelta(days=1)
+            
+            wait_seconds = (next_recap - now_pacific).total_seconds()
+            
+            logger.info(f"Daily recap task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
+            
+            # Wait until the scheduled time
+            await asyncio.sleep(wait_seconds)
+            
+        except Exception as e:
+            logger.error(f"Error in daily recap before_loop: {e}")
+            # If there's an error, wait 1 hour and try again
+            await asyncio.sleep(3600)
     
     @tasks.loop(minutes=60)  # Run every 60 minutes
     async def hourly_summary_task(self):
