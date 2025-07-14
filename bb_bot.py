@@ -772,6 +772,7 @@ class UnifiedContentMonitor:
             "toomsbb.bsky.social",
             "bbteamnorth.bsky.social",
             "bbnutters.bsky.social",
+            "hamsterwatch.com‬.bsky.social",
         ]
         
         # BB-related keywords for filtering
