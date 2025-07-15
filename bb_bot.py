@@ -1650,7 +1650,14 @@ class HistoricalContextTracker:
 class AllianceTracker:
     """Tracks and analyzes Big Brother alliances"""
     
-    # Alliance detection patterns
+    # Add this at the top of your AllianceTracker class
+    VALID_HOUSEGUESTS = {
+        'Adrian', 'Amy', 'Ashley', 'Ava', 'Jimmy', 'Katherine', 
+        'Keanu', 'Kelley', 'Lauren', 'Mickey', 'Morgan', 'Rachel', 
+        'Rylie', 'Vince', 'Will', 'Zach', 'Zae'
+    }
+    
+    # Alliance detection patterns (updated with better filtering)
     ALLIANCE_FORMATION_PATTERNS = [
         (r"([\w\s]+) and ([\w\s]+) make a final (\d+)", "final_deal"),
         (r"([\w\s]+) forms? an? alliance with ([\w\s]+)", "alliance"),
@@ -1793,7 +1800,7 @@ class AllianceTracker:
         logger.info("Alliance tracking tables initialized")
     
     def analyze_update_for_alliances(self, update: BBUpdate) -> List[Dict]:
-        """Analyze an update for alliance information"""
+        """Analyze an update for alliance information with better filtering"""
         content = f"{update.title} {update.description}".strip()
         detected_events = []
         
@@ -1804,7 +1811,8 @@ class AllianceTracker:
             'wins the power', 'eviction vote', 'evicted', 'julie pulls the keys',
             'america\'s favorite', 'afp', 'finale', 'final vote', 'cast their vote',
             'announces the winner', 'wins big brother', 'jury votes', 'key to vote',
-            'official with a vote', 'makes it official'
+            'official with a vote', 'makes it official', 'competition', 'challenge',
+            'ceremony', 'nomination', 'veto meeting'
         ]
         
         content_lower = content.lower()
@@ -1824,62 +1832,133 @@ class AllianceTracker:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 groups = match.groups()
-                houseguests = [g.strip() for g in groups if g and not g.isdigit()]
+                potential_houseguests = [g.strip() for g in groups if g and not g.isdigit()]
                 
-                # Filter out common words that aren't houseguests
-                houseguests = [hg for hg in houseguests if hg not in EXCLUDE_WORDS]
+                # ENHANCED FILTERING: Only keep valid houseguests
+                valid_houseguests = []
+                for hg in potential_houseguests:
+                    cleaned_hg = self._clean_houseguest_name(hg)
+                    if self._is_valid_houseguest(cleaned_hg):
+                        valid_houseguests.append(cleaned_hg)
                 
-                # Additional filtering for common false positives
-                houseguests = [hg for hg in houseguests if len(hg) > 2 and not hg.lower() in ['big', 'brother', 'julie', 'host', 'america']]
-                
-                if len(houseguests) >= 2:
+                # Only proceed if we have at least 2 valid houseguests
+                if len(valid_houseguests) >= 2:
                     detected_events.append({
                         'type': AllianceEventType.FORMED,
-                        'houseguests': houseguests,
+                        'houseguests': valid_houseguests,
                         'pattern_type': pattern_type,
                         'confidence': self._calculate_confidence(pattern_type),
                         'update': update
                     })
         
-        # Check for betrayals
+        # Check for betrayals with better filtering
         for pattern, pattern_type in self.BETRAYAL_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 groups = match.groups()
                 if len(groups) >= 2:
-                    betrayer = groups[0].strip()
-                    betrayed = groups[1].strip()
+                    betrayer = self._clean_houseguest_name(groups[0].strip())
+                    betrayed = self._clean_houseguest_name(groups[1].strip())
                     
-                    if betrayer not in EXCLUDE_WORDS and betrayed not in EXCLUDE_WORDS:
-                        if len(betrayer) > 2 and len(betrayed) > 2:  # Additional length check
-                            detected_events.append({
-                                'type': AllianceEventType.BETRAYAL,
-                                'betrayer': betrayer,
-                                'betrayed': betrayed,
-                                'pattern_type': pattern_type,
-                                'update': update
-                            })
+                    # Only proceed if both are valid houseguests
+                    if self._is_valid_houseguest(betrayer) and self._is_valid_houseguest(betrayed):
+                        detected_events.append({
+                            'type': AllianceEventType.BETRAYAL,
+                            'betrayer': betrayer,
+                            'betrayed': betrayed,
+                            'pattern_type': pattern_type,
+                            'update': update
+                        })
         
-        # Check for named alliances
+        # Check for named alliances with better filtering
         for pattern in self.ALLIANCE_NAME_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 alliance_name = match.group(1).strip()
-                # Skip if alliance name contains finale/winner phrases
+                # Skip if alliance name contains finale/winner phrases or is too generic
                 if alliance_name and len(alliance_name) > 2:
-                    if not any(skip in alliance_name.lower() for skip in ['winner', 'big brother', 'finale']):
+                    if not any(skip in alliance_name.lower() for skip in ['winner', 'big brother', 'finale', 'the', 'and', 'to', 'of']):
                         # Try to extract members mentioned nearby
-                        members = self._extract_nearby_houseguests(content, match.start(), match.end())
-                        detected_events.append({
-                            'type': AllianceEventType.FORMED,
-                            'alliance_name': alliance_name,
-                            'houseguests': members,
-                            'pattern_type': 'named_alliance',
-                            'confidence': 80,  # Named alliances have higher confidence
-                            'update': update
-                        })
+                        members = self._extract_nearby_valid_houseguests(content, match.start(), match.end())
+                        if len(members) >= 2:  # Only create alliance if we have valid members
+                            detected_events.append({
+                                'type': AllianceEventType.FORMED,
+                                'alliance_name': alliance_name,
+                                'houseguests': members,
+                                'pattern_type': 'named_alliance',
+                                'confidence': 80,
+                                'update': update
+                            })
         
         return detected_events
+    
+    def _clean_houseguest_name(self, name: str) -> str:
+        """Clean and normalize houseguest name"""
+        if not name:
+            return ""
+        
+        # Remove common prefixes/suffixes
+        name = re.sub(r'\b(the|a|an)\s+', '', name, flags=re.IGNORECASE)
+        name = re.sub(r'\s+(is|are|was|were|will|would|should|could)\b', '', name, flags=re.IGNORECASE)
+        
+        # Take only the first word (most names are single words)
+        name = name.split()[0] if name.split() else name
+        
+        # Capitalize properly
+        name = name.strip().title()
+        
+        return name
+    
+    def _is_valid_houseguest(self, name: str) -> bool:
+        """Check if name is a valid houseguest"""
+        if not name or len(name) < 2:
+            return False
+        
+        # Check against known houseguests
+        if name in self.VALID_HOUSEGUESTS:
+            return True
+        
+        # Check for common variations (like nicknames)
+        name_lower = name.lower()
+        for valid_hg in self.VALID_HOUSEGUESTS:
+            if name_lower == valid_hg.lower():
+                return True
+            # Check if it's a reasonable nickname (first 3+ chars match)
+            if len(name) >= 3 and valid_hg.lower().startswith(name_lower[:3]):
+                return True
+        
+        # Block common false positives
+        false_positives = {
+            'Things', 'To', 'Know', 'You', 'Need', 'Day', 'Time', 'House', 'Game',
+            'Show', 'Tonight', 'Week', 'People', 'Someone', 'Everyone', 'Anyone',
+            'America', 'Julie', 'Host', 'Production', 'Feeds', 'Live', 'Update',
+            'Big', 'Brother', 'Season', 'Episode', 'Diary', 'Room', 'Kitchen',
+            'Bedroom', 'Backyard', 'Head', 'Household', 'Power', 'Veto', 'Nomination',
+            'Eviction', 'Competition', 'Challenge', 'Ceremony', 'Winner', 'Finale'
+        }
+        
+        if name in false_positives:
+            return False
+        
+        return False  # If not in valid list and not a variation, reject
+    
+    def _extract_nearby_valid_houseguests(self, content: str, start: int, end: int, window: int = 100) -> List[str]:
+        """Extract valid houseguest names near an alliance mention"""
+        # Look in a window around the alliance name
+        search_start = max(0, start - window)
+        search_end = min(len(content), end + window)
+        search_text = content[search_start:search_end]
+        
+        # Find capitalized words that could be names
+        potential_names = re.findall(r'\b[A-Z][a-z]+\b', search_text)
+        
+        # Filter to only valid houseguests
+        valid_houseguests = []
+        for name in potential_names:
+            if self._is_valid_houseguest(name):
+                valid_houseguests.append(name)
+        
+        return list(set(valid_houseguests))  # Remove duplicates
     
     def _calculate_confidence(self, pattern_type: str) -> int:
         """Calculate confidence level based on pattern type"""
@@ -3875,32 +3954,43 @@ CRITICAL INSTRUCTIONS:
             return [self._create_pattern_highlights_embed()]
         
     async def save_queue_state(self):
-        """Save current queue state to database"""
+        """Save current queue state to database with better datetime handling"""
         try:
-            database_url = os.getenv('DATABASE_URL')
-            if not database_url:
-                logger.debug("No database URL for queue persistence")
+            # Use the same database connection as prediction manager
+            conn = None
+            if hasattr(self, 'db') and hasattr(self.db, 'get_connection'):
+                conn = self.db.get_connection()
+            else:
+                # If not available, use config to get connection
+                database_url = os.getenv('DATABASE_URL')
+                if database_url:
+                    import psycopg2
+                    import psycopg2.extras
+                    conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+            
+            if not conn:
+                logger.warning("No database connection available for queue persistence")
                 return
                 
-            import psycopg2
-            import psycopg2.extras
-            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
             cursor = conn.cursor()
             
-            # Save highlights queue
+            # Save highlights queue with proper datetime serialization
             highlights_data = {
                 'updates': [
                     {
                         'title': update.title,
                         'description': update.description,
                         'link': update.link,
-                        'pub_date': update.pub_date.isoformat(),
+                        'pub_date': update.pub_date.isoformat() if isinstance(update.pub_date, datetime) else str(update.pub_date),
                         'content_hash': update.content_hash,
                         'author': update.author
                     }
                     for update in self.highlights_queue
                 ]
             }
+            
+            # Convert last_batch_time to string for JSON serialization
+            last_batch_time = self.last_batch_time.isoformat() if isinstance(self.last_batch_time, datetime) else str(self.last_batch_time)
             
             cursor.execute("""
                 INSERT INTO summary_checkpoints 
@@ -3916,23 +4006,26 @@ CRITICAL INSTRUCTIONS:
                 'highlights',
                 json.dumps(highlights_data),
                 len(self.highlights_queue),
-                self.last_batch_time.isoformat()
+                last_batch_time
             ))
             
-            # Save hourly queue
+            # Save hourly queue with proper datetime serialization
             hourly_data = {
                 'updates': [
                     {
                         'title': update.title,
                         'description': update.description,
                         'link': update.link,
-                        'pub_date': update.pub_date.isoformat(),
+                        'pub_date': update.pub_date.isoformat() if isinstance(update.pub_date, datetime) else str(update.pub_date),
                         'content_hash': update.content_hash,
                         'author': update.author
                     }
                     for update in self.hourly_queue
                 ]
             }
+            
+            # Convert last_hourly_summary to string for JSON serialization
+            last_hourly_time = self.last_hourly_summary.isoformat() if isinstance(self.last_hourly_summary, datetime) else str(self.last_hourly_summary)
             
             cursor.execute("""
                 INSERT INTO summary_checkpoints 
@@ -3948,13 +4041,13 @@ CRITICAL INSTRUCTIONS:
                 'hourly',
                 json.dumps(hourly_data),
                 len(self.hourly_queue),
-                self.last_hourly_summary.isoformat()
+                last_hourly_time
             ))
             
             conn.commit()
             conn.close()
             
-            logger.debug(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
+            logger.info(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
             
         except Exception as e:
             logger.error(f"Error saving queue state: {e}")
@@ -8691,7 +8784,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in setup hook: {e}")
     
     async def restore_queues_inline(self):
-        """Restore queue state inline"""
+        """Restore queue state inline with better error handling"""
         try:
             database_url = os.getenv('DATABASE_URL')
             if not database_url:
@@ -8720,24 +8813,44 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore highlights queue
                     self.update_batcher.highlights_queue.clear()
                     for update_data in highlights_data.get('updates', []):
-                        update = BBUpdate(
-                            title=update_data['title'],
-                            description=update_data['description'],
-                            link=update_data['link'],
-                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
-                            content_hash=update_data['content_hash'],
-                            author=update_data['author']
-                        )
-                        self.update_batcher.highlights_queue.append(update)
+                        try:
+                            # Better datetime parsing
+                            pub_date = update_data['pub_date']
+                            if isinstance(pub_date, str):
+                                pub_date = datetime.fromisoformat(pub_date)
+                            elif not isinstance(pub_date, datetime):
+                                pub_date = datetime.now()  # Fallback
+                            
+                            update = BBUpdate(
+                                title=update_data['title'],
+                                description=update_data['description'],
+                                link=update_data['link'],
+                                pub_date=pub_date,
+                                content_hash=update_data['content_hash'],
+                                author=update_data['author']
+                            )
+                            self.update_batcher.highlights_queue.append(update)
+                        except Exception as e:
+                            logger.warning(f"Skipping invalid update in highlights queue: {e}")
+                            continue
                     
                     # Restore last batch time
                     if result['last_summary_time']:
-                        self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
+                        try:
+                            if isinstance(result['last_summary_time'], str):
+                                self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
+                            elif isinstance(result['last_summary_time'], datetime):
+                                self.update_batcher.last_batch_time = result['last_summary_time']
+                        except Exception as e:
+                            logger.warning(f"Error parsing last_summary_time: {e}")
+                            self.update_batcher.last_batch_time = datetime.now()
                     
                     logger.info(f"Restored {len(self.update_batcher.highlights_queue)} highlights from database")
                     
                 except Exception as e:
                     logger.error(f"Error parsing highlights queue data: {e}")
+                    # Clear queue on error to prevent issues
+                    self.update_batcher.highlights_queue.clear()
             else:
                 logger.info("No highlights queue state to restore")
             
@@ -8758,24 +8871,44 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore hourly queue
                     self.update_batcher.hourly_queue.clear()
                     for update_data in hourly_data.get('updates', []):
-                        update = BBUpdate(
-                            title=update_data['title'],
-                            description=update_data['description'],
-                            link=update_data['link'],
-                            pub_date=datetime.fromisoformat(update_data['pub_date']),
-                            content_hash=update_data['content_hash'],
-                            author=update_data['author']
-                        )
-                        self.update_batcher.hourly_queue.append(update)
+                        try:
+                            # Better datetime parsing
+                            pub_date = update_data['pub_date']
+                            if isinstance(pub_date, str):
+                                pub_date = datetime.fromisoformat(pub_date)
+                            elif not isinstance(pub_date, datetime):
+                                pub_date = datetime.now()  # Fallback
+                            
+                            update = BBUpdate(
+                                title=update_data['title'],
+                                description=update_data['description'],
+                                link=update_data['link'],
+                                pub_date=pub_date,
+                                content_hash=update_data['content_hash'],
+                                author=update_data['author']
+                            )
+                            self.update_batcher.hourly_queue.append(update)
+                        except Exception as e:
+                            logger.warning(f"Skipping invalid update in hourly queue: {e}")
+                            continue
                     
                     # Restore last hourly summary time
                     if result['last_summary_time']:
-                        self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
+                        try:
+                            if isinstance(result['last_summary_time'], str):
+                                self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
+                            elif isinstance(result['last_summary_time'], datetime):
+                                self.update_batcher.last_hourly_summary = result['last_summary_time']
+                        except Exception as e:
+                            logger.warning(f"Error parsing hourly last_summary_time: {e}")
+                            self.update_batcher.last_hourly_summary = datetime.now()
                     
                     logger.info(f"Restored {len(self.update_batcher.hourly_queue)} hourly updates from database")
                     
                 except Exception as e:
                     logger.error(f"Error parsing hourly queue data: {e}")
+                    # Clear queue on error to prevent issues
+                    self.update_batcher.hourly_queue.clear()
             else:
                 logger.info("No hourly queue state to restore")
             
@@ -8783,6 +8916,9 @@ class BBDiscordBot(commands.Bot):
             
         except Exception as e:
             logger.error(f"Error restoring queue state: {e}")
+            # Initialize empty queues on error
+            self.update_batcher.highlights_queue.clear()
+            self.update_batcher.hourly_queue.clear()
     
     def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
         """Check if user is bot owner or has admin permissions"""
