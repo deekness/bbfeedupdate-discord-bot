@@ -656,13 +656,16 @@ class BlueskyClient:
         self.refresh_token = None
         self.username = username
         self.password = password
+        self.authenticated = False
+        self.last_auth_attempt = None
         
         # Session for HTTP requests with retry logic
         self.http_session = requests.Session()
         retry_strategy = requests.adapters.Retry(
             total=3,
             backoff_factor=1,
-            status_forcelist=[429, 500, 502, 503, 504]
+            status_forcelist=[429, 500, 502, 503, 504],
+            allowed_methods=["HEAD", "GET", "OPTIONS", "POST"]
         )
         adapter = requests.adapters.HTTPAdapter(max_retries=retry_strategy)
         self.http_session.mount("http://", adapter)
@@ -676,60 +679,99 @@ class BlueskyClient:
     async def authenticate(self) -> bool:
         """Authenticate with Bluesky if credentials provided"""
         if not self.username or not self.password:
-            logger.info("No Bluesky credentials provided - running in read-only mode")
-            return True
+            logger.info("No Bluesky credentials provided - skipping authentication")
+            return False
+        
+        # Don't retry authentication too frequently
+        if self.last_auth_attempt:
+            time_since_last = (datetime.now() - self.last_auth_attempt).total_seconds()
+            if time_since_last < 60:  # Wait at least 1 minute between attempts
+                logger.debug("Skipping authentication attempt - too soon since last attempt")
+                return self.authenticated
+        
+        self.last_auth_attempt = datetime.now()
         
         try:
+            logger.info(f"Attempting Bluesky authentication for {self.username}")
+            
+            # Clear any existing auth headers
+            if 'Authorization' in self.http_session.headers:
+                del self.http_session.headers['Authorization']
+            
             response = self.http_session.post(
                 f"{self.base_url}/com.atproto.server.createSession",
                 json={
                     "identifier": self.username,
                     "password": self.password
                 },
-                timeout=10
+                timeout=15
             )
+            
+            logger.info(f"Bluesky auth response: {response.status_code}")
             
             if response.status_code == 200:
                 data = response.json()
                 self.access_token = data.get('accessJwt')
                 self.refresh_token = data.get('refreshJwt')
                 
-                # Update session headers
-                self.http_session.headers.update({
-                    'Authorization': f'Bearer {self.access_token}'
-                })
-                
-                logger.info("Successfully authenticated with Bluesky")
-                return True
+                if self.access_token:
+                    # Update session headers
+                    self.http_session.headers.update({
+                        'Authorization': f'Bearer {self.access_token}'
+                    })
+                    
+                    logger.info("✅ Successfully authenticated with Bluesky")
+                    self.authenticated = True
+                    return True
+                else:
+                    logger.error("❌ No access token received from Bluesky")
+                    self.authenticated = False
+                    return False
             else:
-                logger.error(f"Bluesky authentication failed: {response.status_code}")
+                logger.error(f"❌ Bluesky authentication failed: {response.status_code}")
+                if response.text:
+                    logger.error(f"Response: {response.text}")
+                self.authenticated = False
                 return False
                 
         except Exception as e:
-            logger.error(f"Error authenticating with Bluesky: {e}")
+            logger.error(f"❌ Error authenticating with Bluesky: {e}")
+            self.authenticated = False
             return False
     
     def get_profile_posts(self, handle: str, limit: int = 30) -> List[Dict[str, Any]]:
         """Get posts from a specific profile"""
+        if not self.authenticated:
+            logger.debug(f"Not authenticated - skipping {handle}")
+            return []
+        
         try:
             # Convert handle to DID if needed
             if not handle.startswith('did:'):
-                response = self.http_session.get(
+                resolve_response = self.http_session.get(
                     f"{self.base_url}/com.atproto.identity.resolveHandle",
                     params={"handle": handle},
                     timeout=10
                 )
                 
-                if response.status_code != 200:
-                    logger.error(f"Failed to resolve handle {handle}: {response.status_code}")
+                if resolve_response.status_code != 200:
+                    logger.warning(f"Failed to resolve handle {handle}: {resolve_response.status_code}")
                     return []
                 
-                did = response.json().get('did')
+                try:
+                    resolve_data = resolve_response.json()
+                    did = resolve_data.get('did')
+                    if not did:
+                        logger.warning(f"No DID found for handle {handle}")
+                        return []
+                except:
+                    logger.warning(f"Invalid JSON response for handle {handle}")
+                    return []
             else:
                 did = handle
             
             # Get posts from the profile
-            response = self.http_session.get(
+            posts_response = self.http_session.get(
                 f"{self.base_url}/app.bsky.feed.getAuthorFeed",
                 params={
                     "actor": did,
@@ -739,17 +781,29 @@ class BlueskyClient:
                 timeout=15
             )
             
-            if response.status_code == 200:
-                data = response.json()
-                return data.get('feed', [])
+            if posts_response.status_code == 200:
+                try:
+                    data = posts_response.json()
+                    posts = data.get('feed', [])
+                    logger.debug(f"Retrieved {len(posts)} posts from {handle}")
+                    return posts
+                except:
+                    logger.warning(f"Invalid JSON response for posts from {handle}")
+                    return []
             else:
-                logger.warning(f"Failed to get posts for {handle}: {response.status_code}")
+                logger.warning(f"Failed to get posts for {handle}: {posts_response.status_code}")
+                
+                # If we get 401 (unauthorized), mark as not authenticated
+                if posts_response.status_code == 401:
+                    logger.info("Got 401 - marking as not authenticated")
+                    self.authenticated = False
+                
                 return []
                 
         except Exception as e:
             logger.error(f"Error getting posts for {handle}: {e}")
             return []
-
+            
 class UnifiedContentMonitor:
     """Unified monitor that combines RSS and Bluesky content"""
     
@@ -826,31 +880,54 @@ class UnifiedContentMonitor:
             return []
     
     async def _check_bluesky_accounts(self) -> List[BBUpdate]:
-        """Check all monitored Bluesky accounts"""
+        """Check all monitored Bluesky accounts with improved error handling"""
         all_bluesky_updates = []
         
-        # Authenticate if needed
+        # Try to authenticate if not already authenticated
         if not self.bluesky_auth_status:
-            self.bluesky_auth_status = await self.bluesky_client.authenticate()
+            try:
+                self.bluesky_auth_status = await self.bluesky_client.authenticate()
+                if not self.bluesky_auth_status:
+                    logger.debug("Bluesky authentication failed, skipping this check")
+                    return []
+            except Exception as e:
+                logger.error(f"Bluesky authentication error: {e}")
+                return []
         
-        if not self.bluesky_auth_status:
-            logger.debug("Bluesky not authenticated, skipping check")
-            return []
+        # Check each monitored account
+        successful_checks = 0
+        failed_checks = 0
         
         for account in self.monitored_accounts:
             try:
                 posts = self.bluesky_client.get_profile_posts(account, limit=20)
-                account_updates = await self._process_account_posts(account, posts)
-                all_bluesky_updates.extend(account_updates)
+                if posts:
+                    account_updates = await self._process_account_posts(account, posts)
+                    all_bluesky_updates.extend(account_updates)
+                    successful_checks += 1
+                else:
+                    failed_checks += 1
                 
                 # Small delay between accounts to be respectful
                 await asyncio.sleep(0.5)
                 
             except Exception as e:
                 logger.error(f"Error checking Bluesky account {account}: {e}")
+                failed_checks += 1
                 continue
         
+        # Update stats
         self.total_bluesky_updates += len(all_bluesky_updates)
+        
+        # Log results
+        if successful_checks > 0 or failed_checks > 0:
+            logger.info(f"Bluesky check: {successful_checks} successful, {failed_checks} failed")
+        
+        # If too many failures, mark as not authenticated for retry
+        if failed_checks > successful_checks and failed_checks >= 3:
+            logger.warning("Too many Bluesky failures - will retry authentication next time")
+            self.bluesky_auth_status = False
+        
         return all_bluesky_updates
     
     async def _process_account_posts(self, account: str, posts: List[Dict]) -> List[BBUpdate]:
@@ -9027,6 +9104,54 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error forcing batch: {e}")
                 await interaction.followup.send("Error sending batch.", ephemeral=True)
 
+        @self.tree.command(name="testdailyrecap", description="Test daily recap generation (Owner only)")
+        async def test_daily_recap(interaction: discord.Interaction):
+            """Test daily recap generation"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Get current Pacific time
+                pacific_tz = pytz.timezone('US/Pacific')
+                now_pacific = datetime.now(pacific_tz)
+                
+                # Calculate yesterday's period (for testing)
+                end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
+                start_time = end_time - timedelta(hours=24)
+                
+                # Get updates from the period
+                daily_updates = self.db.get_daily_updates(start_time, end_time)
+                
+                # Calculate day number
+                season_start = datetime(2025, 7, 8)
+                recap_date = start_time.date()
+                day_number = (recap_date - season_start.date()).days + 1
+                
+                await interaction.followup.send(
+                    f"**Daily Recap Test**\n"
+                    f"Day {day_number}: Found {len(daily_updates)} updates\n"
+                    f"Period: {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific\n"
+                    f"Generating recap...",
+                    ephemeral=True
+                )
+                
+                if daily_updates:
+                    # Create and send recap
+                    recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+                    await self.send_daily_recap(recap_embeds)
+                    await interaction.followup.send(f"✅ Daily recap sent with {len(recap_embeds)} embeds", ephemeral=True)
+                else:
+                    await self.send_quiet_day_recap(day_number)
+                    await interaction.followup.send("✅ Quiet day recap sent", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in test daily recap: {e}")
+                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+        
         @self.tree.command(name="testllm", description="Test LLM connection and functionality")
         async def test_llm_slash(interaction: discord.Interaction):
             """Test LLM integration"""
@@ -10149,77 +10274,162 @@ class BBDiscordBot(commands.Bot):
     
 
     @tasks.loop(hours=24)
-    async def daily_recap_task(self):
-        """Daily recap task that runs at 8:00 AM Pacific Time"""
-        if self.is_shutting_down:
+async def daily_recap_task(self):
+    """Daily recap task that runs at 8:00 AM Pacific Time"""
+    if self.is_shutting_down:
+        return
+    
+    try:
+        # Get current Pacific time
+        pacific_tz = pytz.timezone('US/Pacific')
+        now_pacific = datetime.now(pacific_tz)
+        
+        # Log the current time for debugging
+        logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
+        
+        # Only proceed if we have an update channel configured
+        if not self.config.get('update_channel_id'):
+            logger.warning("No update channel configured for daily recap")
             return
         
-        # ADD THIS BULLETPROOF TIME CHECK:
+        # Calculate the day period (previous 8:00 AM to current 8:00 AM)
+        # Remove timezone info for database queries
+        end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
+        start_time = end_time - timedelta(hours=24)  # 24 hours ago
+        
+        logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
+        
+        # Get all updates from the day
+        daily_updates = self.db.get_daily_updates(start_time, end_time)
+        
+        # Calculate day number (days since season start)
+        season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
+        recap_date = start_time.date()
+        day_number = (recap_date - season_start.date()).days + 1
+        
+        logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
+        
+        if not daily_updates:
+            logger.info("No updates found for daily recap - sending quiet day message")
+            await self.send_quiet_day_recap(day_number)
+            return
+        
+        # Create daily recap
+        recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+        
+        # Send daily recap
+        await self.send_daily_recap(recap_embeds)
+        
+        logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
+        
+    except Exception as e:
+        logger.error(f"❌ Error in daily recap task: {e}")
+        logger.error(traceback.format_exc())
+
+    async def send_quiet_day_recap(self, day_number: int = None):
+        """Send a recap for days with no updates"""
+        channel_id = self.config.get('update_channel_id')
+        if not channel_id:
+            return
+        
         try:
-            # BULLETPROOF TIME CHECK - Only run at 8:00 AM Pacific
+            channel = self.get_channel(channel_id)
+            if not channel:
+                logger.error(f"Channel {channel_id} not found for quiet day recap")
+                return
+            
+            # Calculate day number if not provided
+            if day_number is None:
+                season_start = datetime(2025, 7, 8)
+                current_date = datetime.now().date()
+                day_number = (current_date - season_start.date()).days + 1
+            
+            quiet_messages = [
+                "Even the cameras took a nap today 📷😴",
+                "The houseguests were quieter than a library 📚",
+                "Not even the ants were causing drama 🐜",
+                "Production probably checked if the feeds were working 📺",
+                "The most exciting thing was probably someone making slop 🥣"
+            ]
+            
+            import random
+            message = random.choice(quiet_messages)
+            
+            embed = discord.Embed(
+                title=f"📅 Day {day_number} Recap",
+                description=f"**{message}**",
+                color=0x95a5a6,  # Gray for quiet days
+                timestamp=datetime.now()
+            )
+            
+            embed.add_field(
+                name="📊 Day Summary",
+                value="No significant updates detected on the live feeds today.",
+                inline=False
+            )
+            
+            embed.add_field(
+                name="🏠 House Status",
+                value="All houseguests accounted for and living remarkably quiet lives.",
+                inline=False
+            )
+            
+            embed.set_footer(text=f"Daily Recap • Day {day_number} • Even quiet days make history!")
+            
+            await channel.send(embed=embed)
+            logger.info(f"✅ Sent quiet day recap for Day {day_number}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending quiet day recap: {e}")
+
+    # Add this test command to your setup_commands method
+    @self.tree.command(name="testdailyrecap", description="Test daily recap generation (Owner only)")
+    async def test_daily_recap(interaction: discord.Interaction):
+        """Test daily recap generation"""
+        try:
+            owner_id = self.config.get('owner_id')
+            if not owner_id or interaction.user.id != owner_id:
+                await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                return
+            
+            await interaction.response.defer(ephemeral=True)
+            
+            # Get current Pacific time
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
-            # Only run between 7:55 AM and 8:05 AM Pacific (10-minute window)
-            if not (7 <= now_pacific.hour <= 8):
-                logger.info(f"Daily recap skipped - wrong hour: {now_pacific.strftime('%I:%M %p Pacific')} (need 8:00 AM Pacific)")
-                return
-            
-            if now_pacific.hour == 7 and now_pacific.minute < 55:
-                logger.info(f"Daily recap skipped - too early: {now_pacific.strftime('%I:%M %p Pacific')}")
-                return
-                
-            if now_pacific.hour == 8 and now_pacific.minute > 5:
-                logger.info(f"Daily recap skipped - too late: {now_pacific.strftime('%I:%M %p Pacific')}")
-                return
-            
-            # If we get here, it's the right time!
-            logger.info(f"Daily recap starting at correct time: {now_pacific.strftime('%I:%M %p Pacific')}")
-            
-            # THEN continue with your existing code starting from line 9171:
-            # Only proceed if we have an update channel configured
-            if not self.config.get('update_channel_id'):
-                logger.debug("No update channel configured for daily recap")
-                return
-            
-            logger.info("Starting daily recap generation")        
-            
-            # Only proceed if we have an update channel configured
-            if not self.config.get('update_channel_id'):
-                logger.debug("No update channel configured for daily recap")
-                return
-            
-            logger.info("Starting daily recap generation")
-            
-            
-            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
+            # Calculate yesterday's period (for testing)
             end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
-            start_time = end_time - timedelta(hours=24)  # 24 hours ago
+            start_time = end_time - timedelta(hours=24)
             
-            # Get all updates from the day
+            # Get updates from the period
             daily_updates = self.db.get_daily_updates(start_time, end_time)
             
-            if not daily_updates:
-                logger.info("No updates found for daily recap")
-                # Still send a "quiet day" recap
-                await self.send_quiet_day_recap()
-                return
-            
-            # Calculate day number (days since season start)
-            recap_date = start_time.date()  # Use start_time (yesterday's 8 AM) for day calculation
+            # Calculate day number
+            season_start = datetime(2025, 7, 8)
+            recap_date = start_time.date()
             day_number = (recap_date - season_start.date()).days + 1
             
-            # Create daily recap
-            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+            await interaction.followup.send(
+                f"**Daily Recap Test**\n"
+                f"Day {day_number}: Found {len(daily_updates)} updates\n"
+                f"Period: {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific\n"
+                f"Generating recap...",
+                ephemeral=True
+            )
             
-            # Send daily recap
-            await self.send_daily_recap(recap_embeds)
-            
-            logger.info(f"Daily recap sent for Day {day_number} with {len(daily_updates)} updates")
+            if daily_updates:
+                # Create and send recap
+                recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+                await self.send_daily_recap(recap_embeds)
+                await interaction.followup.send(f"✅ Daily recap sent with {len(recap_embeds)} embeds", ephemeral=True)
+            else:
+                await self.send_quiet_day_recap(day_number)
+                await interaction.followup.send("✅ Quiet day recap sent", ephemeral=True)
             
         except Exception as e:
-            logger.error(f"Error in daily recap task: {e}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Error in test daily recap: {e}")
+            await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
     
     @daily_recap_task.before_loop
     async def before_daily_recap_task(self):
@@ -10441,7 +10651,7 @@ class BBDiscordBot(commands.Bot):
         
         return embed
     
-    async def send_quiet_day_recap(self):
+    async def send_quiet_day_recap(self, day_number: int = None):
         """Send a recap for days with no updates"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
@@ -10453,14 +10663,18 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found for quiet day recap")
                 return
             
-            # Calculate day number
-            season_start = datetime(2025, 7, 8)  # Adjust for actual season
-            current_date = datetime.now().date()
-            day_number = (current_date - season_start.date()).days + 1
+            # Calculate day number if not provided
+            if day_number is None:
+                season_start = datetime(2025, 7, 8)
+                current_date = datetime.now().date()
+                day_number = (current_date - season_start.date()).days + 1
             
             quiet_messages = [
-                "Not even the ants are causing drama 🐜",
-
+                "Even the cameras took a nap today 📷😴",
+                "The houseguests were quieter than a library 📚",
+                "Not even the ants were causing drama 🐜",
+                "Production probably checked if the feeds were working 📺",
+                "The most exciting thing was probably someone making slop 🥣"
             ]
             
             import random
@@ -10481,23 +10695,17 @@ class BBDiscordBot(commands.Bot):
             
             embed.add_field(
                 name="🏠 House Status",
-                value="All houseguests accounted for and apparently living very quiet lives.",
-                inline=False
-            )
-            
-            embed.add_field(
-                name="📺 Feed Activity",
-                value="The cameras were probably more active than the houseguests today.",
+                value="All houseguests accounted for and living remarkably quiet lives.",
                 inline=False
             )
             
             embed.set_footer(text=f"Daily Recap • Day {day_number} • Even quiet days make history!")
             
             await channel.send(embed=embed)
-            logger.info(f"Sent quiet day recap for Day {day_number}")
+            logger.info(f"✅ Sent quiet day recap for Day {day_number}")
             
         except Exception as e:
-            logger.error(f"Error sending quiet day recap: {e}")
+            logger.error(f"❌ Error sending quiet day recap: {e}")
     
     @tasks.loop(minutes=2)
     async def check_all_content_sources(self):
