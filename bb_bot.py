@@ -10279,52 +10279,52 @@ class BBDiscordBot(commands.Bot):
         if self.is_shutting_down:
             return
     
-    try:
-        # Get current Pacific time
-        pacific_tz = pytz.timezone('US/Pacific')
-        now_pacific = datetime.now(pacific_tz)
-        
-        # Log the current time for debugging
-        logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
-        
-        # Only proceed if we have an update channel configured
-        if not self.config.get('update_channel_id'):
-            logger.warning("No update channel configured for daily recap")
-            return
-        
-        # Calculate the day period (previous 8:00 AM to current 8:00 AM)
-        # Remove timezone info for database queries
-        end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
-        start_time = end_time - timedelta(hours=24)  # 24 hours ago
-        
-        logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
-        
-        # Get all updates from the day
-        daily_updates = self.db.get_daily_updates(start_time, end_time)
-        
-        # Calculate day number (days since season start)
-        season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
-        recap_date = start_time.date()
-        day_number = (recap_date - season_start.date()).days + 1
-        
-        logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
-        
-        if not daily_updates:
-            logger.info("No updates found for daily recap - sending quiet day message")
-            await self.send_quiet_day_recap(day_number)
-            return
-        
-        # Create daily recap
-        recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
-        
-        # Send daily recap
-        await self.send_daily_recap(recap_embeds)
-        
-        logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
-        
-    except Exception as e:
-        logger.error(f"❌ Error in daily recap task: {e}")
-        logger.error(traceback.format_exc())
+        try:
+            # Get current Pacific time
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Log the current time for debugging
+            logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
+            
+            # Only proceed if we have an update channel configured
+            if not self.config.get('update_channel_id'):
+                logger.warning("No update channel configured for daily recap")
+                return
+            
+            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
+            # Remove timezone info for database queries
+            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
+            start_time = end_time - timedelta(hours=24)  # 24 hours ago
+            
+            logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
+            
+            # Get all updates from the day
+            daily_updates = self.db.get_daily_updates(start_time, end_time)
+            
+            # Calculate day number (days since season start)
+            season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
+            recap_date = start_time.date()
+            day_number = (recap_date - season_start.date()).days + 1
+            
+            logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
+            
+            if not daily_updates:
+                logger.info("No updates found for daily recap - sending quiet day message")
+                await self.send_quiet_day_recap(day_number)
+                return
+            
+            # Create daily recap
+            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+            
+            # Send daily recap
+            await self.send_daily_recap(recap_embeds)
+            
+            logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in daily recap task: {e}")
+            logger.error(traceback.format_exc())
 
     async def send_quiet_day_recap(self, day_number: int = None):
         """Send a recap for days with no updates"""
