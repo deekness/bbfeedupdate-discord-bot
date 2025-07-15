@@ -3616,26 +3616,38 @@ class UpdateBatcher:
         content = f"{update.title} {update.description}".lower()
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
+
     async def add_update(self, update: BBUpdate):
-        # Check both cache AND database for duplicates
-        if not await self.processed_hashes_cache.contains(update.content_hash) and not self.db.is_duplicate(update.content_hash):
-            # Add to highlights queue (for 25-update batches)
-            self.highlights_queue.append(update)
-            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")  # ADD THIS LINE
-            # Add to hourly queue (for hourly summaries)
-            self.hourly_queue.append(update)
-            
-            # Mark as processed
-            await self.processed_hashes_cache.add(update.content_hash)
-            
-            logger.debug(f"Added new update: {update.title[:50]}...")
+        """Add update to queues with better error handling"""
+        
+        # Check duplicates - use cache first, then database if available
+        if await self.processed_hashes_cache.contains(update.content_hash):
+            logger.debug(f"Skipped duplicate (cache): {update.title[:50]}...")
+            return
+        
+        # Check database if available
+        if hasattr(self, 'db') and self.db:
+            if self.db.is_duplicate(update.content_hash):
+                logger.debug(f"Skipped duplicate (database): {update.title[:50]}...")
+                await self.processed_hashes_cache.add(update.content_hash)  # Add to cache for next time
+                return
         else:
-            logger.debug(f"Skipped duplicate: {update.title[:50]}...")
-            
-            # Log cache stats periodically
-            cache_stats = self.processed_hashes_cache.get_stats()
-            if cache_stats['size'] % 1000 == 0:
-                logger.info(f"Hash cache stats: {cache_stats}")
+            logger.warning("Database not available in batcher - using cache only for duplicate checking")
+        
+        # Add to both queues
+        self.highlights_queue.append(update)
+        self.hourly_queue.append(update)
+        
+        # Mark as processed in cache
+        await self.processed_hashes_cache.add(update.content_hash)
+        
+        logger.info(f"✅ Added update to queues: {update.title[:60]}...")
+        logger.info(f"Queue sizes now - Highlights: {len(self.highlights_queue)}, Hourly: {len(self.hourly_queue)}")
+        
+        # Log cache stats occasionally
+        cache_stats = self.processed_hashes_cache.get_stats()
+        if cache_stats['size'] % 100 == 0:
+            logger.info(f"Hash cache stats: {cache_stats}")
     
     async def _can_make_llm_request(self) -> bool:
         """Check if we can make an LLM request without hitting rate limits"""
@@ -8733,14 +8745,15 @@ class BBDiscordBot(commands.Bot):
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
         self.content_monitor = UnifiedContentMonitor(self)
-        
-        # ADD THIS LINE: Set the database reference for the batcher
         self.update_batcher.db = self.db
+        
         
         if self.context_tracker:
             self.update_batcher.context_tracker = self.context_tracker
         else:
             logger.warning("Context tracker not available - summaries will not include historical context")
+        
+        self.content_monitor = UnifiedContentMonitor(self)
         
 
         
@@ -10826,17 +10839,18 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"❌ Error sending quiet day recap: {e}")
     
+    # REPLACE your check_all_content_sources method with this:
     @tasks.loop(minutes=2)
     async def check_all_content_sources(self):
         """Unified content checking from RSS and Bluesky"""
         if self.is_shutting_down:
             return
-
+    
         try:
             # Get updates from ALL sources
             new_updates = await self.content_monitor.check_all_sources()
             
-            # Process each new update (same as before)
+            # Process each new update
             for update in new_updates:
                 try:
                     categories = self.analyzer.categorize_update(update)
@@ -10845,11 +10859,13 @@ class BBDiscordBot(commands.Bot):
                     # Store in database
                     self.db.store_update(update, importance, categories)
                     
-                    # Add to batching system (both highlights and hourly queues)
+                    # ✅ ADD THIS CRUCIAL LINE:
+                    await self.update_batcher.add_update(update)
+                    
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
                         try:
-                            await self.context_tracker.analyze_update_for_events(update)
+                            await self.update_batcher.process_update_for_context(update)
                         except Exception as e:
                             logger.debug(f"Context processing failed: {e}")
                 
@@ -10859,10 +10875,6 @@ class BBDiscordBot(commands.Bot):
                         alliance_id = self.alliance_tracker.process_alliance_event(event)
                         if alliance_id:
                             logger.info(f"Alliance event processed: {event['type'].value}")
-                    
-                    # Process for historical context if available
-                    if hasattr(self, 'context_tracker') and self.context_tracker:
-                        pass
                     
                     self.total_updates_processed += 1
                     
