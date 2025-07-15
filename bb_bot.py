@@ -10274,10 +10274,10 @@ class BBDiscordBot(commands.Bot):
     
 
     @tasks.loop(hours=24)
-async def daily_recap_task(self):
-    """Daily recap task that runs at 8:00 AM Pacific Time"""
-    if self.is_shutting_down:
-        return
+    async def daily_recap_task(self):
+        """Daily recap task that runs at 8:00 AM Pacific Time"""
+        if self.is_shutting_down:
+            return
     
     try:
         # Get current Pacific time
