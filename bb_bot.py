@@ -10847,20 +10847,29 @@ class BBDiscordBot(commands.Bot):
             return
     
         try:
+            logger.info("🔍 Starting unified content check...")
+            
             # Get updates from ALL sources
             new_updates = await self.content_monitor.check_all_sources()
+            logger.info(f"📊 Content monitor found {len(new_updates)} new updates")
             
             # Process each new update
-            for update in new_updates:
+            for i, update in enumerate(new_updates, 1):
                 try:
+                    logger.info(f"⚙️ Processing update {i}/{len(new_updates)}: {update.title[:80]}...")
+                    
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
+                    logger.debug(f"   Categories: {categories}, Importance: {importance}")
                 
                     # Store in database
                     self.db.store_update(update, importance, categories)
+                    logger.debug(f"   ✅ Stored in database")
                     
-                    # ✅ ADD THIS CRUCIAL LINE:
+                    # Add to batcher queues
+                    logger.info(f"   📝 Adding to batcher queues...")
                     await self.update_batcher.add_update(update)
+                    logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
                     
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
@@ -10879,11 +10888,16 @@ class BBDiscordBot(commands.Bot):
                     self.total_updates_processed += 1
                     
                 except Exception as e:
-                    logger.error(f"Error processing update: {e}")
+                    logger.error(f"❌ Error processing update {i}: {e}")
+                    logger.error(traceback.format_exc())
                     self.consecutive_errors += 1
         
             # Check for highlights batch (25 updates or urgent conditions)
-            if self.update_batcher.should_send_highlights():
+            should_send = self.update_batcher.should_send_highlights()
+            logger.info(f"🤔 Should send highlights batch? {should_send} (queue size: {len(self.update_batcher.highlights_queue)})")
+            
+            if should_send:
+                logger.info("🚀 Sending highlights batch...")
                 await self.send_highlights_batch()
         
             # Update success tracking
@@ -10897,13 +10911,16 @@ class BBDiscordBot(commands.Bot):
                     sources_breakdown[source] = sources_breakdown.get(source, 0) + 1
                 
                 breakdown_str = ", ".join([f"{count} {source}" for source, count in sources_breakdown.items()])
-                logger.info(f"Added {len(new_updates)} updates to queues ({breakdown_str})")
-                logger.info(f"Queue status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
+                logger.info(f"📈 FINAL: Added {len(new_updates)} updates ({breakdown_str})")
+                logger.info(f"📊 FINAL Queue Status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
+            else:
+                logger.info("📭 No new updates found this check")
             
         except Exception as e:
-            logger.error(f"Error in unified content check: {e}")
+            logger.error(f"❌ Error in unified content check: {e}")
+            logger.error(traceback.format_exc())
             self.consecutive_errors += 1
-
+            
     # Update your on_ready method to start the new task:
     async def on_ready(self):
         """Bot startup event"""
