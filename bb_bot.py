@@ -9153,53 +9153,7 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error forcing batch: {e}")
                 await interaction.followup.send("Error sending batch.", ephemeral=True)
 
-        @self.tree.command(name="testdailyrecap", description="Test daily recap generation (Owner only)")
-        async def test_daily_recap(interaction: discord.Interaction):
-            """Test daily recap generation"""
-            try:
-                owner_id = self.config.get('owner_id')
-                if not owner_id or interaction.user.id != owner_id:
-                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                # Get current Pacific time
-                pacific_tz = pytz.timezone('US/Pacific')
-                now_pacific = datetime.now(pacific_tz)
-                
-                # Calculate yesterday's period (for testing)
-                end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
-                start_time = end_time - timedelta(hours=24)
-                
-                # Get updates from the period
-                daily_updates = self.db.get_daily_updates(start_time, end_time)
-                
-                # Calculate day number
-                season_start = datetime(2025, 7, 8)
-                recap_date = start_time.date()
-                day_number = (recap_date - season_start.date()).days + 1
-                
-                await interaction.followup.send(
-                    f"**Daily Recap Test**\n"
-                    f"Day {day_number}: Found {len(daily_updates)} updates\n"
-                    f"Period: {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific\n"
-                    f"Generating recap...",
-                    ephemeral=True
-                )
-                
-                if daily_updates:
-                    # Create and send recap
-                    recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
-                    await self.send_daily_recap(recap_embeds)
-                    await interaction.followup.send(f"✅ Daily recap sent with {len(recap_embeds)} embeds", ephemeral=True)
-                else:
-                    await self.send_quiet_day_recap(day_number)
-                    await interaction.followup.send("✅ Quiet day recap sent", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error in test daily recap: {e}")
-                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+        
         
         @self.tree.command(name="testllm", description="Test LLM connection and functionality")
         async def test_llm_slash(interaction: discord.Interaction):
