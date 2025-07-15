@@ -10853,34 +10853,37 @@ class BBDiscordBot(commands.Bot):
             new_updates = await self.content_monitor.check_all_sources()
             logger.info(f"📊 Content monitor found {len(new_updates)} new updates")
             
+            # CORRECT VERSION - Fix the indentation on line 10858:
+
             # Process each new update
             for i, update in enumerate(new_updates, 1):
-        try:
-            logger.info(f"⚙️ Processing update {i}/{len(new_updates)}: {update.title[:80]}...")
-            
-            # Check if it's truly new BEFORE doing anything
-            if self.db.is_duplicate(update.content_hash):
-                logger.info(f"   ⏭️ Skipping - already in database")
-                continue
-            
-            categories = self.analyzer.categorize_update(update)
-            importance = self.analyzer.analyze_strategic_importance(update)
-            
-            # Store in database
-            self.db.store_update(update, importance, categories)
-            logger.debug(f"   ✅ Stored in database")
-            
-            # Add to batcher queues (should work now!)
-            logger.info(f"   📝 Adding to batcher queues...")
-            await self.update_batcher.add_update(update)
-            logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
+                try:  # ← This needs to be indented 4 spaces from the 'for' line
+                    logger.info(f"⚙️ Processing update {i}/{len(new_updates)}: {update.title[:80]}...")
+                    
+                    # Check if it's truly new BEFORE doing anything
+                    if self.db.is_duplicate(update.content_hash):
+                        logger.info(f"   ⏭️ Skipping - already in database")
+                        continue
+                    
+                    categories = self.analyzer.categorize_update(update)
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    
+                    # Store in database
+                    self.db.store_update(update, importance, categories)
+                    logger.debug(f"   ✅ Stored in database")
+                    
+                    # Add to batcher queues (should work now!)
+                    logger.info(f"   📝 Adding to batcher queues...")
+                    await self.update_batcher.add_update(update)
+                    logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
+                    
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
                         try:
                             await self.update_batcher.process_update_for_context(update)
                         except Exception as e:
                             logger.debug(f"Context processing failed: {e}")
-                
+                    
                     # Process for alliance tracking
                     alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
                     for event in alliance_events:
