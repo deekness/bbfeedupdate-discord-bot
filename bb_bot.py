@@ -1650,14 +1650,7 @@ class HistoricalContextTracker:
 class AllianceTracker:
     """Tracks and analyzes Big Brother alliances"""
     
-    # Add this at the top of your AllianceTracker class
-    VALID_HOUSEGUESTS = {
-        'Adrian', 'Amy', 'Ashley', 'Ava', 'Jimmy', 'Katherine', 
-        'Keanu', 'Kelley', 'Lauren', 'Mickey', 'Morgan', 'Rachel', 
-        'Rylie', 'Vince', 'Will', 'Zach', 'Zae'
-    }
-    
-    # Alliance detection patterns (updated with better filtering)
+    # Alliance detection patterns
     ALLIANCE_FORMATION_PATTERNS = [
         (r"([\w\s]+) and ([\w\s]+) make a final (\d+)", "final_deal"),
         (r"([\w\s]+) forms? an? alliance with ([\w\s]+)", "alliance"),
@@ -1800,7 +1793,7 @@ class AllianceTracker:
         logger.info("Alliance tracking tables initialized")
     
     def analyze_update_for_alliances(self, update: BBUpdate) -> List[Dict]:
-        """Analyze an update for alliance information with better filtering"""
+        """Analyze an update for alliance information"""
         content = f"{update.title} {update.description}".strip()
         detected_events = []
         
@@ -1811,8 +1804,7 @@ class AllianceTracker:
             'wins the power', 'eviction vote', 'evicted', 'julie pulls the keys',
             'america\'s favorite', 'afp', 'finale', 'final vote', 'cast their vote',
             'announces the winner', 'wins big brother', 'jury votes', 'key to vote',
-            'official with a vote', 'makes it official', 'competition', 'challenge',
-            'ceremony', 'nomination', 'veto meeting'
+            'official with a vote', 'makes it official'
         ]
         
         content_lower = content.lower()
@@ -1832,133 +1824,62 @@ class AllianceTracker:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 groups = match.groups()
-                potential_houseguests = [g.strip() for g in groups if g and not g.isdigit()]
+                houseguests = [g.strip() for g in groups if g and not g.isdigit()]
                 
-                # ENHANCED FILTERING: Only keep valid houseguests
-                valid_houseguests = []
-                for hg in potential_houseguests:
-                    cleaned_hg = self._clean_houseguest_name(hg)
-                    if self._is_valid_houseguest(cleaned_hg):
-                        valid_houseguests.append(cleaned_hg)
+                # Filter out common words that aren't houseguests
+                houseguests = [hg for hg in houseguests if hg not in EXCLUDE_WORDS]
                 
-                # Only proceed if we have at least 2 valid houseguests
-                if len(valid_houseguests) >= 2:
+                # Additional filtering for common false positives
+                houseguests = [hg for hg in houseguests if len(hg) > 2 and not hg.lower() in ['big', 'brother', 'julie', 'host', 'america']]
+                
+                if len(houseguests) >= 2:
                     detected_events.append({
                         'type': AllianceEventType.FORMED,
-                        'houseguests': valid_houseguests,
+                        'houseguests': houseguests,
                         'pattern_type': pattern_type,
                         'confidence': self._calculate_confidence(pattern_type),
                         'update': update
                     })
         
-        # Check for betrayals with better filtering
+        # Check for betrayals
         for pattern, pattern_type in self.BETRAYAL_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 groups = match.groups()
                 if len(groups) >= 2:
-                    betrayer = self._clean_houseguest_name(groups[0].strip())
-                    betrayed = self._clean_houseguest_name(groups[1].strip())
+                    betrayer = groups[0].strip()
+                    betrayed = groups[1].strip()
                     
-                    # Only proceed if both are valid houseguests
-                    if self._is_valid_houseguest(betrayer) and self._is_valid_houseguest(betrayed):
-                        detected_events.append({
-                            'type': AllianceEventType.BETRAYAL,
-                            'betrayer': betrayer,
-                            'betrayed': betrayed,
-                            'pattern_type': pattern_type,
-                            'update': update
-                        })
+                    if betrayer not in EXCLUDE_WORDS and betrayed not in EXCLUDE_WORDS:
+                        if len(betrayer) > 2 and len(betrayed) > 2:  # Additional length check
+                            detected_events.append({
+                                'type': AllianceEventType.BETRAYAL,
+                                'betrayer': betrayer,
+                                'betrayed': betrayed,
+                                'pattern_type': pattern_type,
+                                'update': update
+                            })
         
-        # Check for named alliances with better filtering
+        # Check for named alliances
         for pattern in self.ALLIANCE_NAME_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 alliance_name = match.group(1).strip()
-                # Skip if alliance name contains finale/winner phrases or is too generic
+                # Skip if alliance name contains finale/winner phrases
                 if alliance_name and len(alliance_name) > 2:
-                    if not any(skip in alliance_name.lower() for skip in ['winner', 'big brother', 'finale', 'the', 'and', 'to', 'of']):
+                    if not any(skip in alliance_name.lower() for skip in ['winner', 'big brother', 'finale']):
                         # Try to extract members mentioned nearby
-                        members = self._extract_nearby_valid_houseguests(content, match.start(), match.end())
-                        if len(members) >= 2:  # Only create alliance if we have valid members
-                            detected_events.append({
-                                'type': AllianceEventType.FORMED,
-                                'alliance_name': alliance_name,
-                                'houseguests': members,
-                                'pattern_type': 'named_alliance',
-                                'confidence': 80,
-                                'update': update
-                            })
+                        members = self._extract_nearby_houseguests(content, match.start(), match.end())
+                        detected_events.append({
+                            'type': AllianceEventType.FORMED,
+                            'alliance_name': alliance_name,
+                            'houseguests': members,
+                            'pattern_type': 'named_alliance',
+                            'confidence': 80,  # Named alliances have higher confidence
+                            'update': update
+                        })
         
         return detected_events
-    
-    def _clean_houseguest_name(self, name: str) -> str:
-        """Clean and normalize houseguest name"""
-        if not name:
-            return ""
-        
-        # Remove common prefixes/suffixes
-        name = re.sub(r'\b(the|a|an)\s+', '', name, flags=re.IGNORECASE)
-        name = re.sub(r'\s+(is|are|was|were|will|would|should|could)\b', '', name, flags=re.IGNORECASE)
-        
-        # Take only the first word (most names are single words)
-        name = name.split()[0] if name.split() else name
-        
-        # Capitalize properly
-        name = name.strip().title()
-        
-        return name
-    
-    def _is_valid_houseguest(self, name: str) -> bool:
-        """Check if name is a valid houseguest"""
-        if not name or len(name) < 2:
-            return False
-        
-        # Check against known houseguests
-        if name in self.VALID_HOUSEGUESTS:
-            return True
-        
-        # Check for common variations (like nicknames)
-        name_lower = name.lower()
-        for valid_hg in self.VALID_HOUSEGUESTS:
-            if name_lower == valid_hg.lower():
-                return True
-            # Check if it's a reasonable nickname (first 3+ chars match)
-            if len(name) >= 3 and valid_hg.lower().startswith(name_lower[:3]):
-                return True
-        
-        # Block common false positives
-        false_positives = {
-            'Things', 'To', 'Know', 'You', 'Need', 'Day', 'Time', 'House', 'Game',
-            'Show', 'Tonight', 'Week', 'People', 'Someone', 'Everyone', 'Anyone',
-            'America', 'Julie', 'Host', 'Production', 'Feeds', 'Live', 'Update',
-            'Big', 'Brother', 'Season', 'Episode', 'Diary', 'Room', 'Kitchen',
-            'Bedroom', 'Backyard', 'Head', 'Household', 'Power', 'Veto', 'Nomination',
-            'Eviction', 'Competition', 'Challenge', 'Ceremony', 'Winner', 'Finale'
-        }
-        
-        if name in false_positives:
-            return False
-        
-        return False  # If not in valid list and not a variation, reject
-    
-    def _extract_nearby_valid_houseguests(self, content: str, start: int, end: int, window: int = 100) -> List[str]:
-        """Extract valid houseguest names near an alliance mention"""
-        # Look in a window around the alliance name
-        search_start = max(0, start - window)
-        search_end = min(len(content), end + window)
-        search_text = content[search_start:search_end]
-        
-        # Find capitalized words that could be names
-        potential_names = re.findall(r'\b[A-Z][a-z]+\b', search_text)
-        
-        # Filter to only valid houseguests
-        valid_houseguests = []
-        for name in potential_names:
-            if self._is_valid_houseguest(name):
-                valid_houseguests.append(name)
-        
-        return list(set(valid_houseguests))  # Remove duplicates
     
     def _calculate_confidence(self, pattern_type: str) -> int:
         """Calculate confidence level based on pattern type"""
@@ -3616,38 +3537,26 @@ class UpdateBatcher:
         content = f"{update.title} {update.description}".lower()
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
-
     async def add_update(self, update: BBUpdate):
-        """Add update to queues with better error handling"""
-        
-        # Check duplicates - use cache first, then database if available
-        if await self.processed_hashes_cache.contains(update.content_hash):
-            logger.debug(f"Skipped duplicate (cache): {update.title[:50]}...")
-            return
-        
-        # Check database if available
-        if hasattr(self, 'db') and self.db:
-            if self.db.is_duplicate(update.content_hash):
-                logger.debug(f"Skipped duplicate (database): {update.title[:50]}...")
-                await self.processed_hashes_cache.add(update.content_hash)  # Add to cache for next time
-                return
+        # Check both cache AND database for duplicates
+        if not await self.processed_hashes_cache.contains(update.content_hash) and not self.db.is_duplicate(update.content_hash):
+            # Add to highlights queue (for 25-update batches)
+            self.highlights_queue.append(update)
+            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")  # ADD THIS LINE
+            # Add to hourly queue (for hourly summaries)
+            self.hourly_queue.append(update)
+            
+            # Mark as processed
+            await self.processed_hashes_cache.add(update.content_hash)
+            
+            logger.debug(f"Added new update: {update.title[:50]}...")
         else:
-            logger.warning("Database not available in batcher - using cache only for duplicate checking")
-        
-        # Add to both queues
-        self.highlights_queue.append(update)
-        self.hourly_queue.append(update)
-        
-        # Mark as processed in cache
-        await self.processed_hashes_cache.add(update.content_hash)
-        
-        logger.info(f"✅ Added update to queues: {update.title[:60]}...")
-        logger.info(f"Queue sizes now - Highlights: {len(self.highlights_queue)}, Hourly: {len(self.hourly_queue)}")
-        
-        # Log cache stats occasionally
-        cache_stats = self.processed_hashes_cache.get_stats()
-        if cache_stats['size'] % 100 == 0:
-            logger.info(f"Hash cache stats: {cache_stats}")
+            logger.debug(f"Skipped duplicate: {update.title[:50]}...")
+            
+            # Log cache stats periodically
+            cache_stats = self.processed_hashes_cache.get_stats()
+            if cache_stats['size'] % 1000 == 0:
+                logger.info(f"Hash cache stats: {cache_stats}")
     
     async def _can_make_llm_request(self) -> bool:
         """Check if we can make an LLM request without hitting rate limits"""
@@ -3966,43 +3875,32 @@ CRITICAL INSTRUCTIONS:
             return [self._create_pattern_highlights_embed()]
         
     async def save_queue_state(self):
-        """Save current queue state to database with better datetime handling"""
+        """Save current queue state to database"""
         try:
-            # Use the same database connection as prediction manager
-            conn = None
-            if hasattr(self, 'db') and hasattr(self.db, 'get_connection'):
-                conn = self.db.get_connection()
-            else:
-                # If not available, use config to get connection
-                database_url = os.getenv('DATABASE_URL')
-                if database_url:
-                    import psycopg2
-                    import psycopg2.extras
-                    conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
-            
-            if not conn:
-                logger.warning("No database connection available for queue persistence")
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                logger.debug("No database URL for queue persistence")
                 return
                 
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
             cursor = conn.cursor()
             
-            # Save highlights queue with proper datetime serialization
+            # Save highlights queue
             highlights_data = {
                 'updates': [
                     {
                         'title': update.title,
                         'description': update.description,
                         'link': update.link,
-                        'pub_date': update.pub_date.isoformat() if isinstance(update.pub_date, datetime) else str(update.pub_date),
+                        'pub_date': update.pub_date.isoformat(),
                         'content_hash': update.content_hash,
                         'author': update.author
                     }
                     for update in self.highlights_queue
                 ]
             }
-            
-            # Convert last_batch_time to string for JSON serialization
-            last_batch_time = self.last_batch_time.isoformat() if isinstance(self.last_batch_time, datetime) else str(self.last_batch_time)
             
             cursor.execute("""
                 INSERT INTO summary_checkpoints 
@@ -4018,26 +3916,23 @@ CRITICAL INSTRUCTIONS:
                 'highlights',
                 json.dumps(highlights_data),
                 len(self.highlights_queue),
-                last_batch_time
+                self.last_batch_time.isoformat()
             ))
             
-            # Save hourly queue with proper datetime serialization
+            # Save hourly queue
             hourly_data = {
                 'updates': [
                     {
                         'title': update.title,
                         'description': update.description,
                         'link': update.link,
-                        'pub_date': update.pub_date.isoformat() if isinstance(update.pub_date, datetime) else str(update.pub_date),
+                        'pub_date': update.pub_date.isoformat(),
                         'content_hash': update.content_hash,
                         'author': update.author
                     }
                     for update in self.hourly_queue
                 ]
             }
-            
-            # Convert last_hourly_summary to string for JSON serialization
-            last_hourly_time = self.last_hourly_summary.isoformat() if isinstance(self.last_hourly_summary, datetime) else str(self.last_hourly_summary)
             
             cursor.execute("""
                 INSERT INTO summary_checkpoints 
@@ -4053,13 +3948,13 @@ CRITICAL INSTRUCTIONS:
                 'hourly',
                 json.dumps(hourly_data),
                 len(self.hourly_queue),
-                last_hourly_time
+                self.last_hourly_summary.isoformat()
             ))
             
             conn.commit()
             conn.close()
             
-            logger.info(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
+            logger.debug(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
             
         except Exception as e:
             logger.error(f"Error saving queue state: {e}")
@@ -8745,15 +8640,14 @@ class BBDiscordBot(commands.Bot):
         self.analyzer = BBAnalyzer()
         self.update_batcher = UpdateBatcher(self.analyzer, self.config)
         self.content_monitor = UnifiedContentMonitor(self)
-        self.update_batcher.db = self.db
         
+        # ADD THIS LINE: Set the database reference for the batcher
+        self.update_batcher.db = self.db
         
         if self.context_tracker:
             self.update_batcher.context_tracker = self.context_tracker
         else:
             logger.warning("Context tracker not available - summaries will not include historical context")
-        
-        self.content_monitor = UnifiedContentMonitor(self)
         
 
         
@@ -8797,7 +8691,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in setup hook: {e}")
     
     async def restore_queues_inline(self):
-        """Restore queue state inline with better error handling"""
+        """Restore queue state inline"""
         try:
             database_url = os.getenv('DATABASE_URL')
             if not database_url:
@@ -8826,44 +8720,24 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore highlights queue
                     self.update_batcher.highlights_queue.clear()
                     for update_data in highlights_data.get('updates', []):
-                        try:
-                            # Better datetime parsing
-                            pub_date = update_data['pub_date']
-                            if isinstance(pub_date, str):
-                                pub_date = datetime.fromisoformat(pub_date)
-                            elif not isinstance(pub_date, datetime):
-                                pub_date = datetime.now()  # Fallback
-                            
-                            update = BBUpdate(
-                                title=update_data['title'],
-                                description=update_data['description'],
-                                link=update_data['link'],
-                                pub_date=pub_date,
-                                content_hash=update_data['content_hash'],
-                                author=update_data['author']
-                            )
-                            self.update_batcher.highlights_queue.append(update)
-                        except Exception as e:
-                            logger.warning(f"Skipping invalid update in highlights queue: {e}")
-                            continue
+                        update = BBUpdate(
+                            title=update_data['title'],
+                            description=update_data['description'],
+                            link=update_data['link'],
+                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
+                            content_hash=update_data['content_hash'],
+                            author=update_data['author']
+                        )
+                        self.update_batcher.highlights_queue.append(update)
                     
                     # Restore last batch time
                     if result['last_summary_time']:
-                        try:
-                            if isinstance(result['last_summary_time'], str):
-                                self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
-                            elif isinstance(result['last_summary_time'], datetime):
-                                self.update_batcher.last_batch_time = result['last_summary_time']
-                        except Exception as e:
-                            logger.warning(f"Error parsing last_summary_time: {e}")
-                            self.update_batcher.last_batch_time = datetime.now()
+                        self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
                     
                     logger.info(f"Restored {len(self.update_batcher.highlights_queue)} highlights from database")
                     
                 except Exception as e:
                     logger.error(f"Error parsing highlights queue data: {e}")
-                    # Clear queue on error to prevent issues
-                    self.update_batcher.highlights_queue.clear()
             else:
                 logger.info("No highlights queue state to restore")
             
@@ -8884,44 +8758,24 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore hourly queue
                     self.update_batcher.hourly_queue.clear()
                     for update_data in hourly_data.get('updates', []):
-                        try:
-                            # Better datetime parsing
-                            pub_date = update_data['pub_date']
-                            if isinstance(pub_date, str):
-                                pub_date = datetime.fromisoformat(pub_date)
-                            elif not isinstance(pub_date, datetime):
-                                pub_date = datetime.now()  # Fallback
-                            
-                            update = BBUpdate(
-                                title=update_data['title'],
-                                description=update_data['description'],
-                                link=update_data['link'],
-                                pub_date=pub_date,
-                                content_hash=update_data['content_hash'],
-                                author=update_data['author']
-                            )
-                            self.update_batcher.hourly_queue.append(update)
-                        except Exception as e:
-                            logger.warning(f"Skipping invalid update in hourly queue: {e}")
-                            continue
+                        update = BBUpdate(
+                            title=update_data['title'],
+                            description=update_data['description'],
+                            link=update_data['link'],
+                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            content_hash=update_data['content_hash'],
+                            author=update_data['author']
+                        )
+                        self.update_batcher.hourly_queue.append(update)
                     
                     # Restore last hourly summary time
                     if result['last_summary_time']:
-                        try:
-                            if isinstance(result['last_summary_time'], str):
-                                self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
-                            elif isinstance(result['last_summary_time'], datetime):
-                                self.update_batcher.last_hourly_summary = result['last_summary_time']
-                        except Exception as e:
-                            logger.warning(f"Error parsing hourly last_summary_time: {e}")
-                            self.update_batcher.last_hourly_summary = datetime.now()
+                        self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
                     
                     logger.info(f"Restored {len(self.update_batcher.hourly_queue)} hourly updates from database")
                     
                 except Exception as e:
                     logger.error(f"Error parsing hourly queue data: {e}")
-                    # Clear queue on error to prevent issues
-                    self.update_batcher.hourly_queue.clear()
             else:
                 logger.info("No hourly queue state to restore")
             
@@ -8929,9 +8783,6 @@ class BBDiscordBot(commands.Bot):
             
         except Exception as e:
             logger.error(f"Error restoring queue state: {e}")
-            # Initialize empty queues on error
-            self.update_batcher.highlights_queue.clear()
-            self.update_batcher.hourly_queue.clear()
     
     def is_owner_or_admin(self, user: discord.User, interaction: discord.Interaction = None) -> bool:
         """Check if user is bot owner or has admin permissions"""
@@ -9271,32 +9122,6 @@ class BBDiscordBot(commands.Bot):
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
-        @self.tree.command(name="forcedailyrecap", description="Force send daily recap now (Owner only)")
-        async def force_daily_recap(interaction: discord.Interaction):
-            """Force send daily recap for testing"""
-            try:
-                owner_id = self.config.get('owner_id')
-                if not owner_id or interaction.user.id != owner_id:
-                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                pacific_tz = pytz.timezone('US/Pacific')
-                now_pacific = datetime.now(pacific_tz)
-                
-                await interaction.followup.send(
-                    f"🚀 Forcing daily recap at {now_pacific.strftime('%I:%M %p Pacific')}...", 
-                    ephemeral=True
-                )
-                
-                await self.run_daily_recap_now()
-                await interaction.followup.send("✅ Daily recap completed!", ephemeral=True)
-                
-            except Exception as e:
-                logger.error(f"Error in force daily recap: {e}")
-                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
-        
         @self.tree.command(name="forcebatch", description="Force send any queued updates")
         async def forcebatch_slash(interaction: discord.Interaction):
             try:
@@ -10451,6 +10276,59 @@ class BBDiscordBot(commands.Bot):
         return new_updates
     
 
+    @tasks.loop(hours=24)
+    async def daily_recap_task(self):
+        """Daily recap task that runs at 8:00 AM Pacific Time"""
+        if self.is_shutting_down:
+            return
+    
+        try:
+            # Get current Pacific time
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Log the current time for debugging
+            logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
+            
+            # Only proceed if we have an update channel configured
+            if not self.config.get('update_channel_id'):
+                logger.warning("No update channel configured for daily recap")
+                return
+            
+            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
+            # Remove timezone info for database queries
+            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
+            start_time = end_time - timedelta(hours=24)  # 24 hours ago
+            
+            logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
+            
+            # Get all updates from the day
+            daily_updates = self.db.get_daily_updates(start_time, end_time)
+            
+            # Calculate day number (days since season start)
+            season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
+            recap_date = start_time.date()
+            day_number = (recap_date - season_start.date()).days + 1
+            
+            logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
+            
+            if not daily_updates:
+                logger.info("No updates found for daily recap - sending quiet day message")
+                await self.send_quiet_day_recap(day_number)
+                return
+            
+            # Create daily recap
+            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+            
+            # Send daily recap
+            await self.send_daily_recap(recap_embeds)
+            
+            logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
+            
+        except Exception as e:
+            logger.error(f"❌ Error in daily recap task: {e}")
+            logger.error(traceback.format_exc())
+
     async def send_quiet_day_recap(self, day_number: int = None):
         """Send a recap for days with no updates"""
         channel_id = self.config.get('update_channel_id')
@@ -10506,95 +10384,37 @@ class BBDiscordBot(commands.Bot):
             
         except Exception as e:
             logger.error(f"❌ Error sending quiet day recap: {e}")
-    # STEP 4A: Replace your daily_recap_task with this scheduler
-    @tasks.loop(minutes=5)  # Check every 5 minutes
-    async def daily_recap_scheduler(self):
-        """Check every 5 minutes if it's time for daily recap at 8 AM Pacific"""
-        if self.is_shutting_down:
-            return
-        
-        try:
-            pacific_tz = pytz.timezone('US/Pacific')
-            now_pacific = datetime.now(pacific_tz)
-            
-            # Only trigger between 8:00-8:05 AM Pacific
-            if now_pacific.hour == 8 and 0 <= now_pacific.minute <= 5:
-                # Check if we already sent today's recap
-                today_key = f"recap_{now_pacific.date()}"
-                
-                # Initialize the tracking set if it doesn't exist
-                if not hasattr(self, '_recaps_sent'):
-                    self._recaps_sent = set()
-                
-                # Only send if we haven't sent today's recap yet
-                if today_key not in self._recaps_sent:
-                    logger.info(f"🕰️ Triggering daily recap at {now_pacific.strftime('%I:%M %p Pacific')}")
-                    await self.run_daily_recap_now()
-                    self._recaps_sent.add(today_key)
-                    
-                    # Clean up old entries (keep only last 3 days)
-                    if len(self._recaps_sent) > 3:
-                        oldest = min(self._recaps_sent)
-                        self._recaps_sent.remove(oldest)
-                        logger.debug(f"Cleaned up old recap entry: {oldest}")
-        
-        except Exception as e:
-            logger.error(f"❌ Error in daily recap scheduler: {e}")
-    
-    # STEP 4B: Add this method to actually run the recap
-    async def run_daily_recap_now(self):
-        """Run the daily recap right now - extracted from your original task"""
-        try:
-            pacific_tz = pytz.timezone('US/Pacific')
-            now_pacific = datetime.now(pacific_tz)
-            
-            logger.info(f"📅 Starting daily recap at {now_pacific.strftime('%I:%M %p Pacific')}")
-            
-            # Check if we have an update channel configured
-            if not self.config.get('update_channel_id'):
-                logger.warning("⚠️ No update channel configured for daily recap")
-                return
-            
-            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
-            # Remove timezone info for database queries
-            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
-            start_time = end_time - timedelta(hours=24)  # 24 hours ago
-            
-            logger.info(f"🔍 Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
-            
-            # Get all updates from the day
-            daily_updates = self.db.get_daily_updates(start_time, end_time)
-            
-            # Calculate day number (days since season start)
-            season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
-            recap_date = start_time.date()
-            day_number = (recap_date - season_start.date()).days + 1
-            
-            logger.info(f"📊 Daily recap for Day {day_number}: found {len(daily_updates)} updates")
-            
-            if not daily_updates:
-                logger.info("😴 No updates found for daily recap - sending quiet day message")
-                await self.send_quiet_day_recap(day_number)
-            else:
-                # Create daily recap
-                recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
-                
-                # Send daily recap
-                await self.send_daily_recap(recap_embeds)
-                logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
-            
-        except Exception as e:
-            logger.error(f"❌ Error running daily recap: {e}")
-            logger.error(traceback.format_exc())
-    
-    # STEP 4C: Add before_loop for the scheduler (simple)
-    @daily_recap_scheduler.before_loop
-    async def before_daily_recap_scheduler(self):
-        """Wait for bot to be ready before starting scheduler"""
-        await self.wait_until_ready()
-        logger.info("📅 Daily recap scheduler ready - will check every 5 minutes for 8 AM Pacific")
-    
 
+    
+    
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready and sync to 8:00 AM Pacific"""
+        await self.wait_until_ready()
+        
+        try:
+            # Calculate wait time until next 8:00 AM Pacific
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # Get next 8:00 AM Pacific
+            next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
+            
+            # If it's already past 8:00 AM today, schedule for tomorrow
+            if now_pacific.hour >= 8:
+                next_recap += timedelta(days=1)
+            
+            wait_seconds = (next_recap - now_pacific).total_seconds()
+            
+            logger.info(f"Daily recap task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
+            
+            # Wait until the scheduled time
+            await asyncio.sleep(wait_seconds)
+            
+        except Exception as e:
+            logger.error(f"Error in daily recap before_loop: {e}")
+            # If there's an error, wait 1 hour and try again
+            await asyncio.sleep(3600)
     
     @tasks.loop(minutes=60)  # Run every 60 minutes
     async def hourly_summary_task(self):
@@ -10628,6 +10448,10 @@ class BBDiscordBot(commands.Bot):
         logger.info(f"Hourly summary task will start in {wait_seconds:.0f} seconds (at {next_hour.strftime('%I:%M %p')})")
         await asyncio.sleep(wait_seconds)
     
+    @daily_recap_task.before_loop
+    async def before_daily_recap_task(self):
+        """Wait for bot to be ready before starting daily recap task"""
+        await self.wait_until_ready()
     
     @tasks.loop(minutes=30)
     async def auto_close_predictions_task(self):
@@ -10839,52 +10663,33 @@ class BBDiscordBot(commands.Bot):
         except Exception as e:
             logger.error(f"❌ Error sending quiet day recap: {e}")
     
-    # REPLACE your check_all_content_sources method with this:
     @tasks.loop(minutes=2)
     async def check_all_content_sources(self):
         """Unified content checking from RSS and Bluesky"""
         if self.is_shutting_down:
             return
-    
+
         try:
-            logger.info("🔍 Starting unified content check...")
-            
             # Get updates from ALL sources
             new_updates = await self.content_monitor.check_all_sources()
-            logger.info(f"📊 Content monitor found {len(new_updates)} new updates")
             
-            # CORRECT VERSION - Fix the indentation on line 10858:
-
-            # Process each new update
-            for i, update in enumerate(new_updates, 1):
-                try:  # ← This needs to be indented 4 spaces from the 'for' line
-                    logger.info(f"⚙️ Processing update {i}/{len(new_updates)}: {update.title[:80]}...")
-                    
-                    # Check if it's truly new BEFORE doing anything
-                    if self.db.is_duplicate(update.content_hash):
-                        logger.info(f"   ⏭️ Skipping - already in database")
-                        continue
-                    
+            # Process each new update (same as before)
+            for update in new_updates:
+                try:
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
-                    
-                    await self.update_batcher.add_update(update)
+                
                     # Store in database
                     self.db.store_update(update, importance, categories)
-                    logger.debug(f"   ✅ Stored in database")
                     
-                    # Add to batcher queues (should work now!)
-                    logger.info(f"   📝 Adding to batcher queues...")
-                    
-                    logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
-                    
+                    # Add to batching system (both highlights and hourly queues)
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
                         try:
-                            await self.update_batcher.process_update_for_context(update)
+                            await self.context_tracker.analyze_update_for_events(update)
                         except Exception as e:
                             logger.debug(f"Context processing failed: {e}")
-                    
+                
                     # Process for alliance tracking
                     alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
                     for event in alliance_events:
@@ -10892,19 +10697,18 @@ class BBDiscordBot(commands.Bot):
                         if alliance_id:
                             logger.info(f"Alliance event processed: {event['type'].value}")
                     
+                    # Process for historical context if available
+                    if hasattr(self, 'context_tracker') and self.context_tracker:
+                        pass
+                    
                     self.total_updates_processed += 1
                     
                 except Exception as e:
-                    logger.error(f"❌ Error processing update {i}: {e}")
-                    logger.error(traceback.format_exc())
+                    logger.error(f"Error processing update: {e}")
                     self.consecutive_errors += 1
         
             # Check for highlights batch (25 updates or urgent conditions)
-            should_send = self.update_batcher.should_send_highlights()
-            logger.info(f"🤔 Should send highlights batch? {should_send} (queue size: {len(self.update_batcher.highlights_queue)})")
-            
-            if should_send:
-                logger.info("🚀 Sending highlights batch...")
+            if self.update_batcher.should_send_highlights():
                 await self.send_highlights_batch()
         
             # Update success tracking
@@ -10918,16 +10722,13 @@ class BBDiscordBot(commands.Bot):
                     sources_breakdown[source] = sources_breakdown.get(source, 0) + 1
                 
                 breakdown_str = ", ".join([f"{count} {source}" for source, count in sources_breakdown.items()])
-                logger.info(f"📈 FINAL: Added {len(new_updates)} updates ({breakdown_str})")
-                logger.info(f"📊 FINAL Queue Status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
-            else:
-                logger.info("📭 No new updates found this check")
+                logger.info(f"Added {len(new_updates)} updates to queues ({breakdown_str})")
+                logger.info(f"Queue status - Highlights: {len(self.update_batcher.highlights_queue)}, Hourly: {len(self.update_batcher.hourly_queue)}")
             
         except Exception as e:
-            logger.error(f"❌ Error in unified content check: {e}")
-            logger.error(traceback.format_exc())
+            logger.error(f"Error in unified content check: {e}")
             self.consecutive_errors += 1
-            
+
     # Update your on_ready method to start the new task:
     async def on_ready(self):
         """Bot startup event"""
@@ -10943,7 +10744,7 @@ class BBDiscordBot(commands.Bot):
         try:
             # Start the unified content monitoring task
             self.check_all_content_sources.start()
-            self.daily_recap_scheduler.start()
+            self.daily_recap_task.start()
             self.auto_close_predictions_task.start()
             self.hourly_summary_task.start()
             logger.info("All monitoring tasks started (RSS + Bluesky unified)")
