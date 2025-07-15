@@ -10615,10 +10615,6 @@ class BBDiscordBot(commands.Bot):
         logger.info(f"Hourly summary task will start in {wait_seconds:.0f} seconds (at {next_hour.strftime('%I:%M %p')})")
         await asyncio.sleep(wait_seconds)
     
-    @daily_recap_task.before_loop
-    async def before_daily_recap_task(self):
-        """Wait for bot to be ready before starting daily recap task"""
-        await self.wait_until_ready()
     
     @tasks.loop(minutes=30)
     async def auto_close_predictions_task(self):
