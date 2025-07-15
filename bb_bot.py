@@ -10855,22 +10855,25 @@ class BBDiscordBot(commands.Bot):
             
             # Process each new update
             for i, update in enumerate(new_updates, 1):
-                try:
-                    logger.info(f"⚙️ Processing update {i}/{len(new_updates)}: {update.title[:80]}...")
-                    
-                    categories = self.analyzer.categorize_update(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    logger.debug(f"   Categories: {categories}, Importance: {importance}")
-                
-                    # Store in database
-                    self.db.store_update(update, importance, categories)
-                    logger.debug(f"   ✅ Stored in database")
-                    
-                    # Add to batcher queues
-                    logger.info(f"   📝 Adding to batcher queues...")
-                    await self.update_batcher.add_update(update)
-                    logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
-                    
+    try:
+        logger.info(f"⚙️ Processing update {i}/{len(new_updates)}: {update.title[:80]}...")
+        
+        # Check if it's truly new BEFORE doing anything
+        if self.db.is_duplicate(update.content_hash):
+            logger.info(f"   ⏭️ Skipping - already in database")
+            continue
+        
+        categories = self.analyzer.categorize_update(update)
+        importance = self.analyzer.analyze_strategic_importance(update)
+        
+        # Store in database
+        self.db.store_update(update, importance, categories)
+        logger.debug(f"   ✅ Stored in database")
+        
+        # Add to batcher queues (should work now!)
+        logger.info(f"   📝 Adding to batcher queues...")
+        await self.update_batcher.add_update(update)
+        logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
                         try:
