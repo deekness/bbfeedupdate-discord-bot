@@ -10695,6 +10695,8 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error sending highlights batch: {e}")
             logger.error(f"Queue preserved with {len(self.update_batcher.highlights_queue)} updates")
 
+    # FIND this method in your code and REPLACE it:
+
     async def send_hourly_summary(self):
         """Send hourly comprehensive summary - FIXED QUEUE CLEARING"""
         channel_id = self.config.get('update_channel_id')
@@ -10708,6 +10710,10 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
+            # IMPORTANT: Check queue size BEFORE creating summary
+            queue_size_before = len(self.update_batcher.hourly_queue)
+            logger.info(f"Creating hourly summary with {queue_size_before} updates")
+            
             # Create hourly summary (this gets updates from database by timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
@@ -10717,20 +10723,25 @@ class BBDiscordBot(commands.Bot):
                     await channel.send(embed=embed)
                 logger.info(f"Sent hourly summary with {len(embeds)} embeds")
                 
-                # CLEAR THE HOURLY QUEUE AFTER SENDING SUMMARY
-                processed_count = len(self.update_batcher.hourly_queue)
-                self.update_batcher.hourly_queue.clear()
-                self.update_batcher.last_hourly_summary = datetime.now()
-                logger.info(f"Cleared hourly queue of {processed_count} updates after summary")
-                
             else:
                 # CREATE AND SEND A "QUIET HOUR" EMBED
                 quiet_embed = self._create_quiet_hour_embed()
                 await channel.send(embed=quiet_embed)
                 logger.info("Sent quiet hour summary (no updates)")
             
+            # ALWAYS CLEAR THE HOURLY QUEUE AFTER SENDING (whether embeds or quiet hour)
+            processed_count = len(self.update_batcher.hourly_queue)
+            self.update_batcher.hourly_queue.clear()
+            self.update_batcher.last_hourly_summary = datetime.now()
+            
+            # Save the cleared state to database
+            await self.update_batcher.save_queue_state()
+            
+            logger.info(f"✅ Cleared hourly queue of {processed_count} updates after summary")
+            
         except Exception as e:
             logger.error(f"Error sending hourly summary: {e}")
+            # DON'T clear queue if there was an error sending
 
     def _create_quiet_hour_embed(self):
         """Create embed for quiet hours with no updates"""
