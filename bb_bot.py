@@ -10868,13 +10868,14 @@ class BBDiscordBot(commands.Bot):
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
                     
+                    await self.update_batcher.add_update(update)
                     # Store in database
                     self.db.store_update(update, importance, categories)
                     logger.debug(f"   ✅ Stored in database")
                     
                     # Add to batcher queues (should work now!)
                     logger.info(f"   📝 Adding to batcher queues...")
-                    await self.update_batcher.add_update(update)
+                    
                     logger.info(f"   ✅ Added to batcher. Queue sizes: H={len(self.update_batcher.highlights_queue)}, Hr={len(self.update_batcher.hourly_queue)}")
                     
                     # Process for historical context if available
