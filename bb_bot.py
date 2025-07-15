@@ -9258,6 +9258,32 @@ class BBDiscordBot(commands.Bot):
             
             await interaction.response.send_message(embed=embed, ephemeral=True)
 
+        @self.tree.command(name="forcedailyrecap", description="Force send daily recap now (Owner only)")
+        async def force_daily_recap(interaction: discord.Interaction):
+            """Force send daily recap for testing"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                pacific_tz = pytz.timezone('US/Pacific')
+                now_pacific = datetime.now(pacific_tz)
+                
+                await interaction.followup.send(
+                    f"🚀 Forcing daily recap at {now_pacific.strftime('%I:%M %p Pacific')}...", 
+                    ephemeral=True
+                )
+                
+                await self.run_daily_recap_now()
+                await interaction.followup.send("✅ Daily recap completed!", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in force daily recap: {e}")
+                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+        
         @self.tree.command(name="forcebatch", description="Force send any queued updates")
         async def forcebatch_slash(interaction: discord.Interaction):
             try:
@@ -10412,59 +10438,6 @@ class BBDiscordBot(commands.Bot):
         return new_updates
     
 
-    @tasks.loop(hours=24)
-    async def daily_recap_task(self):
-        """Daily recap task that runs at 8:00 AM Pacific Time"""
-        if self.is_shutting_down:
-            return
-    
-        try:
-            # Get current Pacific time
-            pacific_tz = pytz.timezone('US/Pacific')
-            now_pacific = datetime.now(pacific_tz)
-            
-            # Log the current time for debugging
-            logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
-            
-            # Only proceed if we have an update channel configured
-            if not self.config.get('update_channel_id'):
-                logger.warning("No update channel configured for daily recap")
-                return
-            
-            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
-            # Remove timezone info for database queries
-            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
-            start_time = end_time - timedelta(hours=24)  # 24 hours ago
-            
-            logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
-            
-            # Get all updates from the day
-            daily_updates = self.db.get_daily_updates(start_time, end_time)
-            
-            # Calculate day number (days since season start)
-            season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
-            recap_date = start_time.date()
-            day_number = (recap_date - season_start.date()).days + 1
-            
-            logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
-            
-            if not daily_updates:
-                logger.info("No updates found for daily recap - sending quiet day message")
-                await self.send_quiet_day_recap(day_number)
-                return
-            
-            # Create daily recap
-            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
-            
-            # Send daily recap
-            await self.send_daily_recap(recap_embeds)
-            
-            logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
-            
-        except Exception as e:
-            logger.error(f"❌ Error in daily recap task: {e}")
-            logger.error(traceback.format_exc())
-
     async def send_quiet_day_recap(self, day_number: int = None):
         """Send a recap for days with no updates"""
         channel_id = self.config.get('update_channel_id')
@@ -10520,37 +10493,95 @@ class BBDiscordBot(commands.Bot):
             
         except Exception as e:
             logger.error(f"❌ Error sending quiet day recap: {e}")
-
-    
-    
-    @daily_recap_task.before_loop
-    async def before_daily_recap_task(self):
-        """Wait for bot to be ready and sync to 8:00 AM Pacific"""
-        await self.wait_until_ready()
+    # STEP 4A: Replace your daily_recap_task with this scheduler
+    @tasks.loop(minutes=5)  # Check every 5 minutes
+    async def daily_recap_scheduler(self):
+        """Check every 5 minutes if it's time for daily recap at 8 AM Pacific"""
+        if self.is_shutting_down:
+            return
         
         try:
-            # Calculate wait time until next 8:00 AM Pacific
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
-            # Get next 8:00 AM Pacific
-            next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
+            # Only trigger between 8:00-8:05 AM Pacific
+            if now_pacific.hour == 8 and 0 <= now_pacific.minute <= 5:
+                # Check if we already sent today's recap
+                today_key = f"recap_{now_pacific.date()}"
+                
+                # Initialize the tracking set if it doesn't exist
+                if not hasattr(self, '_recaps_sent'):
+                    self._recaps_sent = set()
+                
+                # Only send if we haven't sent today's recap yet
+                if today_key not in self._recaps_sent:
+                    logger.info(f"🕰️ Triggering daily recap at {now_pacific.strftime('%I:%M %p Pacific')}")
+                    await self.run_daily_recap_now()
+                    self._recaps_sent.add(today_key)
+                    
+                    # Clean up old entries (keep only last 3 days)
+                    if len(self._recaps_sent) > 3:
+                        oldest = min(self._recaps_sent)
+                        self._recaps_sent.remove(oldest)
+                        logger.debug(f"Cleaned up old recap entry: {oldest}")
+        
+        except Exception as e:
+            logger.error(f"❌ Error in daily recap scheduler: {e}")
+    
+    # STEP 4B: Add this method to actually run the recap
+    async def run_daily_recap_now(self):
+        """Run the daily recap right now - extracted from your original task"""
+        try:
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
             
-            # If it's already past 8:00 AM today, schedule for tomorrow
-            if now_pacific.hour >= 8:
-                next_recap += timedelta(days=1)
+            logger.info(f"📅 Starting daily recap at {now_pacific.strftime('%I:%M %p Pacific')}")
             
-            wait_seconds = (next_recap - now_pacific).total_seconds()
+            # Check if we have an update channel configured
+            if not self.config.get('update_channel_id'):
+                logger.warning("⚠️ No update channel configured for daily recap")
+                return
             
-            logger.info(f"Daily recap task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
+            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
+            # Remove timezone info for database queries
+            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
+            start_time = end_time - timedelta(hours=24)  # 24 hours ago
             
-            # Wait until the scheduled time
-            await asyncio.sleep(wait_seconds)
+            logger.info(f"🔍 Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
+            
+            # Get all updates from the day
+            daily_updates = self.db.get_daily_updates(start_time, end_time)
+            
+            # Calculate day number (days since season start)
+            season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
+            recap_date = start_time.date()
+            day_number = (recap_date - season_start.date()).days + 1
+            
+            logger.info(f"📊 Daily recap for Day {day_number}: found {len(daily_updates)} updates")
+            
+            if not daily_updates:
+                logger.info("😴 No updates found for daily recap - sending quiet day message")
+                await self.send_quiet_day_recap(day_number)
+            else:
+                # Create daily recap
+                recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+                
+                # Send daily recap
+                await self.send_daily_recap(recap_embeds)
+                logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
             
         except Exception as e:
-            logger.error(f"Error in daily recap before_loop: {e}")
-            # If there's an error, wait 1 hour and try again
-            await asyncio.sleep(3600)
+            logger.error(f"❌ Error running daily recap: {e}")
+            logger.error(traceback.format_exc())
+    
+    # STEP 4C: Add before_loop for the scheduler (simple)
+    @daily_recap_scheduler.before_loop
+    async def before_daily_recap_scheduler(self):
+        """Wait for bot to be ready before starting scheduler"""
+        await self.wait_until_ready()
+        logger.info("📅 Daily recap scheduler ready - will check every 5 minutes for 8 AM Pacific")
+    
+
     
     @tasks.loop(minutes=60)  # Run every 60 minutes
     async def hourly_summary_task(self):
@@ -10880,7 +10911,7 @@ class BBDiscordBot(commands.Bot):
         try:
             # Start the unified content monitoring task
             self.check_all_content_sources.start()
-            self.daily_recap_task.start()
+            self.daily_recap_scheduler.start()
             self.auto_close_predictions_task.start()
             self.hourly_summary_task.start()
             logger.info("All monitoring tasks started (RSS + Bluesky unified)")
