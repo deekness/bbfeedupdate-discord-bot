@@ -4564,339 +4564,563 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return self.rate_limiter.get_stats()
 
     # Daily recap methods
-    async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create a comprehensive daily recap from all updates"""
-        if not updates:
-            return []
-        
-        logger.info(f"Creating daily recap for {len(updates)} updates")
-        
-        # Check if we need to chunk the updates (too many for single LLM call)
-        if len(updates) > 50:
-            return await self._create_chunked_daily_recap(updates, day_number)
-        else:
-            return await self._create_single_daily_recap(updates, day_number)
+    # Replace your existing create_daily_recap method in the UpdateBatcher class with this:
+
+async def create_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+    """Create a comprehensive daily recap from all updates - ALWAYS use structured format"""
+    if not updates:
+        return []
     
-    async def _create_single_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create daily recap from manageable number of updates"""
-        if not self.llm_client or not await self._can_make_llm_request():
-            return self._create_pattern_daily_recap(updates, day_number)
-        
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            # Prepare chronological update data
-            updates_data = []
-            for update in updates:
-                time_str = self._extract_correct_time(update)
-                updates_data.append({
-                    'time': time_str,
-                    'title': update.title,
-                    'description': update.description[:150] if update.description != update.title else ""
-                })
-            
-            # Create daily recap prompt
-            prompt = f"""You are the ultimate Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
-
-Analyze these {len(updates)} updates from the entire day (chronological order):
-
-{chr(10).join([f"{u['time']} - {u['title']}" + (f" ({u['description']})" if u['description'] else "") for u in updates_data])}
-
-Create a comprehensive daily recap that tells the story of Day {day_number}:
-
-{{
-    "headline": "Day {day_number} headline capturing the most significant storyline",
-    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
-    "strategic_analysis": "Strategic developments - key conversations, alliance shifts, target changes, power dynamics",
-    "social_dynamics": "Alliance formations, trust shifts, betrayals, strategic partnerships throughout the day",
-    "entertainment_highlights": "Memorable moments, drama, funny interactions, personality conflicts from the day",
-    "key_players": ["houseguests", "who", "were", "central", "to", "the", "day"],
-    "strategic_importance": 8,
-    "house_culture": "Daily routines, inside jokes, traditions, or cultural moments that defined the day",
-    "relationship_updates": "Showmance developments, romantic moments, or relationship changes",
-    "day_timeline": "Brief chronological overview of how the day unfolded from morning to night"
-}}
-
-Focus on creating a comprehensive daily story that captures the full arc of Day {day_number}. This should read like a daily diary entry for superfans."""
-
-            # Make LLM request
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=1500,  # Longer for daily recap
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse response
-            analysis = self._parse_llm_response(response.content[0].text)
-            
-            # Create daily recap embed
-            return self._create_daily_recap_embed(analysis, day_number, len(updates))
-            
-        except Exception as e:
-            logger.error(f"Daily recap LLM failed: {e}")
-            return self._create_pattern_daily_recap(updates, day_number)
+    logger.info(f"Creating daily recap for {len(updates)} updates")
     
-    async def _create_chunked_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create daily recap by summarizing in chunks first"""
-        chunk_size = 25
-        chunks = [updates[i:i + chunk_size] for i in range(0, len(updates), chunk_size)]
-        
-        logger.info(f"Creating chunked daily recap: {len(chunks)} chunks of ~{chunk_size} updates each")
-        
-        # First pass: summarize each chunk
-        chunk_summaries = []
-        for i, chunk in enumerate(chunks):
-            if not await self._can_make_llm_request():
-                # Fall back to pattern analysis if rate limited
-                summary = self._summarize_chunk_pattern(chunk, i + 1)
-            else:
-                summary = await self._summarize_chunk_llm(chunk, i + 1)
-            
-            chunk_summaries.append(summary)
-        
-        # Second pass: create final daily recap from summaries
-        return await self._create_final_daily_recap(chunk_summaries, day_number, len(updates))
+    # ALWAYS use structured format, even for large numbers of updates
+    # We'll sample the updates intelligently if there are too many
     
-    async def _summarize_chunk_llm(self, chunk: List[BBUpdate], chunk_number: int) -> str:
-        """Summarize a chunk of updates using LLM"""
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            updates_text = "\n".join([
-                f"{self._extract_correct_time(u)} - {u.title}"
-                for u in chunk
-            ])
-            
-            prompt = f"""Summarize this chunk of Big Brother updates (Chunk {chunk_number}):
+    if len(updates) > 100:
+        # For very large days, sample the most important updates
+        sampled_updates = await self._sample_important_updates(updates, max_updates=80)
+        logger.info(f"Sampled {len(sampled_updates)} most important updates from {len(updates)} total")
+        return await self._create_structured_daily_recap(sampled_updates, day_number, total_original=len(updates))
+    else:
+        # For manageable days, use all updates
+        return await self._create_structured_daily_recap(updates, day_number)
 
-{updates_text}
-
-Provide a 2-3 sentence summary capturing the key strategic and social developments in this time period. Focus on the most important events and conversations."""
-
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=200,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            return f"**Chunk {chunk_number}**: {response.content[0].text}"
-            
-        except Exception as e:
-            logger.error(f"Chunk summarization failed: {e}")
-            return self._summarize_chunk_pattern(chunk, chunk_number)
+async def _sample_important_updates(self, updates: List[BBUpdate], max_updates: int = 80) -> List[BBUpdate]:
+    """Sample the most important updates from a large set"""
     
-    def _summarize_chunk_pattern(self, chunk: List[BBUpdate], chunk_number: int) -> str:
-        """Summarize a chunk using pattern matching"""
-        # Group by importance and pick top updates
-        important_updates = sorted(
-            chunk, 
-            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-            reverse=True
-        )[:3]
-        
-        titles = [u.title[:60] + "..." if len(u.title) > 60 else u.title for u in important_updates]
-        return f"**Chunk {chunk_number}**: {' • '.join(titles)}"
+    # Sort by importance score
+    updates_with_scores = []
+    for update in updates:
+        importance = self.analyzer.analyze_strategic_importance(update)
+        updates_with_scores.append((update, importance))
     
-    async def _create_final_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
-        """Create final daily recap from chunk summaries"""
-        if not self.llm_client or not await self._can_make_llm_request():
-            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
-        
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            summaries_text = "\n\n".join(chunk_summaries)
-            
-            prompt = f"""Create a comprehensive Day {day_number} recap from these chunk summaries:
-
-{summaries_text}
-
-Create a daily recap that tells the story of Day {day_number} from these summaries:
-
-{{
-    "headline": "Day {day_number} headline capturing the most significant storyline",
-    "summary": "4-5 sentence summary of the day's key developments and overall narrative",
-    "strategic_analysis": "Strategic developments throughout the day",
-    "social_dynamics": "Alliance and relationship dynamics",
-    "entertainment_highlights": "Memorable moments and drama",
-    "key_players": ["main", "houseguests", "from", "the", "day"],
-    "strategic_importance": 8,
-    "house_culture": "Daily culture and routine moments",
-    "relationship_updates": "Showmance and relationship developments",
-    "day_timeline": "How the day unfolded chronologically"
-}}
-
-Focus on creating a cohesive daily story from these summaries."""
-
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=1200,
-                temperature=0.3,
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            analysis = self._parse_llm_response(response.content[0].text)
-            return self._create_daily_recap_embed(analysis, day_number, total_updates)
-            
-        except Exception as e:
-            logger.error(f"Final daily recap failed: {e}")
-            return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+    # Sort by importance (descending)
+    updates_with_scores.sort(key=lambda x: x[1], reverse=True)
     
-    def _create_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int) -> List[discord.Embed]:
-        """Create the daily recap embed"""
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Recap",
-            description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('summary', 'Daily summary not available')}",
-            color=0x9b59b6,  # Purple for daily recaps
-            timestamp=datetime.now()
-        )
-        
-        # Add timeline if available
-        if analysis.get('day_timeline'):
-            embed.add_field(
-                name="📖 Day Timeline",
-                value=analysis['day_timeline'],
-                inline=False
-            )
-        
-        # Add strategic analysis
-        if analysis.get('strategic_analysis'):
-            embed.add_field(
-                name="🎯 Strategic Developments",
-                value=analysis['strategic_analysis'],
-                inline=False
-            )
-        
-        # Add other sections
-        if analysis.get('social_dynamics'):
-            embed.add_field(
-                name="🤝 Alliance Dynamics",
-                value=analysis['social_dynamics'],
-                inline=False
-            )
-        
-        if analysis.get('entertainment_highlights'):
-            embed.add_field(
-                name="🎬 Day Highlights",
-                value=analysis['entertainment_highlights'],
-                inline=False
-            )
-        
-        if analysis.get('relationship_updates'):
-            embed.add_field(
-                name="💕 Showmance Updates",
-                value=analysis['relationship_updates'],
-                inline=False
-            )
-        
-        if analysis.get('house_culture'):
-            embed.add_field(
-                name="🏠 House Culture",
-                value=analysis['house_culture'],
-                inline=False
-            )
-        
-        # Add key players
-        if analysis.get('key_players'):
-            players = analysis['key_players'][:8]
-            embed.add_field(
-                name="🔑 Key Players of the Day",
-                value=" • ".join(players),
-                inline=False
-            )
-        
-        # Add importance
-        importance = analysis.get('strategic_importance', 5)
-        importance_bar = "🔥" * min(importance, 10)
-        embed.add_field(
-            name="📊 Day Importance",
-            value=f"{importance_bar} {importance}/10",
-            inline=True
-        )
-        
-        embed.set_footer(text=f"Daily Recap • Day {day_number} • BB Superfan AI")
-        
-        return [embed]
+    # Take the top updates, but ensure we have a good time distribution
+    sampled = []
     
-    def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create daily recap using pattern matching"""
-        # Analyze updates by importance
-        important_updates = sorted(
-            updates, 
-            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
-            reverse=True
-        )[:10]  # Top 10 most important
+    # Always include the top 40 most important updates
+    sampled.extend([update for update, score in updates_with_scores[:40]])
+    
+    # Then sample from the rest to get good time coverage
+    remaining_updates = [update for update, score in updates_with_scores[40:]]
+    
+    if remaining_updates and len(sampled) < max_updates:
+        # Sort remaining by time and take every Nth update for good coverage
+        remaining_updates.sort(key=lambda x: x.pub_date)
+        step = max(1, len(remaining_updates) // (max_updates - len(sampled)))
+        sampled.extend(remaining_updates[::step])
+    
+    # Sort final result chronologically
+    sampled.sort(key=lambda x: x.pub_date)
+    
+    return sampled[:max_updates]
+
+async def _create_structured_daily_recap(self, updates: List[BBUpdate], day_number: int, total_original: int = None) -> List[discord.Embed]:
+    """Create structured daily recap using the same format as hourly summaries"""
+    
+    if not self.llm_client or not await self._can_make_llm_request():
+        return self._create_pattern_daily_recap(updates, day_number, total_original)
+    
+    try:
+        await self.rate_limiter.wait_if_needed()
         
-        # Group by categories
-        categories = defaultdict(list)
-        for update in important_updates:
-            update_categories = self.analyzer.categorize_update(update)
-            for category in update_categories:
-                categories[category].append(update)
+        # Sort updates chronologically
+        sorted_updates = sorted(updates, key=lambda x: x.pub_date)
         
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Recap",
-            description=f"**{len(updates)} updates** • Pattern-based daily summary",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Add top moments
-        top_moments = []
-        for update in important_updates[:5]:
+        # Format updates for LLM
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates, 1):
             time_str = self._extract_correct_time(update)
-            title = update.title[:80] + "..." if len(update.title) > 80 else update.title
-            top_moments.append(f"**{time_str}**: {title}")
+            time_str = time_str.lstrip('0')
+            formatted_updates.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+                formatted_updates.append(f"   {desc}")
         
-        if top_moments:
-            embed.add_field(
-                name="🎯 Top Moments of the Day",
-                value="\n".join(top_moments),
-                inline=False
-            )
+        updates_text = "\n".join(formatted_updates)
         
-        # Add categories
-        for category, cat_updates in categories.items():
-            if cat_updates:
-                summary = f"{len(cat_updates)} updates in this category"
-                embed.add_field(
-                    name=f"{category}",
-                    value=summary,
-                    inline=True
+        # Calculate current day info
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 8).date()).days + 1)
+        
+        # Create structured prompt for daily recap
+        sample_note = f" (sampled from {total_original} total)" if total_original else ""
+        
+        prompt = f"""You are a Big Brother superfan creating a comprehensive DAILY RECAP for Day {day_number}.
+
+            UPDATES TO ANALYZE - Day {day_number} ({len(updates)} updates{sample_note}):
+            {updates_text}
+            
+            Create a comprehensive daily recap that tells the complete story of Day {day_number}.
+            
+            Provide your analysis in this EXACT JSON format:
+            
+            {{
+                "headline": "Compelling headline that captures Day {day_number}'s most significant storyline",
+                "strategic_analysis": "Strategic developments throughout the day - key conversations, alliance shifts, target changes, power dynamics. Use null if no strategic developments.",
+                "alliance_dynamics": "Alliance formations, trust shifts, betrayals, strategic partnerships throughout Day {day_number}. Use null if no alliance developments.",
+                "entertainment_highlights": "Memorable moments, drama, funny interactions, personality conflicts from Day {day_number}. Use null if no entertainment moments.",
+                "showmance_updates": "Romance developments, romantic moments, or relationship changes on Day {day_number}. Use null if no romance developments.",
+                "house_culture": "Daily routines, inside jokes, traditions, or cultural moments that defined Day {day_number}. Use null if no cultural developments.",
+                "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "Day", "{day_number}"],
+                "overall_importance": 8,
+                "importance_explanation": "Brief explanation of why Day {day_number} received this importance score and what made it significant",
+                "day_timeline": "Brief chronological overview of how Day {day_number} unfolded from morning to night"
+            }}
+            
+            CRITICAL INSTRUCTIONS:
+            - This is a DAILY RECAP so be comprehensive and tell the full story of Day {day_number}
+            - ONLY include sections where there are actual meaningful developments
+            - Use null for any section that doesn't have substantial content
+            - Present the narrative as Day {day_number}'s complete story
+            - Overall importance: 1-3 (quiet day), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+            - Focus on the most significant developments that shaped Day {day_number}"""
+            
+                    # Call LLM
+                    response = await asyncio.to_thread(
+                        self.llm_client.messages.create,
+                        model="claude-3-haiku-20240307",
+                        max_tokens=1200,
+                        temperature=0.3,
+                        messages=[{"role": "user", "content": prompt}]
+                    )
+                    
+                    response_text = response.content[0].text
+                    
+                    try:
+                        # Parse JSON response
+                        analysis_data = self._parse_structured_llm_response(response_text)
+                        
+                        # Create structured embed using the same method as hourly summaries
+                        embeds = self._create_daily_recap_structured_embed(
+                            analysis_data, len(updates), day_number, total_original
+                        )
+                        
+                        logger.info(f"Created structured daily recap for Day {day_number} with {len(updates)} updates")
+                        return embeds
+                        
+                    except Exception as e:
+                        logger.error(f"Failed to parse daily recap response: {e}")
+                        logger.error(f"Raw response: {response_text}")
+                        # Fallback to pattern-based
+                        return self._create_pattern_daily_recap(updates, day_number, total_original)
+                        
+                except Exception as e:
+                    logger.error(f"LLM daily recap failed: {e}")
+                    return self._create_pattern_daily_recap(updates, day_number, total_original)
+            
+            def _create_daily_recap_structured_embed(self, analysis_data: dict, update_count: int, day_number: int, total_original: int = None) -> List[discord.Embed]:
+                """Create structured daily recap embed using the same format as hourly summaries"""
+                
+                # Determine embed color based on importance
+                importance = analysis_data.get('overall_importance', 5)
+                if importance >= 9:
+                    color = 0xff1744  # Red for explosive days
+                elif importance >= 7:
+                    color = 0xff9800  # Orange for high activity
+                elif importance >= 4:
+                    color = 0x3498db  # Blue for moderate activity
+                else:
+                    color = 0x95a5a6  # Gray for quiet days
+                
+                # Create main embed - SAME FORMAT AS HOURLY
+                title = f"📅 Day {day_number} Recap"
+                
+                # Update description to match hourly format
+                update_text = f"**{total_original} updates**" if total_original else f"**{update_count} updates**"
+                if total_original and total_original != update_count:
+                    update_text += f" ({update_count} analyzed)"
+                
+                embed = discord.Embed(
+                    title=title,
+                    description="",  # Keep it clean like hourly summaries
+                    color=color,
+                    timestamp=datetime.now()
                 )
-        
-        embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
-        
-        return [embed]
-    
-    def _create_pattern_daily_recap_from_summaries(self, summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
-        """Create pattern-based daily recap from summaries"""
-        embed = discord.Embed(
-            title=f"📅 Day {day_number} Recap",
-            description=f"**{total_updates} updates** • Chunked summary analysis",
-            color=0x9b59b6,
-            timestamp=datetime.now()
-        )
-        
-        # Add chunk summaries
-        summary_text = "\n\n".join(summaries)
-        if len(summary_text) > 1000:
-            summary_text = summary_text[:997] + "..."
-        
-        embed.add_field(
-            name="📝 Daily Summary",
-            value=summary_text,
-            inline=False
-        )
-        
-        embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
-        
-        return [embed]
+                
+                # Add headline as first field (same as hourly)
+                headline = analysis_data.get('headline', f'Day {day_number} Big Brother Activity')
+                embed.add_field(
+                    name="📰 Headline",
+                    value=headline,
+                    inline=False
+                )
+                
+                # Add day timeline if available (unique to daily)
+                if analysis_data.get('day_timeline'):
+                    embed.add_field(
+                        name="📖 Day Timeline",
+                        value=analysis_data['day_timeline'],
+                        inline=False
+                    )
+                
+                # Add structured sections ONLY if they have content (same as hourly)
+                sections = [
+                    ("🎯 Strategic Analysis", analysis_data.get('strategic_analysis')),
+                    ("🤝 Alliance Dynamics", analysis_data.get('alliance_dynamics')),
+                    ("🎬 Entertainment Highlights", analysis_data.get('entertainment_highlights')),
+                    ("💕 Showmance Updates", analysis_data.get('showmance_updates')),
+                    ("🏠 House Culture", analysis_data.get('house_culture'))
+                ]
+                
+                for section_name, content in sections:
+                    # Only add section if it has actual content
+                    if content and content.strip() and content.lower() not in ['null', 'none', 'nothing']:
+                        if len(content) > 1000:
+                            content = content[:997] + "..."
+                        embed.add_field(
+                            name=section_name,
+                            value=content,
+                            inline=False
+                        )
+                
+                # Add key players (same as hourly)
+                key_players = analysis_data.get('key_players', [])
+                if key_players:
+                    if len(key_players) <= 6:
+                        players_text = " • ".join([f"**{player}**" for player in key_players])
+                    else:
+                        players_text = " • ".join([f"**{player}**" for player in key_players[:6]]) + f" • +{len(key_players)-6} more"
+                else:
+                    players_text = "No specific houseguests highlighted"
+                
+                embed.add_field(
+                    name="🔑 Key Players",
+                    value=players_text,
+                    inline=False
+                )
+                
+                # Add importance rating (same as hourly)
+                custom_emoji = "<:chunky:1392638440582942974>"
+                icon_count = min(importance, 10)
+                importance_text = custom_emoji * icon_count + f" **{importance}/10**"
+                
+                explanation = analysis_data.get('importance_explanation', '')
+                if explanation:
+                    importance_text += f"\n*{explanation}*"
+                
+                embed.add_field(
+                    name="📊 Overall Importance",
+                    value=importance_text,
+                    inline=False
+                )
+                
+                # Set footer (daily-specific)
+                embed.set_footer(text=f"Daily Recap • Day {day_number} • Chen Bot's AI Analysis")
+                
+                return [embed]
+            
+            def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int, total_original: int = None) -> List[discord.Embed]:
+                """Pattern-based daily recap using structured format"""
+                
+                # Analyze updates by importance and category
+                important_updates = sorted(
+                    updates, 
+                    key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                    reverse=True
+                )[:15]  # Top 15 most important
+                
+                # Group by categories
+                categories = defaultdict(list)
+                for update in important_updates:
+                    update_categories = self.analyzer.categorize_update(update)
+                    for category in update_categories:
+                        categories[category].append(update)
+                
+                # Use same color scheme as LLM version
+                avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in updates) // len(updates) if updates else 1
+                if avg_importance >= 9:
+                    color = 0xff1744
+                elif avg_importance >= 7:
+                    color = 0xff9800
+                elif avg_importance >= 4:
+                    color = 0x3498db
+                else:
+                    color = 0x95a5a6
+                
+                embed = discord.Embed(
+                    title=f"📅 Day {day_number} Recap",
+                    description="",
+                    color=color,
+                    timestamp=datetime.now()
+                )
+                
+                # Add headline
+                headline = f"Day {day_number}: Big Brother House Activity"
+                if important_updates:
+                    top_update = important_updates[0]
+                    if 'competition' in top_update.title.lower() or 'hoh' in top_update.title.lower():
+                        headline = f"Day {day_number}: Competition and Strategic Activity"
+                    elif 'alliance' in top_update.title.lower() or 'strategy' in top_update.title.lower():
+                        headline = f"Day {day_number}: Strategic Gameplay Dominates"
+                    elif 'drama' in top_update.title.lower() or 'fight' in top_update.title.lower():
+                        headline = f"Day {day_number}: House Drama and Tensions"
+                
+                embed.add_field(
+                    name="📰 Headline",
+                    value=headline,
+                    inline=False
+                )
+                
+                # Add category summaries (same structure as LLM version)
+                section_mapping = {
+                    "🎯 Strategy": "🎯 Strategic Analysis",
+                    "🤝 Alliance": "🤝 Alliance Dynamics", 
+                    "🎬 Entertainment": "🎬 Entertainment Highlights",
+                    "💕 Romance": "💕 Showmance Updates",
+                    "📝 General": "🏠 House Culture"
+                }
+                
+                for category, cat_updates in sorted(categories.items(), key=lambda x: len(x[1]), reverse=True):
+                    if cat_updates and len(cat_updates) > 0:
+                        narrative_summary = self._create_category_narrative(category, cat_updates)
+                        if narrative_summary and narrative_summary.strip():
+                            section_name = section_mapping.get(category, category)
+                            embed.add_field(
+                                name=section_name,
+                                value=narrative_summary,
+                                inline=False
+                            )
+                
+                # Add key players
+                all_houseguests = set()
+                for update in important_updates:
+                    hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+                    all_houseguests.update(hgs[:3])
+                
+                if all_houseguests:
+                    players_text = " • ".join([f"**{hg}**" for hg in list(all_houseguests)[:6]])
+                    if len(all_houseguests) > 6:
+                        players_text += f" • +{len(all_houseguests)-6} more"
+                else:
+                    players_text = "No specific houseguests highlighted"
+                
+                embed.add_field(
+                    name="🔑 Key Players",
+                    value=players_text,
+                    inline=False
+                )
+                
+                # Add importance rating
+                importance_icons = ["😴", "😴", "📝", "📈", "⭐", "⭐", "🔥", "🔥", "💥", "🚨"]
+                importance_icon = importance_icons[min(avg_importance - 1, 9)] if avg_importance >= 1 else "📝"
+                
+                if avg_importance >= 7:
+                    activity_desc = f"Day {day_number} featured high drama and strategic activity"
+                elif avg_importance >= 5:
+                    activity_desc = f"Day {day_number} had moderate activity with notable moments"
+                elif avg_importance >= 3:
+                    activity_desc = f"Day {day_number} saw steady house activity"
+                else:
+                    activity_desc = f"Day {day_number} was a quieter day in the house"
+                
+                embed.add_field(
+                    name="📊 Overall Importance",
+                    value=f"{importance_icon} **{avg_importance}/10**\n*{activity_desc}*",
+                    inline=False
+                )
+                
+                embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
+                
+                return [embed]
+                
+                async def _create_final_daily_recap(self, chunk_summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+                    """Create final daily recap from chunk summaries"""
+                    if not self.llm_client or not await self._can_make_llm_request():
+                        return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+                    
+                    try:
+                        await self.rate_limiter.wait_if_needed()
+                        
+                        summaries_text = "\n\n".join(chunk_summaries)
+                        
+                        prompt = f"""Create a comprehensive Day {day_number} recap from these chunk summaries:
+            
+            {summaries_text}
+            
+            Create a daily recap that tells the story of Day {day_number} from these summaries:
+            
+            {{
+                "headline": "Day {day_number} headline capturing the most significant storyline",
+                "summary": "4-5 sentence summary of the day's key developments and overall narrative",
+                "strategic_analysis": "Strategic developments throughout the day",
+                "social_dynamics": "Alliance and relationship dynamics",
+                "entertainment_highlights": "Memorable moments and drama",
+                "key_players": ["main", "houseguests", "from", "the", "day"],
+                "strategic_importance": 8,
+                "house_culture": "Daily culture and routine moments",
+                "relationship_updates": "Showmance and relationship developments",
+                "day_timeline": "How the day unfolded chronologically"
+            }}
+            
+            Focus on creating a cohesive daily story from these summaries."""
+            
+                        response = await asyncio.to_thread(
+                            self.llm_client.messages.create,
+                            model=self.llm_model,
+                            max_tokens=1200,
+                            temperature=0.3,
+                            messages=[{"role": "user", "content": prompt}]
+                        )
+                        
+                        analysis = self._parse_llm_response(response.content[0].text)
+                        return self._create_daily_recap_embed(analysis, day_number, total_updates)
+                        
+                    except Exception as e:
+                        logger.error(f"Final daily recap failed: {e}")
+                        return self._create_pattern_daily_recap_from_summaries(chunk_summaries, day_number, total_updates)
+                
+                def _create_daily_recap_embed(self, analysis: dict, day_number: int, update_count: int) -> List[discord.Embed]:
+                    """Create the daily recap embed"""
+                    embed = discord.Embed(
+                        title=f"📅 Day {day_number} Recap",
+                        description=f"**{update_count} updates** • {analysis.get('headline', 'Daily Recap')}\n\n{analysis.get('summary', 'Daily summary not available')}",
+                        color=0x9b59b6,  # Purple for daily recaps
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Add timeline if available
+                    if analysis.get('day_timeline'):
+                        embed.add_field(
+                            name="📖 Day Timeline",
+                            value=analysis['day_timeline'],
+                            inline=False
+                        )
+                    
+                    # Add strategic analysis
+                    if analysis.get('strategic_analysis'):
+                        embed.add_field(
+                            name="🎯 Strategic Developments",
+                            value=analysis['strategic_analysis'],
+                            inline=False
+                        )
+                    
+                    # Add other sections
+                    if analysis.get('social_dynamics'):
+                        embed.add_field(
+                            name="🤝 Alliance Dynamics",
+                            value=analysis['social_dynamics'],
+                            inline=False
+                        )
+                    
+                    if analysis.get('entertainment_highlights'):
+                        embed.add_field(
+                            name="🎬 Day Highlights",
+                            value=analysis['entertainment_highlights'],
+                            inline=False
+                        )
+                    
+                    if analysis.get('relationship_updates'):
+                        embed.add_field(
+                            name="💕 Showmance Updates",
+                            value=analysis['relationship_updates'],
+                            inline=False
+                        )
+                    
+                    if analysis.get('house_culture'):
+                        embed.add_field(
+                            name="🏠 House Culture",
+                            value=analysis['house_culture'],
+                            inline=False
+                        )
+                    
+                    # Add key players
+                    if analysis.get('key_players'):
+                        players = analysis['key_players'][:8]
+                        embed.add_field(
+                            name="🔑 Key Players of the Day",
+                            value=" • ".join(players),
+                            inline=False
+                        )
+                    
+                    # Add importance
+                    importance = analysis.get('strategic_importance', 5)
+                    importance_bar = "🔥" * min(importance, 10)
+                    embed.add_field(
+                        name="📊 Day Importance",
+                        value=f"{importance_bar} {importance}/10",
+                        inline=True
+                    )
+                    
+                    embed.set_footer(text=f"Daily Recap • Day {day_number} • BB Superfan AI")
+                    
+                    return [embed]
+                
+                def _create_pattern_daily_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+                    """Create daily recap using pattern matching"""
+                    # Analyze updates by importance
+                    important_updates = sorted(
+                        updates, 
+                        key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+                        reverse=True
+                    )[:10]  # Top 10 most important
+                    
+                    # Group by categories
+                    categories = defaultdict(list)
+                    for update in important_updates:
+                        update_categories = self.analyzer.categorize_update(update)
+                        for category in update_categories:
+                            categories[category].append(update)
+                    
+                    embed = discord.Embed(
+                        title=f"📅 Day {day_number} Recap",
+                        description=f"**{len(updates)} updates** • Pattern-based daily summary",
+                        color=0x9b59b6,
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Add top moments
+                    top_moments = []
+                    for update in important_updates[:5]:
+                        time_str = self._extract_correct_time(update)
+                        title = update.title[:80] + "..." if len(update.title) > 80 else update.title
+                        top_moments.append(f"**{time_str}**: {title}")
+                    
+                    if top_moments:
+                        embed.add_field(
+                            name="🎯 Top Moments of the Day",
+                            value="\n".join(top_moments),
+                            inline=False
+                        )
+                    
+                    # Add categories
+                    for category, cat_updates in categories.items():
+                        if cat_updates:
+                            summary = f"{len(cat_updates)} updates in this category"
+                            embed.add_field(
+                                name=f"{category}",
+                                value=summary,
+                                inline=True
+                            )
+                    
+                    embed.set_footer(text=f"Daily Recap • Day {day_number} • Pattern Analysis")
+                    
+                    return [embed]
+                
+                def _create_pattern_daily_recap_from_summaries(self, summaries: List[str], day_number: int, total_updates: int) -> List[discord.Embed]:
+                    """Create pattern-based daily recap from summaries"""
+                    embed = discord.Embed(
+                        title=f"📅 Day {day_number} Recap",
+                        description=f"**{total_updates} updates** • Chunked summary analysis",
+                        color=0x9b59b6,
+                        timestamp=datetime.now()
+                    )
+                    
+                    # Add chunk summaries
+                    summary_text = "\n\n".join(summaries)
+                    if len(summary_text) > 1000:
+                        summary_text = summary_text[:997] + "..."
+                    
+                    embed.add_field(
+                        name="📝 Daily Summary",
+                        value=summary_text,
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text=f"Daily Recap • Day {day_number} • Chunked Analysis")
+                    
+                    return [embed]
 
 # Add these methods to your UpdateBatcher class
 
