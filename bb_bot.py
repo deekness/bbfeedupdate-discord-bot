@@ -8674,7 +8674,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in setup hook: {e}")
     
     async def restore_queues_inline(self):
-        """Restore queue state inline"""
+        """Restore queue state inline - FIXED VERSION"""
         try:
             database_url = os.getenv('DATABASE_URL')
             if not database_url:
@@ -8703,11 +8703,18 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore highlights queue
                     self.update_batcher.highlights_queue.clear()
                     for update_data in highlights_data.get('updates', []):
+                        # FIX: Handle both string and datetime objects
+                        pub_date = update_data['pub_date']
+                        if isinstance(pub_date, str):
+                            pub_date = datetime.fromisoformat(pub_date)
+                        elif not isinstance(pub_date, datetime):
+                            pub_date = datetime.now()  # Fallback
+                        
                         update = BBUpdate(
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
+                            pub_date=pub_date,  # Use processed datetime
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -8715,7 +8722,11 @@ class BBDiscordBot(commands.Bot):
                     
                     # Restore last batch time
                     if result['last_summary_time']:
-                        self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
+                        last_time = result['last_summary_time']
+                        if isinstance(last_time, str):
+                            self.update_batcher.last_batch_time = datetime.fromisoformat(last_time)
+                        else:
+                            self.update_batcher.last_batch_time = last_time
                     
                     logger.info(f"Restored {len(self.update_batcher.highlights_queue)} highlights from database")
                     
@@ -8724,7 +8735,7 @@ class BBDiscordBot(commands.Bot):
             else:
                 logger.info("No highlights queue state to restore")
             
-            # Restore hourly queue
+            # Restore hourly queue (same fix)
             cursor.execute("""
                 SELECT queue_state, last_summary_time 
                 FROM summary_checkpoints 
@@ -8741,11 +8752,18 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore hourly queue
                     self.update_batcher.hourly_queue.clear()
                     for update_data in hourly_data.get('updates', []):
+                        # FIX: Handle both string and datetime objects
+                        pub_date = update_data['pub_date']
+                        if isinstance(pub_date, str):
+                            pub_date = datetime.fromisoformat(pub_date)
+                        elif not isinstance(pub_date, datetime):
+                            pub_date = datetime.now()  # Fallback
+                        
                         update = BBUpdate(
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            pub_date=pub_date,  # Use processed datetime
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -8753,7 +8771,11 @@ class BBDiscordBot(commands.Bot):
                     
                     # Restore last hourly summary time
                     if result['last_summary_time']:
-                        self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
+                        last_time = result['last_summary_time']
+                        if isinstance(last_time, str):
+                            self.update_batcher.last_hourly_summary = datetime.fromisoformat(last_time)
+                        else:
+                            self.update_batcher.last_hourly_summary = last_time
                     
                     logger.info(f"Restored {len(self.update_batcher.hourly_queue)} hourly updates from database")
                     
