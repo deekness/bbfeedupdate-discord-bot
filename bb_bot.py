@@ -3597,6 +3597,8 @@ class UpdateBatcher:
         hour_start = summary_hour - timedelta(hours=1)
         hour_end = summary_hour
         
+        logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
+        
         # ALWAYS use database for hourly summaries
         if hasattr(self, 'db') and self.db:
             hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
@@ -3604,19 +3606,39 @@ class UpdateBatcher:
         else:
             hourly_updates = []
         
+        logger.info(f"Found {len(hourly_updates)} updates for this hour")
+        
         if not hourly_updates:
+            logger.info("No updates - will send quiet hour message")
             return []  # This will trigger quiet hour message
+        
+        # Temporarily set the hourly queue to the database updates for LLM processing
+        original_queue = self.hourly_queue.copy()
+        self.hourly_queue = hourly_updates
         
         # Create summary from database data
         if self.llm_client and await self._can_make_llm_request():
+            logger.info("Attempting LLM summary generation")
             try:
-                embeds = await self._create_forced_structured_summary_from_db(hourly_updates, hour_start, hour_end)
+                # Use your existing method with the populated queue
+                embeds = await self._create_forced_structured_summary("hourly_summary")
+                logger.info(f"✅ LLM summary successful - {len(embeds)} embeds")
+                
+                # Restore original queue
+                self.hourly_queue = original_queue
                 return embeds
+                
             except Exception as e:
-                logger.error(f"LLM hourly summary failed: {e}")
+                logger.error(f"❌ LLM summary failed: {e}")
+                # Restore original queue on error
+                self.hourly_queue = original_queue
+        else:
+            logger.info("Using pattern-based summary (LLM unavailable or rate limited)")
         
         # Fallback to pattern-based
-        return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+        embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+        logger.info(f"✅ Pattern summary created - {len(embeds)} embeds")
+        return embeds
 
     def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
         """Pattern-based hourly summary for timeframe - LAST RESORT"""
