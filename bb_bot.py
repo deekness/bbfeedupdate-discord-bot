@@ -3587,7 +3587,7 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create hourly summary - ONLY USE CURRENT HOUR DATA"""
+        """Create hourly summary - ONLY USE DATABASE DATA"""
         now = datetime.now()
         
         # Define the hour period
@@ -3595,43 +3595,25 @@ class UpdateBatcher:
         hour_start = summary_hour - timedelta(hours=1)
         hour_end = summary_hour
         
-        logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
-        
-        # Get updates from database FOR THIS SPECIFIC HOUR ONLY
+        # ALWAYS use database for hourly summaries
         if hasattr(self, 'db') and self.db:
             hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
+            self._used_queue_for_last_summary = False  # Flag for queue management
         else:
             hourly_updates = []
         
         if not hourly_updates:
-            logger.info(f"No updates found for hour period {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
             return []  # This will trigger quiet hour message
         
-        logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
-        
-        # FORCE LLM STRUCTURED SUMMARY using ONLY current hour data
+        # Create summary from database data
         if self.llm_client and await self._can_make_llm_request():
             try:
-                # Temporarily replace hourly_queue with ONLY the timeframe updates
-                original_queue = self.hourly_queue.copy()
-                self.hourly_queue = hourly_updates  # Only current hour updates
-                
-                # Force structured summary
-                embeds = await self._create_forced_structured_summary("hourly_summary")
-                
-                # Restore original queue
-                self.hourly_queue = original_queue
-                
-                logger.info(f"Created LLM hourly summary from {len(hourly_updates)} updates for this hour only")
+                embeds = await self._create_forced_structured_summary_from_db(hourly_updates, hour_start, hour_end)
                 return embeds
-                
             except Exception as e:
                 logger.error(f"LLM hourly summary failed: {e}")
-                # Restore original queue on error
-                self.hourly_queue = original_queue
         
-        # Fallback to pattern only if LLM completely fails
-        logger.warning("Using pattern fallback for hourly summary")
+        # Fallback to pattern-based
         return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
 
     def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
@@ -10550,39 +10532,42 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Queue preserved with {len(self.update_batcher.highlights_queue)} updates")
 
     async def send_hourly_summary(self):
-        """Send hourly comprehensive summary - FIXED QUEUE CLEARING"""
+        """Fixed version - only clear queue when actually used"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
-            logger.warning("Update channel not configured for hourly summary")
             return
         
         try:
             channel = self.get_channel(channel_id)
             if not channel:
-                logger.error(f"Channel {channel_id} not found")
                 return
             
-            # Create hourly summary (this gets updates from database by timeframe)
+            # Create hourly summary (gets data from database by timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
             if embeds:  
-                # Send the normal summary with content
+                # Send the normal summary
                 for embed in embeds:
                     await channel.send(embed=embed)
                 logger.info(f"Sent hourly summary with {len(embeds)} embeds")
                 
-                # CLEAR THE HOURLY QUEUE AFTER SENDING SUMMARY
-                processed_count = len(self.update_batcher.hourly_queue)
-                self.update_batcher.hourly_queue.clear()
-                self.update_batcher.last_hourly_summary = datetime.now()
-                logger.info(f"Cleared hourly queue of {processed_count} updates after summary")
+                # ONLY clear queue if it was actually used for the summary
+                # Check if summary method used queue vs database
+                if hasattr(self.update_batcher, '_used_queue_for_last_summary'):
+                    if self.update_batcher._used_queue_for_last_summary:
+                        processed_count = len(self.update_batcher.hourly_queue)
+                        self.update_batcher.hourly_queue.clear()
+                        logger.info(f"Cleared hourly queue of {processed_count} updates")
+                    else:
+                        logger.info("Summary used database data - keeping queue intact")
                 
+                self.update_batcher.last_hourly_summary = datetime.now()
             else:
-                # CREATE AND SEND A "QUIET HOUR" EMBED
+                # Send quiet hour embed
                 quiet_embed = self._create_quiet_hour_embed()
                 await channel.send(embed=quiet_embed)
-                logger.info("Sent quiet hour summary (no updates)")
-            
+                logger.info("Sent quiet hour summary")
+                
         except Exception as e:
             logger.error(f"Error sending hourly summary: {e}")
 
