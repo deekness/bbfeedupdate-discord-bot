@@ -8618,6 +8618,7 @@ class BBDiscordBot(commands.Bot):
         intents.guilds = True
         intents.members = True
         super().__init__(command_prefix='!bb', intents=intents)
+        self._last_recap_date = None
         
         self.rss_url = "https://rss.jokersupdates.com/ubbthreads/rss/bbusaupdates/rss.php"
         
@@ -10287,6 +10288,11 @@ class BBDiscordBot(commands.Bot):
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
+            # Only proceed if it's actually around 8 AM Pacific (within 30 minutes)
+            if not (7.5 <= now_pacific.hour < 8.5):
+                logger.info(f"Daily recap skipped - not 8 AM Pacific (current: {now_pacific.strftime('%I:%M %p Pacific')})")
+                return
+            
             # Log the current time for debugging
             logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
             
@@ -10299,6 +10305,12 @@ class BBDiscordBot(commands.Bot):
             # Remove timezone info for database queries
             end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
             start_time = end_time - timedelta(hours=24)  # 24 hours ago
+            
+            # Check if we already sent a recap for this day
+            recap_date = start_time.date()
+            if hasattr(self, '_last_recap_date') and self._last_recap_date == recap_date:
+                logger.info(f"Daily recap already sent for {recap_date} - skipping")
+                return
             
             logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
             
@@ -10315,20 +10327,22 @@ class BBDiscordBot(commands.Bot):
             if not daily_updates:
                 logger.info("No updates found for daily recap - sending quiet day message")
                 await self.send_quiet_day_recap(day_number)
-                return
+            else:
+                # Create daily recap
+                recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
+                
+                # Send daily recap
+                await self.send_daily_recap(recap_embeds)
+                
+                logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
             
-            # Create daily recap
-            recap_embeds = await self.update_batcher.create_daily_recap(daily_updates, day_number)
-            
-            # Send daily recap
-            await self.send_daily_recap(recap_embeds)
-            
-            logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
+            # Mark this date as processed
+            self._last_recap_date = recap_date
             
         except Exception as e:
             logger.error(f"❌ Error in daily recap task: {e}")
             logger.error(traceback.format_exc())
-
+            
     async def send_quiet_day_recap(self, day_number: int = None):
         """Send a recap for days with no updates"""
         channel_id = self.config.get('update_channel_id')
@@ -10397,12 +10411,15 @@ class BBDiscordBot(commands.Bot):
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
+            logger.info(f"Bot ready at {now_pacific.strftime('%I:%M %p Pacific on %A, %B %d')}")
+            
             # Get next 8:00 AM Pacific
             next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
             
             # If it's already past 8:00 AM today, schedule for tomorrow
             if now_pacific.hour >= 8:
                 next_recap += timedelta(days=1)
+                logger.info("Already past 8 AM Pacific today, scheduling for tomorrow")
             
             wait_seconds = (next_recap - now_pacific).total_seconds()
             
