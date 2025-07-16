@@ -3542,9 +3542,11 @@ class UpdateBatcher:
         if not await self.processed_hashes_cache.contains(update.content_hash) and not self.db.is_duplicate(update.content_hash):
             # Add to highlights queue (for 25-update batches)
             self.highlights_queue.append(update)
-            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")  # ADD THIS LINE
+            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")
+            
             # Add to hourly queue (for hourly summaries)
             self.hourly_queue.append(update)
+            logger.info(f"DEBUG: Added to hourly queue. Size now: {len(self.hourly_queue)}")
             
             # Mark as processed
             await self.processed_hashes_cache.add(update.content_hash)
