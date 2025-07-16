@@ -3544,7 +3544,7 @@ class UpdateBatcher:
             self.highlights_queue.append(update)
             logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")
             
-            # Add to hourly queue (for hourly summaries)
+            # Add to hourly queue (for hourly summaries)  
             self.hourly_queue.append(update)
             logger.info(f"DEBUG: Added to hourly queue. Size now: {len(self.hourly_queue)}")
             
@@ -10708,6 +10708,7 @@ class BBDiscordBot(commands.Bot):
                     # Store in database
                     self.db.store_update(update, importance, categories)
                     
+                    await self.update_batcher.add_update(update)
                     # Add to batching system (both highlights and hourly queues)
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
