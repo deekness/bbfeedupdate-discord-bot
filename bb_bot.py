@@ -10694,29 +10694,23 @@ class BBDiscordBot(commands.Bot):
         """Unified content checking from RSS and Bluesky"""
         if self.is_shutting_down:
             return
-
+    
         try:
             # Get updates from ALL sources
             new_updates = await self.content_monitor.check_all_sources()
             
-            # Process each new update (same as before)
+            # Process each new update
             for update in new_updates:
                 try:
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
                 
-                    # Store in database
+                    # ADD TO QUEUE FIRST (before database)
+                    await self.update_batcher.add_update(update)
+                    
+                    # THEN store in database
                     self.db.store_update(update, importance, categories)
                     
-                    await self.update_batcher.add_update(update)
-                    # Add to batching system (both highlights and hourly queues)
-                    # Process for historical context if available
-                    if hasattr(self, 'context_tracker') and self.context_tracker:
-                        try:
-                            await self.context_tracker.analyze_update_for_events(update)
-                        except Exception as e:
-                            logger.debug(f"Context processing failed: {e}")
-                
                     # Process for alliance tracking
                     alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
                     for event in alliance_events:
@@ -10726,7 +10720,10 @@ class BBDiscordBot(commands.Bot):
                     
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
-                        pass
+                        try:
+                            await self.context_tracker.analyze_update_for_events(update)
+                        except Exception as e:
+                            logger.debug(f"Context processing failed: {e}")
                     
                     self.total_updates_processed += 1
                     
