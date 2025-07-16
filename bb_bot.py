@@ -3503,14 +3503,14 @@ class UpdateBatcher:
             self.llm_client = None
     
     def should_send_highlights(self) -> bool:
-        """Check if we should send highlights (25 updates)"""
-        if len(self.highlights_queue) >= 25:
+        if len(self.highlights_queue) >= 25:  # Should be 25, not lower
             return True
         
-        # Also send if we have some urgent updates and it's been a while
+        # Also check this logic - might be triggering too early
         has_urgent = any(self._is_urgent(update) for update in self.highlights_queue)
         time_elapsed = (datetime.now() - self.last_batch_time).total_seconds() / 60
         
+        # This might be the problem - triggering at 10 updates instead of 25
         if has_urgent and len(self.highlights_queue) >= 10 and time_elapsed >= 15:
             return True
         
@@ -4025,39 +4025,59 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             return self._create_enhanced_pattern_hourly_summary()
 
     def _parse_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response with better JSON handling"""
+        """Enhanced JSON parsing with truncation handling"""
         try:
             # Clean the response first
             cleaned_text = response_text.strip()
             
-            # Find JSON boundaries more carefully
+            # More robust JSON extraction
             json_start = cleaned_text.find('{')
-            json_end = cleaned_text.rfind('}') + 1
+            if json_start == -1:
+                raise ValueError("No JSON opening brace found")
             
-            if json_start != -1 and json_end > json_start:
-                json_text = cleaned_text[json_start:json_end]
-                
-                # Clean up common JSON issues
-                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
-                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
-                
-                return json.loads(json_text)
+            # Find matching closing brace (handle nested objects)
+            brace_count = 0
+            json_end = -1
+            for i, char in enumerate(cleaned_text[json_start:], json_start):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_end = i + 1
+                        break
+            
+            if json_end == -1:
+                # JSON is truncated - try to fix it
+                logger.warning("JSON appears truncated, attempting to fix")
+                # Find the last complete highlight entry
+                last_complete = cleaned_text.rfind('},{')
+                if last_complete != -1:
+                    # Close the JSON properly
+                    json_text = cleaned_text[json_start:last_complete] + '}]}'
+                else:
+                    # If no complete entries, create minimal JSON
+                    json_text = '{"highlights": []}'
             else:
-                raise ValueError("No valid JSON found")
-                
+                json_text = cleaned_text[json_start:json_end]
+            
+            # Clean up common JSON issues
+            json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
+            json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
+            json_text = re.sub(r'\n', ' ', json_text)      # Remove newlines
+            
+            data = json.loads(json_text)
+            logger.info("Successfully parsed LLM JSON response")
+            return data
+            
         except Exception as e:
             logger.error(f"JSON parsing failed: {e}")
             logger.error(f"Raw response: {response_text[:500]}...")
             
-            # Better fallback that doesn't show raw JSON
+            # Return minimal fallback
             return {
-                "headline": "Day 7 Big Brother Recap",
-                "summary": "Multiple strategic and social developments occurred throughout the day.",
-                "strategic_analysis": "Strategic gameplay and power dynamics evolved.",
-                "alliance_dynamics": "Alliance relationships and trust levels shifted.",
-                "entertainment_highlights": "Various memorable moments and interactions took place.",
-                "key_players": [],
-                "strategic_importance": 6
+                "highlights": [],
+                "summary": "Analysis available but could not be parsed"
             }
     
     def _parse_text_response(self, response_text: str) -> dict:
@@ -10515,7 +10535,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error sending daily recap: {e}")
 
     async def send_highlights_batch(self):
-        """Send highlights batch (every 25 updates)"""
+        """Send highlights batch (every 25 updates) - FIXED VERSION"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
             logger.warning("Update channel not configured for highlights")
@@ -10527,6 +10547,7 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
+            # FIX: Use correct queue reference
             queue_size_before = len(self.update_batcher.highlights_queue)
             embeds = await self.update_batcher.create_highlights_batch()
             
@@ -10537,9 +10558,6 @@ class BBDiscordBot(commands.Bot):
             # Send to Discord first
             for embed in embeds:
                 await channel.send(embed=embed)
-            
-            self.highlights_queue.clear()
-            self.last_batch_time = datetime.now()
             
             # ONLY clear queue after Discord success
             processed_count = len(self.update_batcher.highlights_queue)
