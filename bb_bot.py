@@ -4243,7 +4243,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             players_text = "No specific houseguests highlighted"
         
         embed.add_field(
-            name="⭐ Key Players",
+            name="🔑 Key Players",
             value=players_text,
             inline=False
         )
@@ -4338,7 +4338,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             players_text = "No specific houseguests highlighted"
         
         embed.add_field(
-            name="⭐ Key Players",
+            name="🔑 Key Players",
             value=players_text,
             inline=False
         )
@@ -4520,7 +4520,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         if analysis.get('key_players'):
             players = analysis['key_players'][:8]
             embed.add_field(
-                name="⭐ Key Players This Hour",
+                name="🔑 Key Players This Hour",
                 value=" • ".join(players),
                 inline=False
             )
@@ -4805,7 +4805,7 @@ Focus on creating a cohesive daily story from these summaries."""
         if analysis.get('key_players'):
             players = analysis['key_players'][:8]
             embed.add_field(
-                name="⭐ Key Players of the Day",
+                name="🔑 Key Players of the Day",
                 value=" • ".join(players),
                 inline=False
             )
@@ -5722,7 +5722,7 @@ async def save_queue_state(self):
             players_text = "No specific houseguests highlighted"
         
         embed.add_field(
-            name="⭐ Key Players",
+            name="🔑 Key Players",
             value=players_text,
             inline=False
         )
@@ -5823,7 +5823,7 @@ async def save_queue_state(self):
             players_text = "No specific houseguests highlighted"
         
         embed.add_field(
-            name="⭐ Key Players",
+            name="🔑 Key Players",
             value=players_text,
             inline=False
         )
@@ -6167,7 +6167,7 @@ async def save_queue_state(self):
         
         if analysis.get('key_players'):
             embed.add_field(
-                name="⭐ Key Players",
+                name="🔑 Key Players",
                 value=" • ".join([f"**{player}**" for player in analysis['key_players'][:5]]),
                 inline=False
             )
