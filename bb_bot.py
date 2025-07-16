@@ -4062,75 +4062,51 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return analysis
 
     def _parse_structured_llm_response(self, response_text: str) -> dict:
-        """Parse structured LLM response with better error handling"""
+        """Improved JSON parsing with better error handling"""
         try:
-            # Clean the response text first
+            # Clean the response first
             cleaned_text = response_text.strip()
             
-            # Try to extract JSON - be more flexible with finding it
+            # More robust JSON extraction
             json_start = cleaned_text.find('{')
-            json_end = cleaned_text.rfind('}') + 1
+            if json_start == -1:
+                raise ValueError("No JSON opening brace found")
             
-            if json_start != -1 and json_end > json_start:
-                json_text = cleaned_text[json_start:json_end]
-                
-                # Clean up common JSON issues
-                json_text = json_text.replace('\n', ' ')  # Remove newlines
-                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
-                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
-                
-                try:
-                    data = json.loads(json_text)
-                    
-                    # Validate and fix required fields
-                    if not isinstance(data, dict):
-                        raise ValueError("Response is not a dictionary")
-                    
-                    # Ensure required fields exist
-                    required_fields = {
-                        'headline': 'Big Brother Activity Continues',
-                        'key_players': [],
-                        'overall_importance': 5,
-                        'importance_explanation': 'Standard house activity'
-                    }
-                    
-                    for field, default_value in required_fields.items():
-                        if field not in data or data[field] is None:
-                            data[field] = default_value
-                    
-                    # Clean up null values in sections
-                    section_fields = [
-                        'strategic_analysis', 'alliance_dynamics', 
-                        'entertainment_highlights', 'showmance_updates', 'house_culture'
-                    ]
-                    
-                    for field in section_fields:
-                        if field in data and (data[field] is None or str(data[field]).lower() in ['null', 'none', 'nothing']):
-                            data[field] = None
-                    
-                    # Ensure key_players is a list
-                    if not isinstance(data.get('key_players'), list):
-                        data['key_players'] = []
-                    
-                    # Ensure overall_importance is an integer between 1-10
-                    try:
-                        importance = int(data.get('overall_importance', 5))
-                        data['overall_importance'] = max(1, min(10, importance))
-                    except (ValueError, TypeError):
-                        data['overall_importance'] = 5
-                    
-                    logger.info("Successfully parsed structured LLM response")
-                    return data
-                    
-                except json.JSONDecodeError as e:
-                    logger.error(f"JSON decode error: {e}")
-                    logger.error(f"Problematic JSON: {json_text[:200]}...")
-                    raise ValueError("Invalid JSON structure")
-            else:
-                raise ValueError("No JSON found in response")
-                
+            # Find matching closing brace (handle nested objects)
+            brace_count = 0
+            json_end = -1
+            for i, char in enumerate(cleaned_text[json_start:], json_start):
+                if char == '{':
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0:
+                        json_end = i + 1
+                        break
+            
+            if json_end == -1:
+                raise ValueError("No matching closing brace found")
+            
+            json_text = cleaned_text[json_start:json_end]
+            
+            # Clean up common JSON issues
+            json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
+            json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
+            json_text = re.sub(r'\n', ' ', json_text)      # Remove newlines
+            
+            data = json.loads(json_text)
+            
+            # Validate structure
+            required_fields = ['headline', 'key_players', 'overall_importance']
+            for field in required_fields:
+                if field not in data:
+                    data[field] = self._get_default_value(field)
+            
+            logger.info("Successfully parsed structured LLM response")
+            return data
+            
         except Exception as e:
-            logger.warning(f"Structured JSON parsing failed: {e}, creating fallback")
+            logger.warning(f"JSON parsing failed: {e}")
             return self._create_fallback_structured_response(response_text)
 
     def _create_fallback_structured_response(self, response_text: str) -> dict:
