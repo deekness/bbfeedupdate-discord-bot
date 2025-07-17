@@ -3612,9 +3612,11 @@ class UpdateBatcher:
                 return embeds
             except Exception as e:
                 logger.error(f"LLM hourly summary failed: {e}")
-        
-        # Fallback to pattern-based
-        return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+                # Fall back to pattern-based summary
+                return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
+        else:
+            # Use pattern-based fallback
+            return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
 
     def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
         """Pattern-based hourly summary for timeframe - LAST RESORT"""
@@ -3663,6 +3665,93 @@ class UpdateBatcher:
         
         return [embed]
 
+    async def _create_forced_structured_summary_from_db(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
+        """Create structured summary from database data for specific timeframe"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Sort updates chronologically
+        sorted_updates = sorted(updates, key=lambda x: x.pub_date)
+        
+        # Format updates in chronological order (limit to prevent token overflow)
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates[:20], 1):  # Limit to 20 updates
+            time_str = self._extract_correct_time(update)
+            time_str = time_str.lstrip('0')
+            formatted_updates.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
+                formatted_updates.append(f"   {desc}")
+        
+        updates_text = "\n".join(formatted_updates)
+        
+        # Calculate current day
+        current_day = max(1, (datetime.now().date() - datetime(2025, 7, 8).date()).days + 1)
+        
+        # Format hour period for display
+        hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
+        
+        # Build structured prompt
+        prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
+    
+    HOUR PERIOD: {hour_period}
+    UPDATES FROM THIS HOUR ({len(updates)} total) - IN CHRONOLOGICAL ORDER:
+    {updates_text}
+    
+    Create a comprehensive summary that presents events chronologically as they happened during {hour_period}.
+    
+    Provide your analysis in this EXACT JSON format:
+    
+    {{
+        "headline": "Brief headline summarizing the most important development during {hour_period}",
+        "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning during this hour. Only include if there are meaningful strategic developments - otherwise use null.",
+        "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes during this hour. Only include if there are meaningful alliance developments - otherwise use null.",
+        "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content from this hour. Only include if there are entertaining moments - otherwise use null.",
+        "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments during this hour. Only include if there are romance-related developments - otherwise use null.",
+        "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere during this hour. Only include if there are meaningful cultural/social developments - otherwise use null.",
+        "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
+        "overall_importance": 8,
+        "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
+    }}
+    
+    CRITICAL INSTRUCTIONS:
+    - ONLY include sections where there are actual meaningful developments during {hour_period}
+    - Use null for any section that doesn't have substantial content
+    - Present events chronologically (earliest to latest) within {hour_period}
+    - Key players should be the houseguests most central to this specific hour's events
+    - Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+    - Don't force content into sections - be selective and only include what's truly noteworthy
+    - If a section would be empty or just say "nothing happened", use null instead
+    - Focus specifically on what happened during {hour_period}, not general game state"""
+    
+        try:
+            # Call LLM
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=1200,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            response_text = response.content[0].text
+            
+            # Parse JSON response
+            analysis_data = self._parse_structured_llm_response(response_text)
+            
+            # Create structured embed using existing method
+            embeds = self._create_structured_summary_embed(
+                analysis_data, len(updates), "hourly_summary"
+            )
+            
+            logger.info(f"Created structured hourly summary from database data: {len(updates)} updates from {hour_period}")
+            return embeds
+            
+        except Exception as e:
+            logger.error(f"Failed to create structured summary from DB: {e}")
+            logger.error(f"Raw response: {response_text if 'response_text' in locals() else 'No response'}")
+            # Fallback to pattern-based summary
+            return self._create_pattern_hourly_summary_for_timeframe(updates, hour_start, hour_end)
+    
     async def _create_forced_structured_summary(self, summary_type: str) -> List[discord.Embed]:
         """Create structured summary with forced contextual format"""
         await self.rate_limiter.wait_if_needed()
