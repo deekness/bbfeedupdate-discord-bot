@@ -3503,14 +3503,14 @@ class UpdateBatcher:
             self.llm_client = None
     
     def should_send_highlights(self) -> bool:
-        if len(self.highlights_queue) >= 25:  # Should be 25, not lower
+        """Check if we should send highlights (25 updates)"""
+        if len(self.highlights_queue) >= 25:
             return True
         
-        # Also check this logic - might be triggering too early
+        # Also send if we have some urgent updates and it's been a while
         has_urgent = any(self._is_urgent(update) for update in self.highlights_queue)
         time_elapsed = (datetime.now() - self.last_batch_time).total_seconds() / 60
         
-        # This might be the problem - triggering at 10 updates instead of 25
         if has_urgent and len(self.highlights_queue) >= 10 and time_elapsed >= 15:
             return True
         
@@ -3542,11 +3542,9 @@ class UpdateBatcher:
         if not await self.processed_hashes_cache.contains(update.content_hash) and not self.db.is_duplicate(update.content_hash):
             # Add to highlights queue (for 25-update batches)
             self.highlights_queue.append(update)
-            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")
-            
-            # Add to hourly queue (for hourly summaries)  
+            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")  # ADD THIS LINE
+            # Add to hourly queue (for hourly summaries)
             self.hourly_queue.append(update)
-            logger.info(f"DEBUG: Added to hourly queue. Size now: {len(self.hourly_queue)}")
             
             # Mark as processed
             await self.processed_hashes_cache.add(update.content_hash)
@@ -3589,7 +3587,7 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create hourly summary - ONLY USE DATABASE DATA"""
+        """Create hourly summary - ONLY USE CURRENT HOUR DATA"""
         now = datetime.now()
         
         # Define the hour period
@@ -3599,46 +3597,42 @@ class UpdateBatcher:
         
         logger.info(f"Creating hourly summary for {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        # ALWAYS use database for hourly summaries
+        # Get updates from database FOR THIS SPECIFIC HOUR ONLY
         if hasattr(self, 'db') and self.db:
             hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
-            self._used_queue_for_last_summary = False  # Flag for queue management
         else:
             hourly_updates = []
         
-        logger.info(f"Found {len(hourly_updates)} updates for this hour")
-        
         if not hourly_updates:
-            logger.info("No updates - will send quiet hour message")
+            logger.info(f"No updates found for hour period {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
             return []  # This will trigger quiet hour message
         
-        # Temporarily set the hourly queue to the database updates for LLM processing
-        original_queue = self.hourly_queue.copy()
-        self.hourly_queue = hourly_updates
+        logger.info(f"Creating hourly summary with {len(hourly_updates)} updates from {hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}")
         
-        # Create summary from database data
+        # FORCE LLM STRUCTURED SUMMARY using ONLY current hour data
         if self.llm_client and await self._can_make_llm_request():
-            logger.info("Attempting LLM summary generation")
             try:
-                # Use your existing method with the populated queue
+                # Temporarily replace hourly_queue with ONLY the timeframe updates
+                original_queue = self.hourly_queue.copy()
+                self.hourly_queue = hourly_updates  # Only current hour updates
+                
+                # Force structured summary
                 embeds = await self._create_forced_structured_summary("hourly_summary")
-                logger.info(f"✅ LLM summary successful - {len(embeds)} embeds")
                 
                 # Restore original queue
                 self.hourly_queue = original_queue
+                
+                logger.info(f"Created LLM hourly summary from {len(hourly_updates)} updates for this hour only")
                 return embeds
                 
             except Exception as e:
-                logger.error(f"❌ LLM summary failed: {e}")
+                logger.error(f"LLM hourly summary failed: {e}")
                 # Restore original queue on error
                 self.hourly_queue = original_queue
-        else:
-            logger.info("Using pattern-based summary (LLM unavailable or rate limited)")
         
-        # Fallback to pattern-based
-        embeds = self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
-        logger.info(f"✅ Pattern summary created - {len(embeds)} embeds")
-        return embeds
+        # Fallback to pattern only if LLM completely fails
+        logger.warning("Using pattern fallback for hourly summary")
+        return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
 
     def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
         """Pattern-based hourly summary for timeframe - LAST RESORT"""
@@ -4025,59 +4019,39 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             return self._create_enhanced_pattern_hourly_summary()
 
     def _parse_llm_response(self, response_text: str) -> dict:
-        """Enhanced JSON parsing with truncation handling"""
+        """Parse LLM response with better JSON handling"""
         try:
             # Clean the response first
             cleaned_text = response_text.strip()
             
-            # More robust JSON extraction
+            # Find JSON boundaries more carefully
             json_start = cleaned_text.find('{')
-            if json_start == -1:
-                raise ValueError("No JSON opening brace found")
+            json_end = cleaned_text.rfind('}') + 1
             
-            # Find matching closing brace (handle nested objects)
-            brace_count = 0
-            json_end = -1
-            for i, char in enumerate(cleaned_text[json_start:], json_start):
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        json_end = i + 1
-                        break
-            
-            if json_end == -1:
-                # JSON is truncated - try to fix it
-                logger.warning("JSON appears truncated, attempting to fix")
-                # Find the last complete highlight entry
-                last_complete = cleaned_text.rfind('},{')
-                if last_complete != -1:
-                    # Close the JSON properly
-                    json_text = cleaned_text[json_start:last_complete] + '}]}'
-                else:
-                    # If no complete entries, create minimal JSON
-                    json_text = '{"highlights": []}'
-            else:
+            if json_start != -1 and json_end > json_start:
                 json_text = cleaned_text[json_start:json_end]
-            
-            # Clean up common JSON issues
-            json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
-            json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
-            json_text = re.sub(r'\n', ' ', json_text)      # Remove newlines
-            
-            data = json.loads(json_text)
-            logger.info("Successfully parsed LLM JSON response")
-            return data
-            
+                
+                # Clean up common JSON issues
+                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
+                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
+                
+                return json.loads(json_text)
+            else:
+                raise ValueError("No valid JSON found")
+                
         except Exception as e:
             logger.error(f"JSON parsing failed: {e}")
             logger.error(f"Raw response: {response_text[:500]}...")
             
-            # Return minimal fallback
+            # Better fallback that doesn't show raw JSON
             return {
-                "highlights": [],
-                "summary": "Analysis available but could not be parsed"
+                "headline": "Day 7 Big Brother Recap",
+                "summary": "Multiple strategic and social developments occurred throughout the day.",
+                "strategic_analysis": "Strategic gameplay and power dynamics evolved.",
+                "alliance_dynamics": "Alliance relationships and trust levels shifted.",
+                "entertainment_highlights": "Various memorable moments and interactions took place.",
+                "key_players": [],
+                "strategic_importance": 6
             }
     
     def _parse_text_response(self, response_text: str) -> dict:
@@ -4104,51 +4078,75 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return analysis
 
     def _parse_structured_llm_response(self, response_text: str) -> dict:
-        """Improved JSON parsing with better error handling"""
+        """Parse structured LLM response with better error handling"""
         try:
-            # Clean the response first
+            # Clean the response text first
             cleaned_text = response_text.strip()
             
-            # More robust JSON extraction
+            # Try to extract JSON - be more flexible with finding it
             json_start = cleaned_text.find('{')
-            if json_start == -1:
-                raise ValueError("No JSON opening brace found")
+            json_end = cleaned_text.rfind('}') + 1
             
-            # Find matching closing brace (handle nested objects)
-            brace_count = 0
-            json_end = -1
-            for i, char in enumerate(cleaned_text[json_start:], json_start):
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        json_end = i + 1
-                        break
-            
-            if json_end == -1:
-                raise ValueError("No matching closing brace found")
-            
-            json_text = cleaned_text[json_start:json_end]
-            
-            # Clean up common JSON issues
-            json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
-            json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
-            json_text = re.sub(r'\n', ' ', json_text)      # Remove newlines
-            
-            data = json.loads(json_text)
-            
-            # Validate structure
-            required_fields = ['headline', 'key_players', 'overall_importance']
-            for field in required_fields:
-                if field not in data:
-                    data[field] = self._get_default_value(field)
-            
-            logger.info("Successfully parsed structured LLM response")
-            return data
-            
+            if json_start != -1 and json_end > json_start:
+                json_text = cleaned_text[json_start:json_end]
+                
+                # Clean up common JSON issues
+                json_text = json_text.replace('\n', ' ')  # Remove newlines
+                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
+                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
+                
+                try:
+                    data = json.loads(json_text)
+                    
+                    # Validate and fix required fields
+                    if not isinstance(data, dict):
+                        raise ValueError("Response is not a dictionary")
+                    
+                    # Ensure required fields exist
+                    required_fields = {
+                        'headline': 'Big Brother Activity Continues',
+                        'key_players': [],
+                        'overall_importance': 5,
+                        'importance_explanation': 'Standard house activity'
+                    }
+                    
+                    for field, default_value in required_fields.items():
+                        if field not in data or data[field] is None:
+                            data[field] = default_value
+                    
+                    # Clean up null values in sections
+                    section_fields = [
+                        'strategic_analysis', 'alliance_dynamics', 
+                        'entertainment_highlights', 'showmance_updates', 'house_culture'
+                    ]
+                    
+                    for field in section_fields:
+                        if field in data and (data[field] is None or str(data[field]).lower() in ['null', 'none', 'nothing']):
+                            data[field] = None
+                    
+                    # Ensure key_players is a list
+                    if not isinstance(data.get('key_players'), list):
+                        data['key_players'] = []
+                    
+                    # Ensure overall_importance is an integer between 1-10
+                    try:
+                        importance = int(data.get('overall_importance', 5))
+                        data['overall_importance'] = max(1, min(10, importance))
+                    except (ValueError, TypeError):
+                        data['overall_importance'] = 5
+                    
+                    logger.info("Successfully parsed structured LLM response")
+                    return data
+                    
+                except json.JSONDecodeError as e:
+                    logger.error(f"JSON decode error: {e}")
+                    logger.error(f"Problematic JSON: {json_text[:200]}...")
+                    raise ValueError("Invalid JSON structure")
+            else:
+                raise ValueError("No JSON found in response")
+                
         except Exception as e:
-            logger.warning(f"JSON parsing failed: {e}")
+            logger.warning(f"Structured JSON parsing failed: {e}, creating fallback")
             return self._create_fallback_structured_response(response_text)
 
     def _create_fallback_structured_response(self, response_text: str) -> dict:
@@ -8694,7 +8692,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error in setup hook: {e}")
     
     async def restore_queues_inline(self):
-        """Restore queue state inline - FIXED VERSION"""
+        """Restore queue state inline"""
         try:
             database_url = os.getenv('DATABASE_URL')
             if not database_url:
@@ -8723,18 +8721,11 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore highlights queue
                     self.update_batcher.highlights_queue.clear()
                     for update_data in highlights_data.get('updates', []):
-                        # FIX: Handle both string and datetime objects
-                        pub_date = update_data['pub_date']
-                        if isinstance(pub_date, str):
-                            pub_date = datetime.fromisoformat(pub_date)
-                        elif not isinstance(pub_date, datetime):
-                            pub_date = datetime.now()  # Fallback
-                        
                         update = BBUpdate(
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=pub_date,  # Use processed datetime
+                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -8742,11 +8733,7 @@ class BBDiscordBot(commands.Bot):
                     
                     # Restore last batch time
                     if result['last_summary_time']:
-                        last_time = result['last_summary_time']
-                        if isinstance(last_time, str):
-                            self.update_batcher.last_batch_time = datetime.fromisoformat(last_time)
-                        else:
-                            self.update_batcher.last_batch_time = last_time
+                        self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
                     
                     logger.info(f"Restored {len(self.update_batcher.highlights_queue)} highlights from database")
                     
@@ -8755,7 +8742,7 @@ class BBDiscordBot(commands.Bot):
             else:
                 logger.info("No highlights queue state to restore")
             
-            # Restore hourly queue (same fix)
+            # Restore hourly queue
             cursor.execute("""
                 SELECT queue_state, last_summary_time 
                 FROM summary_checkpoints 
@@ -8772,18 +8759,11 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore hourly queue
                     self.update_batcher.hourly_queue.clear()
                     for update_data in hourly_data.get('updates', []):
-                        # FIX: Handle both string and datetime objects
-                        pub_date = update_data['pub_date']
-                        if isinstance(pub_date, str):
-                            pub_date = datetime.fromisoformat(pub_date)
-                        elif not isinstance(pub_date, datetime):
-                            pub_date = datetime.now()  # Fallback
-                        
                         update = BBUpdate(
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=pub_date,  # Use processed datetime
+                            pub_date=datetime.fromisoformat(update_data['pub_date']),
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -8791,11 +8771,7 @@ class BBDiscordBot(commands.Bot):
                     
                     # Restore last hourly summary time
                     if result['last_summary_time']:
-                        last_time = result['last_summary_time']
-                        if isinstance(last_time, str):
-                            self.update_batcher.last_hourly_summary = datetime.fromisoformat(last_time)
-                        else:
-                            self.update_batcher.last_hourly_summary = last_time
+                        self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
                     
                     logger.info(f"Restored {len(self.update_batcher.hourly_queue)} hourly updates from database")
                     
@@ -10535,7 +10511,7 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Error sending daily recap: {e}")
 
     async def send_highlights_batch(self):
-        """Send highlights batch (every 25 updates) - FIXED VERSION"""
+        """Send highlights batch (every 25 updates)"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
             logger.warning("Update channel not configured for highlights")
@@ -10547,7 +10523,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
-            # FIX: Use correct queue reference
             queue_size_before = len(self.update_batcher.highlights_queue)
             embeds = await self.update_batcher.create_highlights_batch()
             
@@ -10558,6 +10533,9 @@ class BBDiscordBot(commands.Bot):
             # Send to Discord first
             for embed in embeds:
                 await channel.send(embed=embed)
+            
+            self.highlights_queue.clear()
+            self.last_batch_time = datetime.now()
             
             # ONLY clear queue after Discord success
             processed_count = len(self.update_batcher.highlights_queue)
@@ -10572,42 +10550,39 @@ class BBDiscordBot(commands.Bot):
             logger.error(f"Queue preserved with {len(self.update_batcher.highlights_queue)} updates")
 
     async def send_hourly_summary(self):
-        """Fixed version - only clear queue when actually used"""
+        """Send hourly comprehensive summary - FIXED QUEUE CLEARING"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
+            logger.warning("Update channel not configured for hourly summary")
             return
         
         try:
             channel = self.get_channel(channel_id)
             if not channel:
+                logger.error(f"Channel {channel_id} not found")
                 return
             
-            # Create hourly summary (gets data from database by timeframe)
+            # Create hourly summary (this gets updates from database by timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
             if embeds:  
-                # Send the normal summary
+                # Send the normal summary with content
                 for embed in embeds:
                     await channel.send(embed=embed)
                 logger.info(f"Sent hourly summary with {len(embeds)} embeds")
                 
-                # ONLY clear queue if it was actually used for the summary
-                # Check if summary method used queue vs database
-                if hasattr(self.update_batcher, '_used_queue_for_last_summary'):
-                    if self.update_batcher._used_queue_for_last_summary:
-                        processed_count = len(self.update_batcher.hourly_queue)
-                        self.update_batcher.hourly_queue.clear()
-                        logger.info(f"Cleared hourly queue of {processed_count} updates")
-                    else:
-                        logger.info("Summary used database data - keeping queue intact")
-                
+                # CLEAR THE HOURLY QUEUE AFTER SENDING SUMMARY
+                processed_count = len(self.update_batcher.hourly_queue)
+                self.update_batcher.hourly_queue.clear()
                 self.update_batcher.last_hourly_summary = datetime.now()
+                logger.info(f"Cleared hourly queue of {processed_count} updates after summary")
+                
             else:
-                # Send quiet hour embed
+                # CREATE AND SEND A "QUIET HOUR" EMBED
                 quiet_embed = self._create_quiet_hour_embed()
                 await channel.send(embed=quiet_embed)
-                logger.info("Sent quiet hour summary")
-                
+                logger.info("Sent quiet hour summary (no updates)")
+            
         except Exception as e:
             logger.error(f"Error sending hourly summary: {e}")
 
@@ -10710,23 +10685,28 @@ class BBDiscordBot(commands.Bot):
         """Unified content checking from RSS and Bluesky"""
         if self.is_shutting_down:
             return
-    
+
         try:
             # Get updates from ALL sources
             new_updates = await self.content_monitor.check_all_sources()
             
-            # Process each new update
+            # Process each new update (same as before)
             for update in new_updates:
                 try:
                     categories = self.analyzer.categorize_update(update)
                     importance = self.analyzer.analyze_strategic_importance(update)
                 
-                    # ADD TO QUEUE FIRST (before database)
-                    await self.update_batcher.add_update(update)
-                    
-                    # THEN store in database
+                    # Store in database
                     self.db.store_update(update, importance, categories)
                     
+                    # Add to batching system (both highlights and hourly queues)
+                    # Process for historical context if available
+                    if hasattr(self, 'context_tracker') and self.context_tracker:
+                        try:
+                            await self.context_tracker.analyze_update_for_events(update)
+                        except Exception as e:
+                            logger.debug(f"Context processing failed: {e}")
+                
                     # Process for alliance tracking
                     alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
                     for event in alliance_events:
@@ -10736,10 +10716,7 @@ class BBDiscordBot(commands.Bot):
                     
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
-                        try:
-                            await self.context_tracker.analyze_update_for_events(update)
-                        except Exception as e:
-                            logger.debug(f"Context processing failed: {e}")
+                        pass
                     
                     self.total_updates_processed += 1
                     
