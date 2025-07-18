@@ -2748,14 +2748,14 @@ class PredictionManager:
             raise
         finally:
             conn.close()
-    
+            
     def make_prediction(self, user_id: int, prediction_id: int, option: str) -> bool:
-        """User makes or updates a prediction"""
+        """User makes or updates a prediction - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            # Check if prediction exists and is active
+            # Check if prediction exists and is active - FIXED
             self._execute_query(cursor, """
                 SELECT status, closes_at, options FROM predictions 
                 WHERE prediction_id = ?
@@ -2791,7 +2791,7 @@ class PredictionManager:
             if option not in options:
                 return False
             
-            # Insert or update user prediction
+            # Insert or update user prediction - FIXED
             if self.use_postgresql:
                 self._execute_query(cursor, "", (user_id, prediction_id, option), """
                     INSERT INTO user_predictions 
@@ -2801,7 +2801,7 @@ class PredictionManager:
                     DO UPDATE SET option = EXCLUDED.option, updated_at = CURRENT_TIMESTAMP
                 """)
             else:
-                cursor.execute("""
+                self._execute_query(cursor, """
                     INSERT OR REPLACE INTO user_predictions 
                     (user_id, prediction_id, option, updated_at)
                     VALUES (?, ?, ?, CURRENT_TIMESTAMP)
@@ -2818,13 +2818,15 @@ class PredictionManager:
         finally:
             conn.close()
     
+    
     def close_prediction(self, prediction_id: int, admin_user_id: int) -> bool:
-        """Manually close a prediction poll"""
+        """Manually close a prediction poll - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
+            # FIXED: Use _execute_query helper
+            self._execute_query(cursor, """
                 UPDATE predictions 
                 SET status = ? 
                 WHERE prediction_id = ? AND status = ?
@@ -2845,16 +2847,16 @@ class PredictionManager:
             conn.close()
     
     def resolve_prediction(self, prediction_id: int, correct_option: str, admin_user_id: int) -> Tuple[bool, int, List[int]]:
-        """Resolve a prediction and award points, returning success, count, and user IDs"""
+        """Resolve a prediction and award points - FIXED"""
         conn = self.get_connection()
         
         try:
-            # Set busy timeout for this connection
+            # Set busy timeout for SQLite
             if not self.use_postgresql:
                 conn.execute("PRAGMA busy_timeout = 10000")
             cursor = conn.cursor()
             
-            # Get prediction details
+            # Get prediction details - FIXED
             self._execute_query(cursor, """
                 SELECT prediction_type, options, status, guild_id, week_number
                 FROM predictions WHERE prediction_id = ?
@@ -2885,7 +2887,7 @@ class PredictionManager:
             if correct_option not in options:
                 return False, 0, []
             
-            # Get users who predicted correctly BEFORE updating the prediction
+            # Get users who predicted correctly BEFORE updating the prediction - FIXED
             self._execute_query(cursor, """
                 SELECT user_id FROM user_predictions 
                 WHERE prediction_id = ? AND option = ?
@@ -2897,14 +2899,14 @@ class PredictionManager:
             else:
                 correct_user_ids = [row[0] for row in cursor.fetchall()]
             
-            # Update prediction status
+            # Update prediction status - FIXED
             self._execute_query(cursor, """
                 UPDATE predictions 
                 SET status = ?, correct_option = ?
                 WHERE prediction_id = ?
             """, (PredictionStatus.RESOLVED.value, correct_option, prediction_id))
             
-            # Get all user predictions for this poll
+            # Get all user predictions for this poll - FIXED
             self._execute_query(cursor, """
                 SELECT user_id, option FROM user_predictions 
                 WHERE prediction_id = ?
@@ -2951,7 +2953,7 @@ class PredictionManager:
     
     def _update_leaderboard(self, user_id: int, guild_id: int, week_number: int, 
                           points: int, was_correct: bool, participated: bool):
-        """Update user's leaderboard stats with improved error handling"""
+        """Update user's leaderboard stats - FIXED"""
         max_retries = 3
         retry_delay = 0.1  # 100ms
         
@@ -2959,14 +2961,15 @@ class PredictionManager:
             conn = None
             try:
                 conn = self.get_connection()
-                # Set a longer timeout and immediate lock behavior
-                conn.execute("PRAGMA busy_timeout = 5000")  # 5 second timeout
-                conn.execute("BEGIN IMMEDIATE")  # Get exclusive lock immediately
+                cursor = conn.cursor()  # FIXED: Get cursor from connection
                 
-                cursor = conn.cursor()
+                # Set timeout and lock for SQLite only
+                if not self.use_postgresql:
+                    conn.execute("PRAGMA busy_timeout = 5000")
+                    conn.execute("BEGIN IMMEDIATE")
                 
-                # Get current stats
-                cursor.execute("""
+                # Get current stats - FIXED
+                self._execute_query(cursor, """
                     SELECT season_points, weekly_points, correct_predictions, total_predictions
                     FROM prediction_leaderboard 
                     WHERE user_id = ? AND guild_id = ? AND week_number = ?
@@ -2976,13 +2979,21 @@ class PredictionManager:
                 
                 if result:
                     # Update existing record
-                    season_points, weekly_points, correct_preds, total_preds = result
+                    if self.use_postgresql:
+                        season_points = result['season_points']
+                        weekly_points = result['weekly_points']
+                        correct_preds = result['correct_predictions']
+                        total_preds = result['total_predictions']
+                    else:
+                        season_points, weekly_points, correct_preds, total_preds = result
+                    
                     new_season_points = season_points + points
                     new_weekly_points = weekly_points + points
                     new_correct = correct_preds + (1 if was_correct else 0)
                     new_total = total_preds + (1 if participated else 0)
                     
-                    cursor.execute("""
+                    # FIXED: Use _execute_query
+                    self._execute_query(cursor, """
                         UPDATE prediction_leaderboard 
                         SET season_points = ?, weekly_points = ?, 
                             correct_predictions = ?, total_predictions = ?,
@@ -2991,8 +3002,8 @@ class PredictionManager:
                     """, (new_season_points, new_weekly_points, new_correct, new_total,
                           user_id, guild_id, week_number))
                 else:
-                    # Create new record
-                    cursor.execute("""
+                    # Create new record - FIXED
+                    self._execute_query(cursor, """
                         INSERT INTO prediction_leaderboard 
                         (user_id, guild_id, week_number, season_points, weekly_points, 
                          correct_predictions, total_predictions)
@@ -3004,8 +3015,9 @@ class PredictionManager:
                 logger.info(f"Successfully updated leaderboard for user {user_id}")
                 break  # Success, exit retry loop
                 
-            except sqlite3.OperationalError as e:
-                if "database is locked" in str(e).lower() and attempt < max_retries - 1:
+            except Exception as e:
+                error_msg = str(e).lower()
+                if "database is locked" in error_msg and attempt < max_retries - 1:
                     logger.warning(f"Database locked on attempt {attempt + 1}, retrying in {retry_delay}s")
                     if conn:
                         try:
@@ -3013,26 +3025,21 @@ class PredictionManager:
                         except:
                             pass
                         conn.close()
-                    time.sleep(retry_delay)  # Use time.sleep instead of asyncio.sleep
+                    time.sleep(retry_delay)
                     retry_delay *= 2  # Exponential backoff
                     continue
                 else:
-                    logger.error(f"Database lock error after {attempt + 1} attempts: {e}")
+                    logger.error(f"Database error after {attempt + 1} attempts: {e}")
                     if conn:
                         conn.rollback()
                     raise
-            except Exception as e:
-                logger.error(f"Error updating leaderboard: {e}")
-                if conn:
-                    conn.rollback()
-                raise
             finally:
                 if conn:
                     conn.close()
 
     
     def get_active_predictions(self, guild_id: int) -> List[Dict]:
-        """Get all active predictions for a guild"""
+        """Get all active predictions for a guild - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -3094,7 +3101,7 @@ class PredictionManager:
             conn.close()
     
     def get_user_prediction(self, user_id: int, prediction_id: int) -> Optional[str]:
-        """Get a user's prediction for a specific poll"""
+        """Get a user's prediction for a specific poll - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -3119,7 +3126,7 @@ class PredictionManager:
             conn.close()
     
     def get_season_leaderboard(self, guild_id: int, limit: int = 10) -> List[Dict]:
-        """Get season-long leaderboard"""
+        """Get season-long leaderboard - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -3204,7 +3211,7 @@ class PredictionManager:
             conn.close()
     
     def get_user_predictions_history(self, user_id: int, guild_id: int) -> List[Dict]:
-        """Get user's prediction history"""
+        """Get user's prediction history - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -3259,6 +3266,7 @@ class PredictionManager:
             return []
         finally:
             conn.close()
+            
     
     def _get_current_week(self) -> int:
         """Calculate current BB week (you may want to adjust this logic)"""
@@ -3270,23 +3278,16 @@ class PredictionManager:
         return max(1, week_number)
     
     def auto_close_expired_predictions(self):
-        """Close predictions that have passed their closing time"""
+        """Close predictions that have passed their closing time - FIXED"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            if self.use_postgresql:
-                cursor.execute("""
-                    UPDATE predictions 
-                    SET status = %s 
-                    WHERE status = %s AND closes_at <= %s
-                """, (PredictionStatus.CLOSED.value, PredictionStatus.ACTIVE.value, datetime.now()))
-            else:
-                cursor.execute("""
-                    UPDATE predictions 
-                    SET status = ? 
-                    WHERE status = ? AND closes_at <= ?
-                """, (PredictionStatus.CLOSED.value, PredictionStatus.ACTIVE.value, datetime.now()))
+            self._execute_query(cursor, """
+                UPDATE predictions 
+                SET status = ? 
+                WHERE status = ? AND closes_at <= ?
+            """, (PredictionStatus.CLOSED.value, PredictionStatus.ACTIVE.value, datetime.now()))
             
             closed_count = cursor.rowcount
             conn.commit()
