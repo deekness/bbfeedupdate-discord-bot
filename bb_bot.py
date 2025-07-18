@@ -9822,13 +9822,24 @@ class BBDiscordBot(commands.Bot):
                 conn = self.prediction_manager.get_connection()
                 cursor = conn.cursor()
                 
-                cursor.execute("""
-                    SELECT prediction_id, title, description, prediction_type, 
-                           options, closes_at, week_number, status
-                    FROM predictions 
-                    WHERE guild_id = ? AND status IN ('active', 'closed')
-                    ORDER BY closes_at DESC
-                """, (interaction.guild.id,))
+                # FIXED: Use proper PostgreSQL syntax with %s placeholders
+                if self.prediction_manager.use_postgresql:
+                    cursor.execute("""
+                        SELECT prediction_id, title, description, prediction_type, 
+                               options, closes_at, week_number, status
+                        FROM predictions 
+                        WHERE guild_id = %s AND status IN ('active', 'closed')
+                        ORDER BY closes_at DESC
+                    """, (interaction.guild.id,))
+                else:
+                    # SQLite syntax for fallback
+                    cursor.execute("""
+                        SELECT prediction_id, title, description, prediction_type, 
+                               options, closes_at, week_number, status
+                        FROM predictions 
+                        WHERE guild_id = ? AND status IN ('active', 'closed')
+                        ORDER BY closes_at DESC
+                    """, (interaction.guild.id,))
                 
                 results = cursor.fetchall()
                 conn.close()
@@ -9845,13 +9856,33 @@ class BBDiscordBot(commands.Bot):
                 # Convert to the format expected by the view
                 resolvable_predictions = []
                 for row in results:
-                    pred_id, title, desc, pred_type, options_json, closes_at, week_num, status = row
+                    if self.prediction_manager.use_postgresql:
+                        # PostgreSQL returns RealDictCursor results
+                        pred_id = row['prediction_id']
+                        title = row['title']
+                        desc = row['description']
+                        pred_type = row['prediction_type']
+                        options_json = row['options']
+                        closes_at = row['closes_at']
+                        week_num = row['week_number']
+                        status = row['status']
+                    else:
+                        # SQLite returns tuple
+                        pred_id, title, desc, pred_type, options_json, closes_at, week_num, status = row
+                    
+                    # Parse options JSON safely
+                    try:
+                        options = json.loads(options_json) if options_json else []
+                    except (json.JSONDecodeError, TypeError):
+                        logger.warning(f"Invalid options JSON for prediction {pred_id}: {options_json}")
+                        options = []
+                    
                     resolvable_predictions.append({
                         'id': pred_id,
                         'title': title,
                         'description': desc,
                         'type': pred_type,
-                        'options': json.loads(options_json),
+                        'options': options,
                         'closes_at': closes_at,
                         'week_number': week_num,
                         'status': status
