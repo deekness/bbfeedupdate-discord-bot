@@ -3454,6 +3454,197 @@ class PredictionManager:
         
         return embed
 
+    def reprocess_all_resolved_polls(self, guild_id: int, admin_user_id: int) -> Dict[str, int]:
+        """Reprocess all resolved polls to fix point distribution"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get all resolved polls for this guild
+            self._execute_query(cursor, """
+                SELECT prediction_id, prediction_type, correct_option, week_number, title
+                FROM predictions 
+                WHERE guild_id = ? AND status = ? AND correct_option IS NOT NULL
+                ORDER BY prediction_id ASC
+            """, (guild_id, PredictionStatus.RESOLVED.value))
+            
+            resolved_polls = cursor.fetchall()
+            
+            if not resolved_polls:
+                return {"polls_processed": 0, "users_updated": 0, "total_points_awarded": 0}
+            
+            stats = {
+                "polls_processed": 0,
+                "users_updated": 0,
+                "total_points_awarded": 0,
+                "polls_details": []
+            }
+            
+            for poll_row in resolved_polls:
+                if self.use_postgresql:
+                    pred_id = poll_row['prediction_id']
+                    pred_type = poll_row['prediction_type']
+                    correct_option = poll_row['correct_option']
+                    week_number = poll_row['week_number']
+                    title = poll_row['title']
+                else:
+                    pred_id, pred_type, correct_option, week_number, title = poll_row
+                
+                # Process this poll
+                poll_stats = self._reprocess_single_poll(cursor, pred_id, pred_type, correct_option, week_number, title, guild_id)
+                
+                stats["polls_processed"] += 1
+                stats["users_updated"] += poll_stats["users_updated"]
+                stats["total_points_awarded"] += poll_stats["points_awarded"]
+                stats["polls_details"].append({
+                    "id": pred_id,
+                    "title": title,
+                    "correct_users": poll_stats["correct_users"],
+                    "points_awarded": poll_stats["points_awarded"]
+                })
+            
+            conn.commit()
+            logger.info(f"Reprocessed {stats['polls_processed']} polls, updated {stats['users_updated']} user records, awarded {stats['total_points_awarded']} total points")
+            
+            return stats
+            
+        except Exception as e:
+            logger.error(f"Error reprocessing resolved polls: {e}")
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+    
+    def _reprocess_single_poll(self, cursor, pred_id: int, pred_type: str, correct_option: str, week_number: int, title: str, guild_id: int) -> Dict[str, int]:
+        """Reprocess a single poll and return stats"""
+        
+        # Get all user predictions for this poll
+        self._execute_query(cursor, """
+            SELECT user_id, option FROM user_predictions 
+            WHERE prediction_id = ?
+        """, (pred_id,))
+        
+        if self.use_postgresql:
+            user_predictions = [(row['user_id'], row['option']) for row in cursor.fetchall()]
+        else:
+            user_predictions = cursor.fetchall()
+        
+        if not user_predictions:
+            return {"users_updated": 0, "points_awarded": 0, "correct_users": 0}
+        
+        # Calculate points for this prediction type
+        try:
+            prediction_type = PredictionType(pred_type)
+            points_per_correct = self.POINT_VALUES[prediction_type]
+        except (ValueError, KeyError):
+            logger.warning(f"Unknown prediction type: {pred_type} for poll {pred_id}")
+            points_per_correct = 5  # Default points
+        
+        current_week = week_number if week_number else self._get_current_week()
+        
+        users_updated = 0
+        total_points_awarded = 0
+        correct_users = 0
+        
+        for user_id, user_option in user_predictions:
+            was_correct = (user_option == correct_option)
+            points_to_award = points_per_correct if was_correct else 0
+            
+            if was_correct:
+                correct_users += 1
+            
+            try:
+                # Use the fixed _update_leaderboard_safe method
+                self._update_leaderboard_safe(cursor, user_id, guild_id, current_week, points_to_award, was_correct, True)
+                users_updated += 1
+                total_points_awarded += points_to_award
+                
+            except Exception as e:
+                logger.error(f"Error updating leaderboard for user {user_id} in poll {pred_id}: {e}")
+                continue
+        
+        logger.info(f"Reprocessed poll '{title}' (ID: {pred_id}): {correct_users} correct out of {len(user_predictions)} predictions")
+        
+        return {
+            "users_updated": users_updated,
+            "points_awarded": total_points_awarded,
+            "correct_users": correct_users
+        }
+    
+    def _update_leaderboard_safe(self, cursor, user_id: int, guild_id: int, week_number: int, 
+                               points: int, was_correct: bool, participated: bool):
+        """Safe leaderboard update that adds to existing scores instead of replacing"""
+        
+        # Get current stats
+        self._execute_query(cursor, """
+            SELECT season_points, weekly_points, correct_predictions, total_predictions
+            FROM prediction_leaderboard 
+            WHERE user_id = ? AND guild_id = ? AND week_number = ?
+        """, (user_id, guild_id, week_number))
+        
+        result = cursor.fetchone()
+        
+        if result:
+            # Update existing record - ADD to existing points instead of replacing
+            if self.use_postgresql:
+                season_points = result['season_points'] or 0
+                weekly_points = result['weekly_points'] or 0
+                correct_preds = result['correct_predictions'] or 0
+                total_preds = result['total_predictions'] or 0
+            else:
+                season_points, weekly_points, correct_preds, total_preds = result
+                season_points = season_points or 0
+                weekly_points = weekly_points or 0
+                correct_preds = correct_preds or 0
+                total_preds = total_preds or 0
+            
+            new_season_points = season_points + points
+            new_weekly_points = weekly_points + points
+            new_correct = correct_preds + (1 if was_correct else 0)
+            new_total = total_preds + (1 if participated else 0)
+            
+            self._execute_query(cursor, """
+                UPDATE prediction_leaderboard 
+                SET season_points = ?, weekly_points = ?, 
+                    correct_predictions = ?, total_predictions = ?,
+                    last_updated = CURRENT_TIMESTAMP
+                WHERE user_id = ? AND guild_id = ? AND week_number = ?
+            """, (new_season_points, new_weekly_points, new_correct, new_total,
+                  user_id, guild_id, week_number))
+        else:
+            # Create new record
+            self._execute_query(cursor, """
+                INSERT INTO prediction_leaderboard 
+                (user_id, guild_id, week_number, season_points, weekly_points, 
+                 correct_predictions, total_predictions)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, guild_id, week_number, points, points,
+                  1 if was_correct else 0, 1 if participated else 0))
+    
+    def clear_all_leaderboard_data(self, guild_id: int) -> int:
+        """Clear all leaderboard data for a guild (for fresh reprocessing)"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            self._execute_query(cursor, """
+                DELETE FROM prediction_leaderboard 
+                WHERE guild_id = ?
+            """, (guild_id,))
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+            logger.info(f"Cleared {deleted_count} leaderboard records for guild {guild_id}")
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error clearing leaderboard data: {e}")
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
 
 class UpdateBatcher:
     """Enhanced batching system with dual rhythms - Highlights + Hourly Summary"""
@@ -9428,6 +9619,198 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error removing alliance: {e}")
                 await interaction.followup.send("Error removing alliance", ephemeral=True)
 
+        @self.tree.command(name="reprocesspolls", description="Reprocess all resolved polls to fix point distribution (Owner only)")
+        @discord.app_commands.describe(
+            clear_leaderboard="Clear existing leaderboard before reprocessing (recommended for fixing corrupted data)"
+        )
+        async def reprocess_polls_slash(interaction: discord.Interaction, clear_leaderboard: bool = True):
+            """Reprocess all resolved polls to fix point distribution"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Optionally clear existing leaderboard data
+                if clear_leaderboard:
+                    cleared_count = self.prediction_manager.clear_all_leaderboard_data(interaction.guild.id)
+                    await interaction.followup.send(
+                        f"🧹 Cleared {cleared_count} existing leaderboard records.\nNow reprocessing all resolved polls...",
+                        ephemeral=True
+                    )
+                
+                # Reprocess all resolved polls
+                stats = self.prediction_manager.reprocess_all_resolved_polls(interaction.guild.id, interaction.user.id)
+                
+                if stats["polls_processed"] == 0:
+                    await interaction.followup.send("No resolved polls found to reprocess.", ephemeral=True)
+                    return
+                
+                # Create detailed results embed
+                embed = discord.Embed(
+                    title="✅ Poll Reprocessing Complete",
+                    description=f"Successfully reprocessed prediction data",
+                    color=0x2ecc71,
+                    timestamp=datetime.now()
+                )
+                
+                embed.add_field(
+                    name="📊 Summary",
+                    value=f"**Polls Processed:** {stats['polls_processed']}\n"
+                          f"**Users Updated:** {stats['users_updated']}\n"
+                          f"**Total Points Awarded:** {stats['total_points_awarded']}",
+                    inline=False
+                )
+                
+                # Show details for each poll
+                if stats.get("polls_details"):
+                    poll_details = []
+                    for poll in stats["polls_details"][:10]:  # Show first 10
+                        poll_details.append(
+                            f"**{poll['title']}** (ID: {poll['id']})\n"
+                            f"   {poll['correct_users']} winners, {poll['points_awarded']} points awarded"
+                        )
+                    
+                    embed.add_field(
+                        name="🎯 Poll Details",
+                        value="\n\n".join(poll_details),
+                        inline=False
+                    )
+                    
+                    if len(stats["polls_details"]) > 10:
+                        embed.add_field(
+                            name="📝 Note",
+                            value=f"Showing 10 of {len(stats['polls_details'])} polls processed",
+                            inline=False
+                        )
+                
+                embed.add_field(
+                    name="✅ Next Steps",
+                    value="Users can now check their updated points with `/leaderboard` and `/mypredictions`",
+                    inline=False
+                )
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+                # Also send a public announcement
+                if self.config.get('update_channel_id'):
+                    channel = self.get_channel(self.config.get('update_channel_id'))
+                    if channel:
+                        public_embed = discord.Embed(
+                            title="🔄 Prediction Points Updated",
+                            description=f"All prediction polls have been reprocessed to fix point distribution issues.\n\n"
+                                       f"**{stats['polls_processed']} polls** reprocessed\n"
+                                       f"**{stats['total_points_awarded']} points** correctly distributed\n\n"
+                                       f"Check your updated standings with `/leaderboard`!",
+                            color=0x3498db
+                        )
+                        await channel.send(embed=public_embed)
+                
+            except Exception as e:
+                logger.error(f"Error in reprocess polls command: {e}")
+                await interaction.followup.send(f"❌ Error reprocessing polls: {e}", ephemeral=True)
+        
+        @self.tree.command(name="pollstatus", description="Show status of all polls (Admin only)")
+        async def poll_status_slash(interaction: discord.Interaction):
+            """Show comprehensive poll status"""
+            try:
+                if not self.is_owner_or_admin(interaction.user, interaction):
+                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                conn = self.prediction_manager.get_connection()
+                cursor = conn.cursor()
+                
+                # Get poll counts by status
+                self.prediction_manager._execute_query(cursor, """
+                    SELECT status, COUNT(*) as count
+                    FROM predictions 
+                    WHERE guild_id = ?
+                    GROUP BY status
+                """, (interaction.guild.id,))
+                
+                status_counts = {}
+                for row in cursor.fetchall():
+                    if self.prediction_manager.use_postgresql:
+                        status_counts[row['status']] = row['count']
+                    else:
+                        status, count = row
+                        status_counts[status] = count
+                
+                # Get resolved polls with their details
+                self.prediction_manager._execute_query(cursor, """
+                    SELECT prediction_id, title, correct_option, 
+                           (SELECT COUNT(*) FROM user_predictions WHERE prediction_id = p.prediction_id) as total_predictions,
+                           (SELECT COUNT(*) FROM user_predictions WHERE prediction_id = p.prediction_id AND option = p.correct_option) as correct_predictions
+                    FROM predictions p
+                    WHERE guild_id = ? AND status = ?
+                    ORDER BY prediction_id DESC
+                """, (interaction.guild.id, 'resolved'))
+                
+                resolved_details = cursor.fetchall()
+                conn.close()
+                
+                embed = discord.Embed(
+                    title="📊 Poll Status Report",
+                    description=f"Complete poll overview for {interaction.guild.name}",
+                    color=0x3498db,
+                    timestamp=datetime.now()
+                )
+                
+                # Status summary
+                status_text = []
+                total_polls = sum(status_counts.values())
+                for status, count in status_counts.items():
+                    status_emoji = {"active": "🟢", "closed": "🟡", "resolved": "✅"}.get(status, "⚪")
+                    status_text.append(f"{status_emoji} **{status.title()}:** {count}")
+                
+                embed.add_field(
+                    name=f"📈 Poll Summary ({total_polls} total)",
+                    value="\n".join(status_text) if status_text else "No polls found",
+                    inline=False
+                )
+                
+                # Resolved polls details
+                if resolved_details:
+                    resolved_text = []
+                    for detail in resolved_details[:8]:  # Show first 8
+                        if self.prediction_manager.use_postgresql:
+                            pred_id = detail['prediction_id']
+                            title = detail['title']
+                            correct_option = detail['correct_option']
+                            total_preds = detail['total_predictions']
+                            correct_preds = detail['correct_predictions']
+                        else:
+                            pred_id, title, correct_option, total_preds, correct_preds = detail
+                        
+                        accuracy = f"{correct_preds}/{total_preds}" if total_preds else "0/0"
+                        resolved_text.append(f"**{title}** (ID: {pred_id})\n   Answer: {correct_option} | Winners: {accuracy}")
+                    
+                    embed.add_field(
+                        name="✅ Recent Resolved Polls",
+                        value="\n\n".join(resolved_text),
+                        inline=False
+                    )
+                    
+                    if len(resolved_details) > 8:
+                        embed.add_field(
+                            name="📝 Note",
+                            value=f"Showing 8 of {len(resolved_details)} resolved polls",
+                            inline=False
+                        )
+                
+                embed.set_footer(text="Use /reprocesspolls to fix any point distribution issues")
+                
+                await interaction.followup.send(embed=embed, ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in poll status command: {e}")
+                await interaction.followup.send("Error retrieving poll status.", ephemeral=True)
+        
         @self.tree.command(name="clearalliances", description="Clear all alliance data (Owner only)")
         async def clear_alliances(interaction: discord.Interaction):
             """Clear all alliance data - owner only"""
