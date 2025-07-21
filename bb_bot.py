@@ -4935,7 +4935,7 @@ def _create_daily_buzz_embed(self, buzz_data: dict, day_number: int, total_updat
     current_date = datetime.now().strftime("%A, %B %d")
     
     embed = discord.Embed(
-        title=f"THE DAILY BUZZ // #BB27 // Everything you missed (and everything that matters) // {current_date} 👁️💬🏠📄🔍",
+        title=f"THE RUNDOWN // #BB27 // House Happenings // {current_date} 👁️💬🏠📄🔍",
         description="",  # No description, go straight to content
         color=0x1DA1F2,  # Twitter blue
         timestamp=datetime.now()
@@ -4961,7 +4961,7 @@ def _create_daily_buzz_embed(self, buzz_data: dict, day_number: int, total_updat
         inline=False
     )
     
-    embed.set_footer(text=f"Daily Buzz • Day {day_number} • Based on {total_updates} feed updates")
+    embed.set_footer(text=f"Daily Rundown • Day {day_number} • Based on {total_updates} feed updates")
     
     return [embed]
 # Add these methods to your UpdateBatcher class
