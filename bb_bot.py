@@ -1127,7 +1127,8 @@ class UnifiedContentMonitor:
         general_bb_keywords = [
             "big brother", "bb27", "#bb27", "bb 27", "#bigbrother",
             "houseguest", "houseguests", "the house", "this season",
-            "feeds", "live feeds", "camera", "hoh", "veto", "pov"
+            "feeds", "live feeds", "camera", "hoh", "veto", "pov", "vinny", 
+            "kat", "rachael", "house", "feeds"
         ]
         
         if any(keyword in text_lower for keyword in general_bb_keywords):
@@ -3730,25 +3731,19 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
-        # Check both cache AND database for duplicates
-        if not await self.processed_hashes_cache.contains(update.content_hash) and not self.db.is_duplicate(update.content_hash):
-            # Add to highlights queue (for 25-update batches)
+        # Only check cache for highlights queue (not database)
+        if not await self.processed_hashes_cache.contains(update.content_hash):
             self.highlights_queue.append(update)
-            logger.info(f"DEBUG: Added to highlights queue. Size now: {len(self.highlights_queue)}")  # ADD THIS LINE
-            # Add to hourly queue (for hourly summaries)
             self.hourly_queue.append(update)
-            
-            # Mark as processed
             await self.processed_hashes_cache.add(update.content_hash)
             
-            logger.debug(f"Added new update: {update.title[:50]}...")
-        else:
-            logger.debug(f"Skipped duplicate: {update.title[:50]}...")
-            
-            # Log cache stats periodically
-            cache_stats = self.processed_hashes_cache.get_stats()
-            if cache_stats['size'] % 1000 == 0:
-                logger.info(f"Hash cache stats: {cache_stats}")
+            # THEN check database for storage
+            if not self.db.is_duplicate(update.content_hash):
+                # Store new updates
+                categories = self.analyzer.categorize_update(update)
+                importance = self.analyzer.analyze_strategic_importance(update)
+                self.db.store_update(update, importance, categories)
+                self.total_updates_processed += 1
     
     async def _can_make_llm_request(self) -> bool:
         """Check if we can make an LLM request without hitting rate limits"""
@@ -10765,40 +10760,26 @@ class BBDiscordBot(commands.Bot):
 
     @tasks.loop(hours=24)
     async def daily_recap_task(self):
-        """Daily recap task that runs at 8:00 AM Pacific Time"""
+        """Daily recap task that runs every 24 hours"""
         if self.is_shutting_down:
             return
     
         try:
-            # Get current Pacific time
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
-            # Only proceed if it's actually around 8 AM Pacific (within 30 minutes)
-            if not (7.5 <= now_pacific.hour < 8.5):
-                logger.info(f"Daily recap skipped - not 8 AM Pacific (current: {now_pacific.strftime('%I:%M %p Pacific')})")
-                return
+            # REMOVED: The strict time check that was causing skips
+            logger.info(f"Daily recap task running at {now_pacific.strftime('%I:%M %p Pacific')}")
             
-            # Log the current time for debugging
-            logger.info(f"Daily recap task triggered at {now_pacific.strftime('%I:%M %p Pacific')}")
+            # Calculate the previous 24-hour period
+            end_time = now_pacific.replace(minute=0, second=0, microsecond=0, tzinfo=None)
+            start_time = end_time - timedelta(hours=24)
             
-            # Only proceed if we have an update channel configured
-            if not self.config.get('update_channel_id'):
-                logger.warning("No update channel configured for daily recap")
-                return
-            
-            # Calculate the day period (previous 8:00 AM to current 8:00 AM)
-            # Remove timezone info for database queries
-            end_time = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0, tzinfo=None)
-            start_time = end_time - timedelta(hours=24)  # 24 hours ago
-            
-            # Check if we already sent a recap for this day
+            # Check if we already sent a recap for this 24-hour period
             recap_date = start_time.date()
             if hasattr(self, '_last_recap_date') and self._last_recap_date == recap_date:
                 logger.info(f"Daily recap already sent for {recap_date} - skipping")
                 return
-            
-            logger.info(f"Fetching updates from {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific")
             
             # Get all updates from the day
             daily_updates = self.db.get_daily_updates(start_time, end_time)
