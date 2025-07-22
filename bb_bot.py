@@ -2206,13 +2206,12 @@ class AllianceTracker:
         return embed
     
     def get_recently_broken_alliances(self, days: int = 7) -> List[Dict]:
-        """Get alliances that were strong but recently broke"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
             if self.use_postgresql:
-                # PostgreSQL syntax
+                # PostgreSQL syntax (already correct)
                 cursor.execute("""
                     SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
                            MAX(ae.timestamp) as broken_date,
@@ -2229,7 +2228,7 @@ class AllianceTracker:
                 """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
                       AllianceEventType.BETRAYAL.value, days))
             else:
-                # SQLite syntax
+                # SQLite syntax - ONLY CHANGE THE GROUP BY LINE
                 cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
                 cursor.execute("""
                     SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
@@ -2242,7 +2241,7 @@ class AllianceTracker:
                       AND ae.event_type = ? 
                       AND datetime(ae.timestamp) > datetime(?)
                       AND a.confidence_level >= 70
-                    GROUP BY a.alliance_id
+                    GROUP BY a.alliance_id, a.name, a.formed_date
                     ORDER BY broken_date DESC
                 """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
                       AllianceEventType.BETRAYAL.value, cutoff_date))
@@ -2283,21 +2282,34 @@ class AllianceTracker:
             conn.close()
     
     def get_houseguest_loyalty_embed(self, houseguest: str) -> discord.Embed:
-        """Create an embed showing a houseguest's alliance history"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
-                SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
-                       GROUP_CONCAT(am2.houseguest_name) as all_members
-                FROM alliance_members am
-                JOIN alliances a ON am.alliance_id = a.alliance_id
-                JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
-                WHERE am.houseguest_name = ?
-                GROUP BY a.alliance_id
-                ORDER BY am.joined_date DESC
-            """, (houseguest,))
+            if self.use_postgresql:
+                cursor.execute("""
+                    SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
+                           STRING_AGG(am2.houseguest_name, ',') as all_members
+                    FROM alliance_members am
+                    JOIN alliances a ON am.alliance_id = a.alliance_id
+                    JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
+                    WHERE am.houseguest_name = %s
+                    GROUP BY a.alliance_id, a.name, a.status, am.joined_date, am.left_date, a.confidence_level
+                    ORDER BY am.joined_date DESC
+                """, (houseguest,))
+            else:
+                cursor.execute("""
+                    SELECT a.name, a.status, am.joined_date, am.left_date, a.confidence_level,
+                           GROUP_CONCAT(am2.houseguest_name) as all_members
+                    FROM alliance_members am
+                    JOIN alliances a ON am.alliance_id = a.alliance_id
+                    JOIN alliance_members am2 ON am2.alliance_id = a.alliance_id
+                    WHERE am.houseguest_name = ?
+                    GROUP BY a.alliance_id
+                    ORDER BY am.joined_date DESC
+                """, (houseguest,))
+            
+            alliances = cursor.fetchall()
             
             alliances = cursor.fetchall()
             
@@ -9602,7 +9614,7 @@ class BBDiscordBot(commands.Bot):
                 conn = self.alliance_tracker.get_connection()
                 cursor = conn.cursor()
                 
-                cursor.execute("""
+                self.alliance_tracker._execute_query(cursor, """
                     UPDATE alliances 
                     SET status = 'dissolved', confidence_level = 0 
                     WHERE name = ?
