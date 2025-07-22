@@ -4822,6 +4822,8 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return self.rate_limiter.get_stats()
 
     
+    # Add these methods to your UpdateBatcher class
+
     async def create_daily_buzz_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
         """Create Twitter-style 'Daily Buzz' recap with bulleted key dynamics"""
         if not updates:
@@ -4840,6 +4842,130 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         # Fallback to pattern-based buzz
         return self._create_pattern_daily_buzz(updates, day_number)
+    
+    async def _create_llm_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create LLM-powered Daily Buzz format"""
+        await self.rate_limiter.wait_if_needed()
+        
+        # Sort updates chronologically and format for LLM
+        sorted_updates = sorted(updates, key=lambda x: x.pub_date)
+        
+        # Limit updates to prevent token overflow
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates[:30], 1):  # Top 30 most recent
+            time_str = self._extract_correct_time(update)
+            formatted_updates.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                desc = update.description[:100] + "..." if len(update.description) > 100 else update.description
+                formatted_updates.append(f"   {desc}")
+        
+        updates_text = "\n".join(formatted_updates)
+        
+        prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
+    
+    UPDATES FROM DAY {day_number} (chronological order):
+    {updates_text}
+    
+    Create a Daily Buzz in this EXACT format:
+    
+    {{
+        "buzz_items": [
+            "Morgan pitched a seven-person voting group to Zach with herself, Vince, Rachel, Ava, Will, and Lauren, with some talk of including Mickey or looping in Amy as an extension...but nothing official has formed.",
+            "Jimmy told Will he's considering nominating him as a replacement, despite promising he wouldn't.",
+            "Rachel tried to shift Jimmy toward targeting Adrian, not realizing Jimmy had already moved his sights to Will.",
+            "Rachel and Keanu clashed again after he brought up her low points from BB12. She called him out, he deflected, and later apologized...but as they hugged it out, Rachel rolled her eyes and smirked at the camera.",
+            "Rachel started rallying support to keep Amy or Will, depending on who lands on the block."
+        ]
+    }}
+    
+    INSTRUCTIONS:
+    - Create 5-10 bullet points of the MOST IMPORTANT house dynamics/developments from Day {day_number}
+    - Focus on: alliance talks, targeting decisions, relationship shifts, strategic moves, key confrontations
+    - Write in a casual, engaging Twitter style like the example
+    - Each bullet should be 1-2 sentences max
+    - Include specific names and concrete actions
+    - Prioritize information that affects the current game state going into today
+    - Don't include minor daily routine stuff unless it's strategically significant"""
+    
+        try:
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=1000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse JSON response
+            buzz_data = self._parse_llm_response(response.content[0].text)
+            return self._create_daily_buzz_embed(buzz_data, day_number, len(updates))
+            
+        except Exception as e:
+            logger.error(f"Failed to parse daily buzz response: {e}")
+            return self._create_pattern_daily_buzz(updates, day_number)
+    
+    def _create_pattern_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Pattern-based fallback for Daily Buzz"""
+        
+        # Get top 8 most important updates
+        top_updates = sorted(
+            updates, 
+            key=lambda x: self.analyzer.analyze_strategic_importance(x), 
+            reverse=True
+        )[:8]
+        
+        # Create buzz items from top updates
+        buzz_items = []
+        for update in top_updates:
+            # Clean the title
+            title = update.title
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            
+            # Truncate if too long
+            if len(title) > 150:
+                title = title[:147] + "..."
+            
+            buzz_items.append(title)
+        
+        buzz_data = {"buzz_items": buzz_items}
+        return self._create_daily_buzz_embed(buzz_data, day_number, len(updates))
+    
+    def _create_daily_buzz_embed(self, buzz_data: dict, day_number: int, total_updates: int) -> List[discord.Embed]:
+        """Create the Daily Buzz embed in Twitter style"""
+        
+        # Get current date for the header
+        current_date = datetime.now().strftime("%A, %B %d")
+        
+        embed = discord.Embed(
+            title=f"THE RUNDOWN // #BB27 // House Happenings // {current_date} 👁️💬🏠📄🔍",
+            description="",  # No description, go straight to content
+            color=0x1DA1F2,  # Twitter blue
+            timestamp=datetime.now()
+        )
+        
+        # Add numbered buzz items
+        buzz_items = buzz_data.get("buzz_items", [])
+        if buzz_items:
+            buzz_text = []
+            for i, item in enumerate(buzz_items[:10], 1):  # Max 10 items
+                # Add number emoji
+                number_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+                number = number_emojis[i-1] if i <= 10 else f"{i}️⃣"
+                buzz_text.append(f"{number} {item}")
+            
+            # Join with double newlines for spacing
+            embed.description = "\n\n".join(buzz_text)
+        
+        # Add hashtags at the bottom like Twitter
+        embed.add_field(
+            name="",
+            value="#BigBrother #BigBrotherBuzz",
+            inline=False
+        )
+        
+        embed.set_footer(text=f"Daily Rundown • Day {day_number} • Based on {total_updates} feed updates")
+        
+        return [embed]
 
 async def _create_llm_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
     """Create LLM-powered Daily Buzz format"""
@@ -10568,7 +10694,7 @@ class BBDiscordBot(commands.Bot):
 
     @tasks.loop(hours=24)
     async def daily_recap_task(self):
-        """Daily recap task that runs at 8:00 AM Pacific Time"""
+        """Daily buzz task that runs at 8:00 AM Pacific Time"""
         if self.is_shutting_down:
             return
     
@@ -10577,17 +10703,21 @@ class BBDiscordBot(commands.Bot):
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
-            # FIXED: Only run during 8 AM hour Pacific (8:00-8:59 AM)
-            if now_pacific.hour != 8:
-                logger.info(f"Daily recap skipped - not 8 AM Pacific hour (current: {now_pacific.hour}:XX)")
+            # Only run during 6 AM hour Pacific (6:00-6:59 AM)
+            if now_pacific.hour != 6:
+                logger.info(f"Daily buzz skipped - not 6 AM Pacific hour (current: {now_pacific.hour}:XX)")
                 return
             
-            logger.info(f"Daily recap task running at {now_pacific.strftime('%I:%M %p Pacific')}")
+            logger.info(f"Daily buzz task running at {now_pacific.strftime('%I:%M %p Pacific')}")
             
-            # Check if we already sent a recap for this 24-hour period
-            recap_date = start_time.date()
-            if hasattr(self, '_last_recap_date') and self._last_recap_date == recap_date:
-                logger.info(f"Daily recap already sent for {recap_date} - skipping")
+            # Calculate the 24-hour period for buzz (previous day 6 AM to current 6 AM)
+            end_time = now_pacific.replace(hour=6, minute=0, second=0, microsecond=0, tzinfo=None)
+            start_time = end_time - timedelta(hours=24)
+            
+            # Check if we already sent a buzz for this 24-hour period
+            buzz_date = start_time.date()
+            if hasattr(self, '_last_buzz_date') and self._last_buzz_date == buzz_date:
+                logger.info(f"Daily buzz already sent for {buzz_date} - skipping")
                 return
             
             # Get all updates from the day
@@ -10595,28 +10725,27 @@ class BBDiscordBot(commands.Bot):
             
             # Calculate day number (days since season start)
             season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
-            recap_date = start_time.date()
-            day_number = (recap_date - season_start.date()).days + 1
+            day_number = (buzz_date - season_start.date()).days + 1
             
-            logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
+            logger.info(f"Daily buzz for Day {day_number}: found {len(daily_updates)} updates")
             
             if not daily_updates:
-                logger.info("No updates found for daily recap - sending quiet day message")
+                logger.info("No updates found for daily buzz - sending quiet day message")
                 await self.send_quiet_day_recap(day_number)
             else:
-                # Create daily recap
-                recap_embeds = await self.update_batcher.create_daily_buzz_recap(daily_updates, day_number)
+                # Create daily buzz (using your new method)
+                buzz_embeds = await self.update_batcher.create_daily_buzz_recap(daily_updates, day_number)
                 
-                # Send daily recap
-                await self.send_daily_buzz_recap(recap_embeds)
+                # Send daily buzz
+                await self.send_daily_recap(buzz_embeds)
                 
-                logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
+                logger.info(f"✅ Daily buzz sent for Day {day_number} with {len(buzz_embeds)} embeds")
             
             # Mark this date as processed
-            self._last_recap_date = recap_date
+            self._last_buzz_date = buzz_date
             
         except Exception as e:
-            logger.error(f"❌ Error in daily recap task: {e}")
+            logger.error(f"❌ Error in daily buzz task: {e}")
             logger.error(traceback.format_exc())
             
     async def send_quiet_day_recap(self, day_number: int = None):
@@ -10689,17 +10818,17 @@ class BBDiscordBot(commands.Bot):
             
             logger.info(f"Bot ready at {now_pacific.strftime('%I:%M %p Pacific on %A, %B %d')}")
             
-            # Get next 8:00 AM Pacific
-            next_recap = now_pacific.replace(hour=8, minute=0, second=0, microsecond=0)
+            # Get next 6:00 AM Pacific
+            next_recap = now_pacific.replace(hour=6, minute=0, second=0, microsecond=0)
             
-            # If it's already past 8:00 AM today, schedule for tomorrow
-            if now_pacific.hour >= 8:
+            # If it's already past 6:00 AM today, schedule for tomorrow
+            if now_pacific.hour >= 6:
                 next_recap += timedelta(days=1)
-                logger.info("Already past 8 AM Pacific today, scheduling for tomorrow")
+                logger.info("Already past 6 AM Pacific today, scheduling for tomorrow")
             
             wait_seconds = (next_recap - now_pacific).total_seconds()
             
-            logger.info(f"Daily recap task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
+            logger.info(f"Daily buzz task will start in {wait_seconds:.0f} seconds (at {next_recap.strftime('%A, %B %d at %I:%M %p Pacific')})")
             
             # Wait until the scheduled time
             await asyncio.sleep(wait_seconds)
@@ -10765,26 +10894,26 @@ class BBDiscordBot(commands.Bot):
         await self.wait_until_ready()
         
     async def send_daily_recap(self, embeds: List[discord.Embed]):
-        """Send daily recap to the configured channel"""
+        """Send daily buzz recap to the configured channel"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
-            logger.warning("Update channel not configured for daily recap")
+            logger.warning("Update channel not configured for daily buzz")
             return
         
         try:
             channel = self.get_channel(channel_id)
             if not channel:
-                logger.error(f"Channel {channel_id} not found for daily recap")
+                logger.error(f"Channel {channel_id} not found for daily buzz")
                 return
             
             # Send all embeds
             for embed in embeds[:5]:  # Limit to 5 embeds max
                 await channel.send(embed=embed)
             
-            logger.info(f"Daily recap sent with {len(embeds)} embeds")
+            logger.info(f"Daily buzz sent with {len(embeds)} embeds")
             
         except Exception as e:
-            logger.error(f"Error sending daily recap: {e}")
+            logger.error(f"Error sending daily buzz: {e}")
 
     async def send_highlights_batch(self):
         """Send highlights batch (every 25 updates)"""
