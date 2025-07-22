@@ -10566,29 +10566,59 @@ class BBDiscordBot(commands.Bot):
         return new_updates
     
 
-            
-    async def send_daily_buzz_recap(self, embeds: List[discord.Embed]):
-        """Send daily buzz recap to the configured channel"""
-        channel_id = self.config.get('update_channel_id')
-        if not channel_id:
-            logger.warning("Update channel not configured for daily buzz recap")
+    @tasks.loop(hours=24)
+    async def daily_recap_task(self):
+        """Daily recap task that runs at 8:00 AM Pacific Time"""
+        if self.is_shutting_down:
             return
-        
+    
         try:
-            channel = self.get_channel(channel_id)
-            if not channel:
-                logger.error(f"Channel {channel_id} not found for daily buzz recap")
+            # Get current Pacific time
+            pacific_tz = pytz.timezone('US/Pacific')
+            now_pacific = datetime.now(pacific_tz)
+            
+            # FIXED: Only run during 8 AM hour Pacific (8:00-8:59 AM)
+            if now_pacific.hour != 8:
+                logger.info(f"Daily recap skipped - not 8 AM Pacific hour (current: {now_pacific.hour}:XX)")
                 return
             
-            # Send all embeds
-            for embed in embeds[:5]:  # Limit to 5 embeds max
-                await channel.send(embed=embed)
+            logger.info(f"Daily recap task running at {now_pacific.strftime('%I:%M %p Pacific')}")
             
-            logger.info(f"Daily buzz recap sent with {len(embeds)} embeds")
+            # Check if we already sent a recap for this 24-hour period
+            recap_date = start_time.date()
+            if hasattr(self, '_last_recap_date') and self._last_recap_date == recap_date:
+                logger.info(f"Daily recap already sent for {recap_date} - skipping")
+                return
+            
+            # Get all updates from the day
+            daily_updates = self.db.get_daily_updates(start_time, end_time)
+            
+            # Calculate day number (days since season start)
+            season_start = datetime(2025, 7, 8)  # Adjust this to your actual season start
+            recap_date = start_time.date()
+            day_number = (recap_date - season_start.date()).days + 1
+            
+            logger.info(f"Daily recap for Day {day_number}: found {len(daily_updates)} updates")
+            
+            if not daily_updates:
+                logger.info("No updates found for daily recap - sending quiet day message")
+                await self.send_quiet_day_recap(day_number)
+            else:
+                # Create daily recap
+                recap_embeds = await self.update_batcher.create_daily_buzz_recap(daily_updates, day_number)
+                
+                # Send daily recap
+                await self.send_daily_buzz_recap(recap_embeds)
+                
+                logger.info(f"✅ Daily recap sent for Day {day_number} with {len(recap_embeds)} embeds")
+            
+            # Mark this date as processed
+            self._last_recap_date = recap_date
             
         except Exception as e:
-            logger.error(f"Error sending daily buzz recap: {e}")
-    
+            logger.error(f"❌ Error in daily recap task: {e}")
+            logger.error(traceback.format_exc())
+            
     async def send_quiet_day_recap(self, day_number: int = None):
         """Send a recap for days with no updates"""
         channel_id = self.config.get('update_channel_id')
