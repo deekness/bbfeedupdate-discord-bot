@@ -2046,25 +2046,50 @@ class AllianceTracker:
         cursor = conn.cursor()
         
         try:
-            cursor.execute("""
-                SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
-                       GROUP_CONCAT(am.houseguest_name) as members
-                FROM alliances a
-                JOIN alliance_members am ON a.alliance_id = am.alliance_id
-                WHERE a.status = ? AND am.is_active = 1
-                GROUP BY a.alliance_id
-                ORDER BY a.confidence_level DESC, a.last_activity DESC
-            """, (AllianceStatus.ACTIVE.value,))
+            if self.use_postgresql:
+                # PostgreSQL syntax with %s placeholders
+                cursor.execute("""
+                    SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
+                           STRING_AGG(am.houseguest_name, ',') as members
+                    FROM alliances a
+                    JOIN alliance_members am ON a.alliance_id = am.alliance_id
+                    WHERE a.status = %s AND am.is_active = TRUE
+                    GROUP BY a.alliance_id, a.name, a.confidence_level, a.last_activity
+                    ORDER BY a.confidence_level DESC, a.last_activity DESC
+                """, (AllianceStatus.ACTIVE.value,))
+            else:
+                # SQLite syntax with ? placeholders
+                cursor.execute("""
+                    SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
+                           GROUP_CONCAT(am.houseguest_name) as members
+                    FROM alliances a
+                    JOIN alliance_members am ON a.alliance_id = am.alliance_id
+                    WHERE a.status = ? AND am.is_active = 1
+                    GROUP BY a.alliance_id
+                    ORDER BY a.confidence_level DESC, a.last_activity DESC
+                """, (AllianceStatus.ACTIVE.value,))
             
             alliances = []
             for row in cursor.fetchall():
-                alliances.append({
-                    'alliance_id': row[0],
-                    'name': row[1],
-                    'confidence': row[2],
-                    'last_activity': row[3],
-                    'members': row[4].split(',') if row[4] else []
-                })
+                if self.use_postgresql:
+                    # PostgreSQL returns RealDictCursor results
+                    alliances.append({
+                        'alliance_id': row['alliance_id'],
+                        'name': row['name'],
+                        'confidence': row['confidence_level'],
+                        'last_activity': row['last_activity'],
+                        'members': row['members'].split(',') if row['members'] else []
+                    })
+                else:
+                    # SQLite returns tuple
+                    alliance_id, name, confidence, last_activity, members = row
+                    alliances.append({
+                        'alliance_id': alliance_id,
+                        'name': name,
+                        'confidence': confidence,
+                        'last_activity': last_activity,
+                        'members': members.split(',') if members else []
+                    })
             
             return alliances
             
@@ -2073,6 +2098,7 @@ class AllianceTracker:
             return []
         finally:
             conn.close()
+
     
     def create_alliance_map_embed(self) -> discord.Embed:
         """Create an embed showing current alliance relationships"""
@@ -2161,31 +2187,56 @@ class AllianceTracker:
         cursor = conn.cursor()
         
         try:
-            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
-            
-            cursor.execute("""
-                SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
-                       MAX(ae.timestamp) as broken_date,
-                       GROUP_CONCAT(DISTINCT am.houseguest_name) as members
-                FROM alliances a
-                JOIN alliance_members am ON a.alliance_id = am.alliance_id
-                JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
-                WHERE a.status IN (?, ?)
-                  AND ae.event_type = ? 
-                  AND datetime(ae.timestamp) > datetime(?)
-                  AND a.confidence_level >= 70
-                GROUP BY a.alliance_id
-                ORDER BY broken_date DESC
-            """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
-                  AllianceEventType.BETRAYAL.value, cutoff_date))
+            if self.use_postgresql:
+                # PostgreSQL syntax
+                cursor.execute("""
+                    SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
+                           MAX(ae.timestamp) as broken_date,
+                           STRING_AGG(DISTINCT am.houseguest_name, ',') as members
+                    FROM alliances a
+                    JOIN alliance_members am ON a.alliance_id = am.alliance_id
+                    JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
+                    WHERE a.status IN (%s, %s)
+                      AND ae.event_type = %s 
+                      AND ae.timestamp > (CURRENT_TIMESTAMP - INTERVAL '%s days')
+                      AND a.confidence_level >= 70
+                    GROUP BY a.alliance_id, a.name, a.formed_date
+                    ORDER BY broken_date DESC
+                """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
+                      AllianceEventType.BETRAYAL.value, days))
+            else:
+                # SQLite syntax
+                cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+                cursor.execute("""
+                    SELECT DISTINCT a.alliance_id, a.name, a.formed_date, 
+                           MAX(ae.timestamp) as broken_date,
+                           GROUP_CONCAT(DISTINCT am.houseguest_name) as members
+                    FROM alliances a
+                    JOIN alliance_members am ON a.alliance_id = am.alliance_id
+                    JOIN alliance_events ae ON a.alliance_id = ae.alliance_id
+                    WHERE a.status IN (?, ?)
+                      AND ae.event_type = ? 
+                      AND datetime(ae.timestamp) > datetime(?)
+                      AND a.confidence_level >= 70
+                    GROUP BY a.alliance_id
+                    ORDER BY broken_date DESC
+                """, (AllianceStatus.BROKEN.value, AllianceStatus.DISSOLVED.value,
+                      AllianceEventType.BETRAYAL.value, cutoff_date))
             
             broken_alliances = []
             for row in cursor.fetchall():
-                alliance_id, name, formed_date, broken_date, members = row
+                if self.use_postgresql:
+                    alliance_id = row['alliance_id']
+                    name = row['name']
+                    formed_date = row['formed_date']
+                    broken_date = row['broken_date']
+                    members = row['members']
+                else:
+                    alliance_id, name, formed_date, broken_date, members = row
                 
                 try:
-                    formed = datetime.fromisoformat(formed_date) if isinstance(formed_date, str) else formed_date
-                    broken = datetime.fromisoformat(broken_date) if isinstance(broken_date, str) else broken_date
+                    formed = formed_date if isinstance(formed_date, datetime) else datetime.fromisoformat(formed_date)
+                    broken = broken_date if isinstance(broken_date, datetime) else datetime.fromisoformat(broken_date)
                     days_strong = (broken - formed).days
                 except:
                     days_strong = 0
@@ -2289,22 +2340,39 @@ class AllianceTracker:
         cursor = conn.cursor()
         
         try:
-            cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
-            
-            cursor.execute("""
-                SELECT description, timestamp, involved_houseguests
-                FROM alliance_events
-                WHERE event_type = ? AND datetime(timestamp) > datetime(?)
-                ORDER BY timestamp DESC
-            """, (AllianceEventType.BETRAYAL.value, cutoff_date))
+            if self.use_postgresql:
+                # PostgreSQL syntax
+                cursor.execute("""
+                    SELECT description, timestamp, involved_houseguests
+                    FROM alliance_events
+                    WHERE event_type = %s AND timestamp > (CURRENT_TIMESTAMP - INTERVAL '%s days')
+                    ORDER BY timestamp DESC
+                """, (AllianceEventType.BETRAYAL.value, days))
+            else:
+                # SQLite syntax
+                cutoff_date = (datetime.now() - timedelta(days=days)).isoformat()
+                cursor.execute("""
+                    SELECT description, timestamp, involved_houseguests
+                    FROM alliance_events
+                    WHERE event_type = ? AND datetime(timestamp) > datetime(?)
+                    ORDER BY timestamp DESC
+                """, (AllianceEventType.BETRAYAL.value, cutoff_date))
             
             betrayals = []
             for row in cursor.fetchall():
-                betrayals.append({
-                    'description': row[0],
-                    'timestamp': row[1],
-                    'involved': row[2].split(',') if row[2] else []
-                })
+                if self.use_postgresql:
+                    betrayals.append({
+                        'description': row['description'],
+                        'timestamp': row['timestamp'],
+                        'involved': row['involved_houseguests'].split(',') if row['involved_houseguests'] else []
+                    })
+                else:
+                    description, timestamp, involved = row
+                    betrayals.append({
+                        'description': description,
+                        'timestamp': timestamp,
+                        'involved': involved.split(',') if involved else []
+                    })
             
             return betrayals
             
@@ -2433,7 +2501,7 @@ class AllianceTracker:
         cursor = conn.cursor()
         
         try:
-            # Get current confidence and status - Fixed for PostgreSQL
+            # Get current confidence and status
             if self.use_postgresql:
                 cursor.execute("""
                     SELECT confidence_level, status, formed_date 
@@ -2477,16 +2545,16 @@ class AllianceTracker:
                 cursor.execute("""
                     UPDATE alliances 
                     SET confidence_level = %s,
-                        last_activity = %s
+                        last_activity = CURRENT_TIMESTAMP
                     WHERE alliance_id = %s
-                """, (new_confidence, datetime.now(), alliance_id))
+                """, (new_confidence, alliance_id))
             else:
                 cursor.execute("""
                     UPDATE alliances 
                     SET confidence_level = ?,
-                        last_activity = ?
+                        last_activity = CURRENT_TIMESTAMP
                     WHERE alliance_id = ?
-                """, (new_confidence, datetime.now(), alliance_id))
+                """, (new_confidence, alliance_id))
             
             # Check if confidence dropped too low
             if new_confidence < 20:
@@ -2507,16 +2575,16 @@ class AllianceTracker:
                         cursor.execute("""
                             INSERT INTO alliance_events 
                             (alliance_id, event_type, description, timestamp)
-                            VALUES (%s, %s, %s, %s)
+                            VALUES (%s, %s, %s, CURRENT_TIMESTAMP)
                         """, (alliance_id, AllianceEventType.DISSOLVED.value,
-                              f"Alliance dissolved after {days_active} days", datetime.now()))
+                              f"Alliance dissolved after {days_active} days"))
                     else:
                         cursor.execute("""
                             INSERT INTO alliance_events 
                             (alliance_id, event_type, description, timestamp)
-                            VALUES (?, ?, ?, ?)
+                            VALUES (?, ?, ?, CURRENT_TIMESTAMP)
                         """, (alliance_id, AllianceEventType.DISSOLVED.value,
-                              f"Alliance dissolved after {days_active} days", datetime.now()))
+                              f"Alliance dissolved after {days_active} days"))
                     
                     logger.info(f"Major alliance break: Alliance {alliance_id} was strong for {days_active} days")
             
