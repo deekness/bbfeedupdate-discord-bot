@@ -1263,6 +1263,19 @@ class BBAnalyzer:
         return min(score, 10)
 
 class HistoricalContextTracker:
+    def _execute_query(self, cursor, query_sqlite, params, query_postgresql=None):
+        """Execute query with proper syntax for current database"""
+        if self.use_postgresql:
+            if query_postgresql:
+                cursor.execute(query_postgresql, params)
+            else:
+                # Convert SQLite ? to PostgreSQL %s and handle CURRENT_TIMESTAMP
+                pg_query = query_sqlite.replace('?', '%s')
+                pg_query = pg_query.replace('CURRENT_TIMESTAMP', 'CURRENT_TIMESTAMP')
+                cursor.execute(pg_query, params)
+        else:
+            cursor.execute(query_sqlite, params)
+    
     """Tracks historical context for Big Brother events"""
     
     # Event type constants
@@ -1649,6 +1662,18 @@ class HistoricalContextTracker:
         return max(1, day_number)
 
 class AllianceTracker:
+    def _execute_query(self, cursor, query_sqlite, params, query_postgresql=None):
+        """Execute query with proper syntax for current database"""
+        if self.use_postgresql:
+            if query_postgresql:
+                cursor.execute(query_postgresql, params)
+            else:
+                # Convert SQLite ? to PostgreSQL %s
+                pg_query = query_sqlite.replace('?', '%s')
+                cursor.execute(pg_query, params)
+        else:
+            cursor.execute(query_sqlite, params)
+    
     """Tracks and analyzes Big Brother alliances"""
     
     # Alliance detection patterns
@@ -2041,13 +2066,12 @@ class AllianceTracker:
             conn.close()
     
     def get_active_alliances(self) -> List[Dict]:
-        """Get all currently active alliances"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
             if self.use_postgresql:
-                # PostgreSQL syntax with %s placeholders
+                # PostgreSQL specific - uses STRING_AGG
                 cursor.execute("""
                     SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
                            STRING_AGG(am.houseguest_name, ',') as members
@@ -2058,7 +2082,7 @@ class AllianceTracker:
                     ORDER BY a.confidence_level DESC, a.last_activity DESC
                 """, (AllianceStatus.ACTIVE.value,))
             else:
-                # SQLite syntax with ? placeholders
+                # SQLite specific - uses GROUP_CONCAT
                 cursor.execute("""
                     SELECT a.alliance_id, a.name, a.confidence_level, a.last_activity,
                            GROUP_CONCAT(am.houseguest_name) as members
@@ -2383,27 +2407,16 @@ class AllianceTracker:
             conn.close()
     
     def _find_existing_alliance(self, houseguests: List[str]) -> Optional[Dict]:
-        """Find if these houseguests already have an alliance"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
-            if self.use_postgresql:
-                # PostgreSQL syntax
-                cursor.execute("""
-                    SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
-                    FROM alliance_members am
-                    JOIN alliances a ON am.alliance_id = a.alliance_id
-                    WHERE am.houseguest_name = %s AND a.status = %s AND am.is_active = TRUE
-                """, (houseguests[0], AllianceStatus.ACTIVE.value))
-            else:
-                # SQLite syntax
-                cursor.execute("""
-                    SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
-                    FROM alliance_members am
-                    JOIN alliances a ON am.alliance_id = a.alliance_id
-                    WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
-                """, (houseguests[0], AllianceStatus.ACTIVE.value))
+            self._execute_query(cursor, """
+                SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
+                FROM alliance_members am
+                JOIN alliances a ON am.alliance_id = a.alliance_id
+                WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
+            """, (houseguests[0], AllianceStatus.ACTIVE.value))
             
             for row in cursor.fetchall():
                 if self.use_postgresql:
@@ -2496,22 +2509,15 @@ class AllianceTracker:
             conn.close()
     
     def _update_alliance_confidence(self, alliance_id: int, change: int):
-        """Update alliance confidence level"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
         try:
             # Get current confidence and status
-            if self.use_postgresql:
-                cursor.execute("""
-                    SELECT confidence_level, status, formed_date 
-                    FROM alliances WHERE alliance_id = %s
-                """, (alliance_id,))
-            else:
-                cursor.execute("""
-                    SELECT confidence_level, status, formed_date 
-                    FROM alliances WHERE alliance_id = ?
-                """, (alliance_id,))
+            self._execute_query(cursor, """
+                SELECT confidence_level, status, formed_date 
+                FROM alliances WHERE alliance_id = ?
+            """, (alliance_id,))
             
             result = cursor.fetchone()
             if not result:
