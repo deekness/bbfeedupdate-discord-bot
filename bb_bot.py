@@ -5087,7 +5087,7 @@ def _create_daily_buzz_embed(self, buzz_data: dict, day_number: int, total_updat
         inline=False
     )
     
-    embed.set_footer(text=f"Daily Rundown • Day {day_number} • Based on {total_updates} feed updates")
+    embed.set_footer(text=f"Daily Rundown • Day {day_number} ")
     
     return [embed]
 # Add these methods to your UpdateBatcher class
