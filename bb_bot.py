@@ -8875,11 +8875,15 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore highlights queue
                     self.update_batcher.highlights_queue.clear()
                     for update_data in highlights_data.get('updates', []):
+                        pub_date = update_data['pub_date']
+                        if isinstance(pub_date, str):
+                            pub_date = datetime.fromisoformat(pub_date)
+                        
                         update = BBUpdate(
                             title=update_data['title'],
                             description=update_data['description'],
-                            link=update_data['link'],
-                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
+                            link=update_data['link'], 
+                            pub_date=pub_date,
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -8913,11 +8917,15 @@ class BBDiscordBot(commands.Bot):
                     # Clear and restore hourly queue
                     self.update_batcher.hourly_queue.clear()
                     for update_data in hourly_data.get('updates', []):
+                        pub_date = update_data['pub_date']
+                        if isinstance(pub_date, str):
+                            pub_date = datetime.fromisoformat(pub_date)
+                        
                         update = BBUpdate(
                             title=update_data['title'],
                             description=update_data['description'],
-                            link=update_data['link'],
-                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
+                            link=update_data['link'], 
+                            pub_date=pub_date,
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
