@@ -8876,8 +8876,13 @@ class BBDiscordBot(commands.Bot):
                     self.update_batcher.highlights_queue.clear()
                     for update_data in highlights_data.get('updates', []):
                         pub_date = update_data['pub_date']
+                        # FIX: Handle both string and datetime objects
                         if isinstance(pub_date, str):
                             pub_date = datetime.fromisoformat(pub_date)
+                        elif not isinstance(pub_date, datetime):
+                            # If it's neither string nor datetime, skip this update
+                            logger.warning(f"Invalid pub_date type: {type(pub_date)}")
+                            continue
                         
                         update = BBUpdate(
                             title=update_data['title'],
@@ -8891,7 +8896,11 @@ class BBDiscordBot(commands.Bot):
                     
                     # Restore last batch time
                     if result['last_summary_time']:
-                        self.update_batcher.last_batch_time = datetime.fromisoformat(result['last_summary_time'])
+                        last_summary = result['last_summary_time']
+                        if isinstance(last_summary, str):
+                            self.update_batcher.last_batch_time = datetime.fromisoformat(last_summary)
+                        else:
+                            self.update_batcher.last_batch_time = last_summary
                     
                     logger.info(f"Restored {len(self.update_batcher.highlights_queue)} highlights from database")
                     
@@ -8918,8 +8927,13 @@ class BBDiscordBot(commands.Bot):
                     self.update_batcher.hourly_queue.clear()
                     for update_data in hourly_data.get('updates', []):
                         pub_date = update_data['pub_date']
+                        # FIX: Handle both string and datetime objects
                         if isinstance(pub_date, str):
                             pub_date = datetime.fromisoformat(pub_date)
+                        elif not isinstance(pub_date, datetime):
+                            # If it's neither string nor datetime, skip this update
+                            logger.warning(f"Invalid pub_date type: {type(pub_date)}")
+                            continue
                         
                         update = BBUpdate(
                             title=update_data['title'],
@@ -8933,7 +8947,11 @@ class BBDiscordBot(commands.Bot):
                     
                     # Restore last hourly summary time
                     if result['last_summary_time']:
-                        self.update_batcher.last_hourly_summary = datetime.fromisoformat(result['last_summary_time'])
+                        last_summary = result['last_summary_time']
+                        if isinstance(last_summary, str):
+                            self.update_batcher.last_hourly_summary = datetime.fromisoformat(last_summary)
+                        else:
+                            self.update_batcher.last_hourly_summary = last_summary
                     
                     logger.info(f"Restored {len(self.update_batcher.hourly_queue)} hourly updates from database")
                     
