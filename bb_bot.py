@@ -27,7 +27,10 @@ import anthropic
 from enum import Enum
 import psycopg2
 import psycopg2.extras
+from psycopg2 import pool
 from urllib.parse import urlparse
+from contextlib import contextmanager
+from typing import Optional
 
 # Configure SQLite to handle datetime properly
 sqlite3.register_adapter(datetime, lambda dt: dt.isoformat())
@@ -6837,386 +6840,276 @@ class BBDatabase:
             return []
 
 class PostgreSQLDatabase:
-    """PostgreSQL database handler for Railway"""
+    """PostgreSQL database handler with connection pooling"""
     
-    def __init__(self, database_url: str):
+    def __init__(self, database_url: str, min_connections: int = 2, max_connections: int = 20):
         self.database_url = database_url
         self.connection_timeout = 30
         self.use_postgresql = True
+        self.connection_pool: Optional[psycopg2.pool.ThreadedConnectionPool] = None
+        
+        # Initialize connection pool
+        self._init_connection_pool(min_connections, max_connections)
+        
+        # Initialize database schema
         self.init_database()
     
-    def get_connection(self):
-        """Get PostgreSQL connection"""
-        try:
-            conn = psycopg2.connect(
-                self.database_url,
-                connect_timeout=self.connection_timeout,
-                cursor_factory=psycopg2.extras.RealDictCursor
-            )
-            return conn
-        except Exception as e:
-            logger.error(f"PostgreSQL connection error: {e}")
-            raise
+    def _init_connection_pool(self, min_conn: int, max_conn: int):
+        """Initialize PostgreSQL connection pool with retry logic"""
+        max_retries = 3
+        retry_delay = 5
+        
+        for attempt in range(max_retries):
+            try:
+                logger.info(f"Initializing connection pool (attempt {attempt + 1}/{max_retries})")
+                
+                self.connection_pool = psycopg2.pool.ThreadedConnectionPool(
+                    min_conn, max_conn,
+                    self.database_url,
+                    cursor_factory=psycopg2.extras.RealDictCursor,
+                    connect_timeout=self.connection_timeout
+                )
+                
+                # Test the pool
+                with self.get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT 1")
+                    result = cursor.fetchone()
+                    if result[0] != 1:
+                        raise Exception("Pool test failed")
+                
+                logger.info(f"✅ Connection pool initialized successfully ({min_conn}-{max_conn} connections)")
+                return
+                
+            except Exception as e:
+                logger.error(f"❌ Connection pool initialization failed (attempt {attempt + 1}): {e}")
+                
+                if self.connection_pool:
+                    try:
+                        self.connection_pool.closeall()
+                    except:
+                        pass
+                    self.connection_pool = None
+                
+                if attempt < max_retries - 1:
+                    logger.info(f"Retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    retry_delay *= 2  # Exponential backoff
+                else:
+                    raise Exception(f"Failed to initialize connection pool after {max_retries} attempts")
     
-    def init_database(self):
-        """Initialize PostgreSQL tables"""
-        conn = self.get_connection()
+    @contextmanager
+    def get_connection(self):
+        """Context manager for database connections with automatic cleanup"""
+        if not self.connection_pool:
+            raise Exception("Connection pool not initialized")
+        
+        conn = None
         try:
-            cursor = conn.cursor()
+            # Get connection from pool (this blocks if pool is full)
+            conn = self.connection_pool.getconn()
             
-            # Updates table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS updates (
-                    id SERIAL PRIMARY KEY,
-                    content_hash VARCHAR(32) UNIQUE,
-                    title TEXT,
-                    description TEXT,
-                    link TEXT,
-                    pub_date TIMESTAMP,
-                    author TEXT,
-                    importance_score INTEGER DEFAULT 1,
-                    categories TEXT,
-                    processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
+            if conn is None:
+                raise Exception("Failed to get connection from pool")
             
-            # Predictions table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS predictions (
-                    prediction_id SERIAL PRIMARY KEY,
-                    title TEXT NOT NULL,
-                    description TEXT,
-                    prediction_type VARCHAR(50) NOT NULL,
-                    options TEXT NOT NULL,
-                    created_by BIGINT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    closes_at TIMESTAMP NOT NULL,
-                    status VARCHAR(20) DEFAULT 'active',
-                    correct_option TEXT,
-                    week_number INTEGER,
-                    guild_id BIGINT NOT NULL
-                )
-            """)
+            # Test connection is still alive
+            if conn.closed:
+                logger.warning("Got closed connection from pool, attempting to recreate")
+                self.connection_pool.putconn(conn, close=True)
+                conn = self.connection_pool.getconn()
             
-            # User predictions table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS user_predictions (
-                    user_id BIGINT NOT NULL,
-                    prediction_id INTEGER NOT NULL,
-                    option TEXT NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, prediction_id),
-                    FOREIGN KEY (prediction_id) REFERENCES predictions(prediction_id)
-                )
-            """)
-            
-            # Prediction leaderboard table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS prediction_leaderboard (
-                    user_id BIGINT NOT NULL,
-                    guild_id BIGINT NOT NULL,
-                    week_number INTEGER NOT NULL,
-                    season_points INTEGER DEFAULT 0,
-                    weekly_points INTEGER DEFAULT 0,
-                    correct_predictions INTEGER DEFAULT 0,
-                    total_predictions INTEGER DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    PRIMARY KEY (user_id, guild_id, week_number)
-                )
-            """)
-            
-            # Alliance tables
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS alliances (
-                    alliance_id SERIAL PRIMARY KEY,
-                    name TEXT,
-                    formed_date TIMESTAMP,
-                    dissolved_date TIMESTAMP,
-                    status TEXT DEFAULT 'active',
-                    confidence_level INTEGER DEFAULT 50,
-                    last_activity TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS alliance_members (
-                    alliance_id INTEGER,
-                    houseguest_name TEXT,
-                    joined_date TIMESTAMP,
-                    left_date TIMESTAMP,
-                    is_active BOOLEAN DEFAULT TRUE,
-                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id),
-                    UNIQUE(alliance_id, houseguest_name)
-                )
-            """)
-            
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS alliance_events (
-                    event_id SERIAL PRIMARY KEY,
-                    alliance_id INTEGER,
-                    event_type TEXT,
-                    description TEXT,
-                    involved_houseguests TEXT,
-                    timestamp TIMESTAMP,
-                    update_hash TEXT,
-                    FOREIGN KEY (alliance_id) REFERENCES alliances(alliance_id)
-                )
-            """)
-            
-            # Create indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_hash ON updates(content_hash)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_date ON updates(pub_date)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_predictions_guild ON predictions(guild_id, status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_status ON alliances(status)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_alliance_members ON alliance_members(houseguest_name)")
-            
-            conn.commit()
-            logger.info("PostgreSQL database initialized successfully")
-
-
-            # Summary checkpoints table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS summary_checkpoints (
-                    checkpoint_id SERIAL PRIMARY KEY,
-                    summary_type VARCHAR(50) NOT NULL,
-                    last_processed_update_id INTEGER,
-                    queue_state JSONB,
-                    queue_size INTEGER DEFAULT 0,
-                    last_summary_time TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Summary metrics table (for tracking performance)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS summary_metrics (
-                    metric_id SERIAL PRIMARY KEY,
-                    summary_type VARCHAR(50) NOT NULL,
-                    update_count INTEGER,
-                    llm_tokens_used INTEGER,
-                    processing_time_ms INTEGER,
-                    summary_quality_score FLOAT,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            """)
-            
-            # Create indexes
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_checkpoints_type ON summary_checkpoints(summary_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_metrics_type_date ON summary_metrics(summary_type, created_at)")
-            
-            logger.info("Summary persistence tables created")
-
-            # Add these tables to your PostgreSQLDatabase.init_database() method
-            # Place them after your existing table creation code
-            
-            # Houseguest events tracking table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS houseguest_events (
-                    event_id SERIAL PRIMARY KEY,
-                    houseguest_name VARCHAR(100) NOT NULL,
-                    event_type VARCHAR(50) NOT NULL,
-                    event_subtype VARCHAR(50),
-                    description TEXT,
-                    week_number INTEGER,
-                    season_day INTEGER,
-                    update_hash VARCHAR(32),
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    metadata JSONB
-                )
-            """)
-            
-            # Houseguest statistics table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS houseguest_stats (
-                    stat_id SERIAL PRIMARY KEY,
-                    houseguest_name VARCHAR(100) NOT NULL,
-                    stat_type VARCHAR(50) NOT NULL,
-                    stat_value INTEGER DEFAULT 0,
-                    season_total INTEGER DEFAULT 0,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(houseguest_name, stat_type)
-                )
-            """)
-            
-            # Relationship tracking table
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS houseguest_relationships (
-                    relationship_id SERIAL PRIMARY KEY,
-                    houseguest_1 VARCHAR(100) NOT NULL,
-                    houseguest_2 VARCHAR(100) NOT NULL,
-                    relationship_type VARCHAR(50) NOT NULL,
-                    strength_score INTEGER DEFAULT 50,
-                    first_detected TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    status VARCHAR(20) DEFAULT 'active',
-                    duration_days INTEGER DEFAULT 0,
-                    CHECK (houseguest_1 < houseguest_2)
-                )
-            """)
-            
-            # Context cache table (for performance)
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS context_cache (
-                    cache_id SERIAL PRIMARY KEY,
-                    houseguest_name VARCHAR(100) NOT NULL,
-                    context_type VARCHAR(50) NOT NULL,
-                    context_text TEXT NOT NULL,
-                    cache_key VARCHAR(100) NOT NULL,
-                    expires_at TIMESTAMP,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    UNIQUE(cache_key)
-                )
-            """)
-            
-            # Create indexes for performance
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_houseguest ON houseguest_events(houseguest_name)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_type ON houseguest_events(event_type)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_events_date ON houseguest_events(created_at)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_stats_houseguest ON houseguest_stats(houseguest_name)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_relationships_hg1 ON houseguest_relationships(houseguest_1)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_relationships_hg2 ON houseguest_relationships(houseguest_2)")
-            cursor.execute("CREATE INDEX IF NOT EXISTS idx_context_cache_key ON context_cache(cache_key)")
-            
-            logger.info("Historical context tracking tables created")
+            yield conn
             
         except Exception as e:
-            logger.error(f"PostgreSQL initialization error: {e}")
+            # If there's an error, rollback the transaction
+            if conn and not conn.closed:
+                try:
+                    conn.rollback()
+                except:
+                    pass
             raise
         finally:
-            conn.close()
+            # Return connection to pool
+            if conn and self.connection_pool:
+                try:
+                    self.connection_pool.putconn(conn)
+                except Exception as e:
+                    logger.error(f"Error returning connection to pool: {e}")
     
-    # Add the same methods as BBDatabase but with PostgreSQL syntax
+    def get_pool_status(self) -> dict:
+        """Get connection pool statistics"""
+        if not self.connection_pool:
+            return {"status": "not_initialized"}
+        
+        try:
+            return {
+                "status": "active",
+                "total_connections": len(self.connection_pool._pool + self.connection_pool._used),
+                "available_connections": len(self.connection_pool._pool),
+                "used_connections": len(self.connection_pool._used),
+                "min_connections": self.connection_pool.minconn,
+                "max_connections": self.connection_pool.maxconn
+            }
+        except Exception as e:
+            logger.error(f"Error getting pool status: {e}")
+            return {"status": "error", "error": str(e)}
+    
+    def close_pool(self):
+        """Close all connections in the pool"""
+        if self.connection_pool:
+            try:
+                self.connection_pool.closeall()
+                logger.info("Connection pool closed")
+            except Exception as e:
+                logger.error(f"Error closing connection pool: {e}")
+            finally:
+                self.connection_pool = None
+    
+    # Update all your existing methods to use the context manager
     def is_duplicate(self, content_hash: str) -> bool:
         """Check if update already exists"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("SELECT 1 FROM updates WHERE content_hash = %s", (content_hash,))
-            result = cursor.fetchone()
-            conn.close()
-            
-            return result is not None
-            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("SELECT 1 FROM updates WHERE content_hash = %s", (content_hash,))
+                result = cursor.fetchone()
+                return result is not None
+                
         except Exception as e:
             logger.error(f"PostgreSQL duplicate check error: {e}")
             return False
     
-    def store_update(self, update: BBUpdate, importance_score: int = 1, categories: List[str] = None):
+    def store_update(self, update, importance_score: int = 1, categories = None):
         """Store a new update"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            categories_str = ",".join(categories) if categories else ""
-            
-            cursor.execute("""
-                INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
-            """, (update.content_hash, update.title, update.description, 
-                  update.link, update.pub_date, update.author, importance_score, categories_str))
-            
-            conn.commit()
-            conn.close()
-            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                categories_str = ",".join(categories) if categories else ""
+                
+                cursor.execute("""
+                    INSERT INTO updates (content_hash, title, description, link, pub_date, author, importance_score, categories)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                """, (update.content_hash, update.title, update.description, 
+                      update.link, update.pub_date, update.author, importance_score, categories_str))
+                
+                conn.commit()
+                
         except Exception as e:
             logger.error(f"PostgreSQL store error: {e}")
             raise
     
-    def get_recent_updates(self, hours: int) -> List[BBUpdate]:
+    def get_recent_updates(self, hours: int):
         """Get updates from the last N hours"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author
-                FROM updates 
-                WHERE pub_date > NOW() - INTERVAL '%s hours'
-                ORDER BY pub_date DESC
-            """, (hours,))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            return [BBUpdate(*row) for row in results]
-            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author
+                    FROM updates 
+                    WHERE pub_date > NOW() - INTERVAL '%s hours'
+                    ORDER BY pub_date DESC
+                """, (hours,))
+                
+                results = cursor.fetchall()
+                return [self._row_to_bb_update(row) for row in results]
+                
         except Exception as e:
             logger.error(f"PostgreSQL query error: {e}")
             return []
-
-    def get_updates_in_timeframe(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+    
+    def get_updates_in_timeframe(self, start_time, end_time):
         """Get all updates within a specific timeframe"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            # Use PostgreSQL syntax with %s placeholders
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author
-                FROM updates 
-                WHERE pub_date >= %s AND pub_date < %s
-                ORDER BY pub_date ASC
-            """, (start_time, end_time))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            updates = []
-            for row in results:
-                # PostgreSQL returns RealDictCursor results
-                update = BBUpdate(
-                    title=row['title'],
-                    description=row['description'], 
-                    link=row['link'],
-                    pub_date=row['pub_date'],
-                    content_hash=row['content_hash'],
-                    author=row['author']
-                )
-                updates.append(update)
-            
-            return updates
-            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author
+                    FROM updates 
+                    WHERE pub_date >= %s AND pub_date < %s
+                    ORDER BY pub_date ASC
+                """, (start_time, end_time))
+                
+                results = cursor.fetchall()
+                return [self._row_to_bb_update(row) for row in results]
+                
         except Exception as e:
             logger.error(f"Database timeframe query error: {e}")
             return []
-
-    def get_daily_updates(self, start_time: datetime, end_time: datetime) -> List[BBUpdate]:
+    
+    def get_daily_updates(self, start_time, end_time):
         """Get all updates from a specific 24-hour period"""
         try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author, importance_score
-                FROM updates 
-                WHERE pub_date >= %s AND pub_date < %s
-                ORDER BY pub_date ASC
-            """, (start_time, end_time))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            updates = []
-            for row in results:
-                update = BBUpdate(
-                    title=row['title'],
-                    description=row['description'],
-                    link=row['link'],
-                    pub_date=row['pub_date'],
-                    content_hash=row['content_hash'],
-                    author=row['author']
-                )
-                updates.append(update)
-            
-            return updates
-            
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                cursor.execute("""
+                    SELECT title, description, link, pub_date, content_hash, author, importance_score
+                    FROM updates 
+                    WHERE pub_date >= %s AND pub_date < %s
+                    ORDER BY pub_date ASC
+                """, (start_time, end_time))
+                
+                results = cursor.fetchall()
+                return [self._row_to_bb_update(row) for row in results]
+                
         except Exception as e:
             logger.error(f"Database daily query error: {e}")
             return []
+    
+    def _row_to_bb_update(self, row):
+        """Convert database row to BBUpdate object"""
+        # Import here to avoid circular imports
+        from your_module import BBUpdate  # Replace with actual import
+        
+        return BBUpdate(
+            title=row['title'],
+            description=row['description'],
+            link=row['link'],
+            pub_date=row['pub_date'],
+            content_hash=row['content_hash'],
+            author=row['author']
+        )
+    
+    def init_database(self):
+        """Initialize PostgreSQL tables - using connection pool"""
+        try:
+            with self.get_connection() as conn:
+                cursor = conn.cursor()
+                
+                # Updates table
+                cursor.execute("""
+                    CREATE TABLE IF NOT EXISTS updates (
+                        id SERIAL PRIMARY KEY,
+                        content_hash VARCHAR(32) UNIQUE,
+                        title TEXT,
+                        description TEXT,
+                        link TEXT,
+                        pub_date TIMESTAMP,
+                        author TEXT,
+                        importance_score INTEGER DEFAULT 1,
+                        categories TEXT,
+                        processed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """)
+                
+                # Add your other table creation code here...
+                # (I'll include the rest in the next artifact)
+                
+                # Create indexes
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_hash ON updates(content_hash)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_date ON updates(pub_date)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_updates_pub_date_importance ON updates(pub_date, importance_score)")
+                
+                conn.commit()
+                logger.info("PostgreSQL database initialized successfully with connection pool")
+                
+        except Exception as e:
+            logger.error(f"PostgreSQL initialization error: {e}")
+            raise
+
 
     
 
@@ -8882,8 +8775,12 @@ class BBDiscordBot(commands.Bot):
         # Use PostgreSQL if DATABASE_URL exists, otherwise SQLite
         database_url = os.getenv('DATABASE_URL')
         if database_url:
-            logger.info("Using PostgreSQL database")
-            self.db = PostgreSQLDatabase(database_url)
+            logger.info("Using PostgreSQL database with connection pooling")
+            self.db = PostgreSQLDatabase(
+                database_url=database_url,
+                min_connections=2,    # Minimum connections in pool
+                max_connections=20    # Maximum connections in pool
+            )
             self.alliance_tracker = AllianceTracker(database_url=database_url, use_postgresql=True)
             self.prediction_manager = PredictionManager(database_url=database_url, use_postgresql=True)
             self.context_tracker = HistoricalContextTracker(database_url=database_url, use_postgresql=True)
@@ -10667,9 +10564,13 @@ class BBDiscordBot(commands.Bot):
         # For now, this should fix your immediate startup error
 
     def signal_handler(self, signum, frame):
-        """Handle shutdown signals gracefully"""
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.is_shutting_down = True
+        
+        # Close database pool
+        if hasattr(self, 'db') and hasattr(self.db, 'close_pool'):
+            self.db.close_pool()
+        
         asyncio.create_task(self.close())
     
     async def on_ready(self):
