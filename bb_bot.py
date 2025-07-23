@@ -7061,9 +7061,6 @@ class PostgreSQLDatabase:
     
     def _row_to_bb_update(self, row):
         """Convert database row to BBUpdate object"""
-        # Import here to avoid circular imports
-        from your_module import BBUpdate  # Replace with actual import
-        
         return BBUpdate(
             title=row['title'],
             description=row['description'],
