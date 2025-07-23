@@ -4908,27 +4908,6 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return self.rate_limiter.get_stats()
 
     
-    # Add these methods to your UpdateBatcher class
-
-    async def create_daily_buzz_recap(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-        """Create Twitter-style 'Daily Buzz' recap with bulleted key dynamics"""
-        if not updates:
-            return []
-        
-        logger.info(f"Creating Daily Buzz recap for {len(updates)} updates")
-        
-        # Use LLM if available for better analysis
-        if self.llm_client and await self._can_make_llm_request():
-            try:
-                embeds = await self._create_llm_daily_buzz(updates, day_number)
-                if embeds:
-                    return embeds
-            except Exception as e:
-                logger.error(f"LLM daily buzz failed: {e}")
-        
-        # Fallback to pattern-based buzz
-        return self._create_pattern_daily_buzz(updates, day_number)
-    
     async def _create_llm_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
         """Create LLM-powered Daily Buzz format"""
         await self.rate_limiter.wait_if_needed()
