@@ -5683,7 +5683,7 @@ async def save_queue_state(self):
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -5718,7 +5718,7 @@ async def save_queue_state(self):
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
@@ -8917,7 +8917,7 @@ class BBDiscordBot(commands.Bot):
                             title=update_data['title'],
                             description=update_data['description'],
                             link=update_data['link'],
-                            pub_date=datetime.fromisoformat(update_data['pub_date']),
+                            pub_date=update_data['pub_date'] if isinstance(update_data['pub_date'], datetime) else datetime.fromisoformat(update_data['pub_date']),
                             content_hash=update_data['content_hash'],
                             author=update_data['author']
                         )
