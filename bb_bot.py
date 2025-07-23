@@ -6873,9 +6873,9 @@ class PostgreSQLDatabase:
                 # Test the pool
                 with self.get_connection() as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT 1")
+                    cursor.execute("SELECT 1 as test_value")
                     result = cursor.fetchone()
-                    if result[0] != 1:
+                    if result['test_value'] != 1:
                         raise Exception("Pool test failed")
                 
                 logger.info(f"✅ Connection pool initialized successfully ({min_conn}-{max_conn} connections)")
