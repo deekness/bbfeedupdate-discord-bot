@@ -8485,6 +8485,52 @@ class BBChatAnalyzer:
         else:
             return self._pattern_competition_analysis(comp_updates)
     
+    async def _llm_general_analysis(self, updates: List[BBUpdate], question: str) -> dict:
+        """Use LLM for general analysis when no specific category matches"""
+        
+        if not self.llm_client:
+            return self._pattern_general_analysis(updates)
+        
+        try:
+            # Prepare update data
+            updates_text = "\n".join([
+                f"• {update.title}"
+                for update in updates[:15]  # Limit to prevent token overflow
+            ])
+            
+            prompt = f"""You are a Big Brother superfan analyst answering a question about the current game state.
+    
+    RECENT UPDATES FROM THE HOUSE:
+    {updates_text}
+    
+    USER QUESTION: {question}
+    
+    Analyze the current situation and provide your response in this format:
+    
+    {{
+        "main_answer": "Direct answer to the user's question based on recent updates",
+        "supporting_details": "Additional context or details that support your answer",
+        "key_houseguests": ["houseguests", "relevant", "to", "this", "question"],
+        "confidence": "high/medium/low based on available information",
+        "additional_context": "Any other relevant information about the current game state"
+    }}
+    
+    Focus on answering their specific question using the most recent house activity."""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2500,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "general")
+            
+        except Exception as e:
+            logger.error(f"LLM general analysis failed: {e}")
+            return self._pattern_general_analysis(updates)
+    
     async def _general_analysis(self, updates: List[BBUpdate], question: str) -> dict:
         """General analysis for questions that don't fit specific categories"""
         
@@ -8538,6 +8584,120 @@ Focus on answering their specific question about power and control."""
         except Exception as e:
             logger.error(f"LLM power analysis failed: {e}")
             return self._pattern_power_analysis(power_updates, alliances, current_hoh)
+    
+    async def _llm_competition_analysis(self, comp_updates: List[BBUpdate], question: str) -> dict:
+        """Use LLM to analyze competition results and upcoming comps"""
+        
+        if not self.llm_client:
+            return self._pattern_competition_analysis(comp_updates)
+        
+        try:
+            updates_text = "\n".join([f"• {update.title}" for update in comp_updates[:10]])
+            
+            prompt = f"""Analyze Big Brother competition activity based on recent updates.
+    
+    COMPETITION-RELATED UPDATES:
+    {updates_text}
+    
+    USER QUESTION: {question}
+    
+    Provide analysis in this format:
+    {{
+        "main_answer": "Direct answer about competitions",
+        "recent_winners": ["houseguests", "who", "won", "recently"],
+        "competition_analysis": "Analysis of recent competition results",
+        "confidence": "high/medium/low"
+    }}"""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "competitions")
+            
+        except Exception as e:
+            logger.error(f"LLM competition analysis failed: {e}")
+            return self._pattern_competition_analysis(comp_updates)
+    
+    async def _llm_drama_analysis(self, drama_updates: List[BBUpdate], question: str) -> dict:
+        """Use LLM to analyze current drama and conflicts"""
+        
+        if not self.llm_client:
+            return self._pattern_drama_analysis(drama_updates)
+        
+        try:
+            updates_text = "\n".join([f"• {update.title}" for update in drama_updates[:8]])
+            
+            prompt = f"""Analyze Big Brother house drama and conflicts.
+    
+    DRAMA-RELATED UPDATES:
+    {updates_text}
+    
+    USER QUESTION: {question}
+    
+    Provide analysis in this format:
+    {{
+        "main_answer": "Direct answer about current drama",
+        "involved_houseguests": ["houseguests", "involved", "in", "drama"],
+        "drama_analysis": "Analysis of current conflicts and tensions",
+        "confidence": "high/medium/low"
+    }}"""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "drama")
+            
+        except Exception as e:
+            logger.error(f"LLM drama analysis failed: {e}")
+            return self._pattern_drama_analysis(drama_updates)
+    
+    async def _llm_relationship_analysis(self, relationship_updates: List[BBUpdate], question: str) -> dict:
+        """Use LLM to analyze showmances and relationships"""
+        
+        if not self.llm_client:
+            return self._pattern_relationship_analysis(relationship_updates)
+        
+        try:
+            updates_text = "\n".join([f"• {update.title}" for update in relationship_updates[:10]])
+            
+            prompt = f"""Analyze Big Brother showmances and relationships.
+    
+    RELATIONSHIP-RELATED UPDATES:
+    {updates_text}
+    
+    USER QUESTION: {question}
+    
+    Provide analysis in this format:
+    {{
+        "main_answer": "Direct answer about relationships/showmances",
+        "active_relationships": ["couples", "or", "close", "relationships"],
+        "relationship_analysis": "Analysis of current romantic/friendship dynamics",
+        "confidence": "high/medium/low"
+    }}"""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "relationships")
+            
+        except Exception as e:
+            logger.error(f"LLM relationship analysis failed: {e}")
+            return self._pattern_relationship_analysis(relationship_updates)
     
     async def _llm_danger_analysis(self, danger_updates: List[BBUpdate], nominees: List[str], targets: List[str], question: str) -> dict:
         """Use LLM to analyze danger levels"""
