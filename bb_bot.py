@@ -1999,11 +1999,11 @@ class AllianceTracker:
         # Clean the name
         cleaned = re.sub(r'[^\w\s]', '', name).strip().title()
         
-        # Check if it's a known houseguest
+        # Check if it's a known houseguest (using the global constants)
         if cleaned in BB27_HOUSEGUESTS_SET:
             return cleaned
             
-        # Check nicknames
+        # Check nicknames (using the global constants)
         if cleaned.lower() in NICKNAME_MAP:
             return NICKNAME_MAP[cleaned.lower()]
             
@@ -2011,7 +2011,8 @@ class AllianceTracker:
         common_words = {
             'Ground', 'Way', 'Thing', 'Person', 'Notes', 'Says', 'Knows', 'Going',
             'Easy', 'Under', 'Cover', 'First', 'Second', 'Third', 'Brother',
-            'House', 'Game', 'Winner', 'Player', 'Member', 'Group', 'Team'
+            'House', 'Game', 'Winner', 'Player', 'Member', 'Group', 'Team', 'And',
+            'The', 'Of', 'To', 'In', 'For', 'On', 'At', 'By', 'With', 'From'
         }
         
         if cleaned in common_words or cleaned in EXCLUDE_WORDS:
@@ -2028,7 +2029,8 @@ class AllianceTracker:
         invalid_names = {
             'ground adrian finished his first', 'way by', 'easiest thing',
             'radar and be an under cover', 'notes morgan is the person',
-            'says that he knows who', 'going to be easy'
+            'says that he knows who', 'going to be easy', 'ground adrian finished',
+            'am', 'so', 'day', 'when', 'zae', 'blockbuster'
         }
         
         if name.lower() in [n.lower() for n in invalid_names]:
@@ -2098,37 +2100,66 @@ class AllianceTracker:
         
         try:
             # Get all alliances
-            cursor.execute("SELECT alliance_id, name FROM alliances")
-            alliances = cursor.fetchall()
+            if self.use_postgresql:
+                cursor.execute("SELECT alliance_id, name FROM alliances")
+                alliances = cursor.fetchall()
+            else:
+                cursor.execute("SELECT alliance_id, name FROM alliances")
+                alliances = cursor.fetchall()
             
             cleaned_count = 0
             
-            for alliance_id, name in alliances:
+            for alliance_row in alliances:
+                if self.use_postgresql:
+                    alliance_id = alliance_row['alliance_id']
+                    name = alliance_row['name']
+                else:
+                    alliance_id, name = alliance_row
+                
                 should_remove = False
                 
                 # Check if name is invalid
                 if not name or not self._is_valid_alliance_name(name):
                     should_remove = True
+                    logger.info(f"Marking alliance for removal - invalid name: '{name}'")
                 
                 # Check if members are invalid
                 if not should_remove:
-                    cursor.execute("""
-                        SELECT houseguest_name FROM alliance_members 
-                        WHERE alliance_id = ? AND is_active = 1
-                    """, (alliance_id,))
+                    if self.use_postgresql:
+                        cursor.execute("""
+                            SELECT houseguest_name FROM alliance_members 
+                            WHERE alliance_id = %s AND is_active = TRUE
+                        """, (alliance_id,))
+                    else:
+                        cursor.execute("""
+                            SELECT houseguest_name FROM alliance_members 
+                            WHERE alliance_id = ? AND is_active = 1
+                        """, (alliance_id,))
                     
-                    members = [row[0] for row in cursor.fetchall()]
+                    members_result = cursor.fetchall()
+                    if self.use_postgresql:
+                        members = [row['houseguest_name'] for row in members_result]
+                    else:
+                        members = [row[0] for row in members_result]
+                    
                     valid_members = [m for m in members if self._clean_and_validate_houseguest(m)]
                     
                     if len(valid_members) < 2:  # Need at least 2 valid members
                         should_remove = True
+                        logger.info(f"Marking alliance for removal - invalid members: {members} -> {valid_members}")
                 
                 if should_remove:
                     # Remove the alliance
-                    cursor.execute("DELETE FROM alliance_events WHERE alliance_id = ?", (alliance_id,))
-                    cursor.execute("DELETE FROM alliance_members WHERE alliance_id = ?", (alliance_id,))
-                    cursor.execute("DELETE FROM alliances WHERE alliance_id = ?", (alliance_id,))
+                    if self.use_postgresql:
+                        cursor.execute("DELETE FROM alliance_events WHERE alliance_id = %s", (alliance_id,))
+                        cursor.execute("DELETE FROM alliance_members WHERE alliance_id = %s", (alliance_id,))
+                        cursor.execute("DELETE FROM alliances WHERE alliance_id = %s", (alliance_id,))
+                    else:
+                        cursor.execute("DELETE FROM alliance_events WHERE alliance_id = ?", (alliance_id,))
+                        cursor.execute("DELETE FROM alliance_members WHERE alliance_id = ?", (alliance_id,))
+                        cursor.execute("DELETE FROM alliances WHERE alliance_id = ?", (alliance_id,))
                     cleaned_count += 1
+                    logger.info(f"Removed alliance {alliance_id}: '{name}'")
             
             conn.commit()
             logger.info(f"Cleaned up {cleaned_count} invalid alliances")
@@ -2136,6 +2167,7 @@ class AllianceTracker:
             
         except Exception as e:
             logger.error(f"Error cleaning alliances: {e}")
+            logger.error(traceback.format_exc())
             conn.rollback()
             return 0
         finally:
