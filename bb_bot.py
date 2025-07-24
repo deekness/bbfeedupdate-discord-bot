@@ -1074,10 +1074,45 @@ class UnifiedContentMonitor:
         return len(intersection) / len(union) if union else 0.0
     
     def _is_bb_related(self, text: str) -> bool:
-        """Enhanced BB content detection - all monitored accounts are trusted"""
+        """Enhanced BB content detection focusing on house activity"""
         text_lower = text.lower()
         
-        # Since we only monitor trusted accounts, treat all content with leniency
+        # HOUSEGUEST NAMES AND NICKNAMES mapping
+        houseguest_names = {
+            # Full names
+            "adrian": "adrian", "amy": "amy", "ashley": "ashley", "ava": "ava", 
+            "jimmy": "jimmy", "katherine": "katherine", "keanu": "keanu", 
+            "kelley": "kelley", "lauren": "lauren", "mickey": "mickey", 
+            "morgan": "morgan", "rachel": "rachel", "rylie": "rylie", 
+            "vince": "vince", "will": "will", "zach": "zach", "zae": "zae",
+            
+            # Common nicknames
+            "vinny": "vince",        # Vinny -> Vince
+            "kat": "katherine",      # Kat -> Katherine
+            "rach": "rachel",        # Rach -> Rachel
+            "rachael": "rachel",        # Racheael -> Rachel
+            "mick": "mickey",        # Mick -> Mickey
+            "ash": "ashley",         # Ash -> Ashley
+            "jim": "jimmy",          # Jim -> Jimmy
+            "morg": "morgan",        # Morg -> Morgan (if used)
+            "ry": "rylie",           # Ry -> Rylie (if used)
+            
+            # Add any other nicknames you've observed
+
+        }
+        
+        # IMMEDIATE EXCLUSIONS: Block these types of content first
+        strong_exclusions = [
+            "subscribe to", "follow me on", "link in bio", "check out my",
+            "patreon", "donate", "support me", "buy my", "use code",
+            "fanfic", "fanart", "not big brother", "off topic",
+            "tonight's bb", "tonight on bb", "episode", "julie chen",
+            "watch tonight", "tune in", "airs tonight", "tv schedule",
+            "blockbuster episode", "don't miss", "coming up on bb"
+        ]
+        
+        if any(exclusion in text_lower for exclusion in strong_exclusions):
+            return False
         
         # IMMEDIATE INCLUSIONS: Always include these regardless of account
         immediate_keywords = [
@@ -1094,56 +1129,55 @@ class UnifiedContentMonitor:
         if any(keyword in text_lower for keyword in immediate_keywords):
             return True
         
-        # STRONG EXCLUSIONS: Only block clearly promotional or off-topic content
-        strong_exclusions = [
-            "subscribe to", "follow me on", "link in bio", "check out my",
-            "patreon", "donate", "support me", "buy my", "use code",
-            "fanfic", "fanart", "not big brother", "off topic"
+        # HOUSEGUEST CONVERSATIONS: Look for houseguest names/nicknames followed by dialogue
+        all_names = list(houseguest_names.keys())  # All names and nicknames
+        
+        houseguest_dialogue_patterns = [
+            rf'\b({"|".join(all_names)})\s*:\s*[^:{{10,}}',  # "Name/Nickname: longer dialogue"
+            rf'\b({"|".join(all_names)})\s+says?\s+',        # "Name/Nickname says"
+            rf'\b({"|".join(all_names)})\s+tells?\s+',       # "Name/Nickname tells"
+            rf'\b({"|".join(all_names)})\s+asks?\s+',        # "Name/Nickname asks"
+            rf'\b({"|".join(all_names)})\s+mentions?\s+',    # "Name/Nickname mentions"
         ]
         
-        if any(exclusion in text_lower for exclusion in strong_exclusions):
-            return False
-        
-        # HOUSE ACTIVITY: Physical events and conversations
-        house_activity = [
-            "in the kitchen", "in the bedroom", "in the backyard", "in the hoh room",
-            "storage room", "have not room", "slop", "luxury competition",
-            "house meeting", "group conversation", "tells", "says", "asks",
-            "mentions", "explains", "admits", "confesses", "reveals", "discusses"
-        ]
-        
-        if any(activity in text_lower for activity in house_activity):
+        if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in houseguest_dialogue_patterns):
             return True
         
-        # STRATEGIC CONTENT: Allow strategic discussion freely
+        # STRATEGIC CONTENT: Allow strategic discussion
         strategy_keywords = [
             "alliance", "final two", "final three", "final four",
             "backdoor", "target", "targeting", "campaign", "campaigning",
             "vote", "voting", "votes", "jury", "blindside",
-            "deal", "promise", "pitch", "strategy", "plan", "scheme"
+            "deal", "promise", "pitch", "strategy", "plan", "scheme",
+            "pitching to", "wants to work with", "working with"
         ]
         
         if any(keyword in text_lower for keyword in strategy_keywords):
             return True
         
-        # GENERAL BB CONTENT: Allow broad Big Brother discussion
-        general_bb_keywords = [
-            "big brother", "bb27", "#bb27", "bb 27", "#bigbrother",
-            "houseguest", "houseguests", "the house", "this season",
-            "feeds", "live feeds", "camera", "hoh", "veto", "pov", "vinny", 
-            "kat", "rachael", "house", "feeds"
+        # HOUSE ACTIVITY: Physical events and conversations
+        house_activity = [
+            "in the kitchen", "in the bedroom", "in the backyard", "in the hoh room",
+            "storage room", "have not room", "slop", "luxury competition",
+            "house meeting", "group conversation"
         ]
         
-        if any(keyword in text_lower for keyword in general_bb_keywords):
+        if any(activity in text_lower for activity in house_activity):
             return True
         
-        # HOUSEGUEST NAMES: Include if any current houseguest is mentioned
-        bb27_names = ["adrian", "amy", "ashley", "ava", "jimmy", "katherine", 
-                     "keanu", "kelley", "lauren", "mickey", "morgan", "rachel", 
-                     "rylie", "vince", "will", "zach", "zae"]
-        
-        if any(name in text_lower for name in bb27_names):
-            return True
+        # HOUSEGUEST NAMES/NICKNAMES: Include if mentioned with meaningful context
+        for name_or_nickname in all_names:
+            if name_or_nickname in text_lower:
+                # Check if there's meaningful context around the name/nickname
+                name_context_patterns = [
+                    rf"{name_or_nickname}\s*:.*",           # "Name: dialogue"
+                    rf"{name_or_nickname}\s+(says?|tells?|asks?|mentions?|wants?|thinks?)",  # "Name says/tells/etc"
+                    rf"(says?|tells?).*{name_or_nickname}",  # "says to Name"
+                    rf"{name_or_nickname}.*\b(strategy|alliance|vote|target|deal|plan)\b"  # Name + strategy words
+                ]
+                
+                if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in name_context_patterns):
+                    return True
         
         # DEFAULT: If none of the above criteria match, exclude
         return False
@@ -1220,10 +1254,44 @@ class BBAnalyzer:
         return categories if categories else ["📝 General"]
     
     def extract_houseguests(self, text: str) -> List[str]:
-        """Extract houseguest names from text"""
+        """Extract houseguest names from text, including nicknames"""
+        # Nickname to full name mapping
+        nickname_mapping = {
+            "vinny": "Vince", "vinnie": "Vince",
+            "kat": "Katherine", "katie": "Katherine", "kath": "Katherine",
+            "rach": "Rachel", "rachie": "Rachel",
+            "mike": "Mickey", "mick": "Mickey",
+            "ash": "Ashley",
+            "jim": "Jimmy",
+            "ken": "Keanu",
+            "kell": "Kelley",
+            "laur": "Lauren",
+            "morg": "Morgan",
+            "ry": "Rylie"
+        }
+        
+        # Full names list
+        full_names = ["Adrian", "Amy", "Ashley", "Ava", "Jimmy", "Katherine", 
+                      "Keanu", "Kelley", "Lauren", "Mickey", "Morgan", "Rachel", 
+                      "Rylie", "Vince", "Will", "Zach", "Zae"]
+        
+        # Find potential names (capitalized words)
         houseguest_pattern = r'\b[A-Z][a-z]+\b'
         potential_names = re.findall(houseguest_pattern, text)
-        return [name for name in potential_names if name not in EXCLUDE_WORDS]
+        
+        found_houseguests = []
+        
+        for name in potential_names:
+            # Check if it's a full name
+            if name in full_names and name not in EXCLUDE_WORDS:
+                found_houseguests.append(name)
+            # Check if it's a nickname
+            elif name.lower() in nickname_mapping:
+                mapped_name = nickname_mapping[name.lower()]
+                found_houseguests.append(mapped_name)
+        
+        # Remove duplicates while preserving order
+        return list(dict.fromkeys(found_houseguests))
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
         """Rate importance from 1-10 with balanced strategic/social weighting"""
