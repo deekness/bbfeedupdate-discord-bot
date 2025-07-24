@@ -293,8 +293,25 @@ ALL_ZINGS = PG_ZINGS + PG13_ZINGS
 BB27_HOUSEGUESTS = [
     "Adrian", "Amy", "Ashley", "Ava", "Jimmy", "Katherine", "Keanu", 
     "Kelley", "Lauren", "Mickey", "Morgan", "Rachel", "Rylie", "Vince", "Will", "Zach", "Zae"
-    # Replace these with your actual 20 houseguests
 ]
+
+# Add these NEW constants right after the BB27_HOUSEGUESTS list:
+BB27_HOUSEGUESTS_SET = {
+    "Adrian", "Amy", "Ashley", "Ava", "Jimmy", "Katherine", "Keanu", 
+    "Kelley", "Lauren", "Mickey", "Morgan", "Rachel", "Rylie", "Vince", "Will", "Zach", "Zae"
+}
+
+NICKNAME_MAP = {
+    "kat": "Katherine",
+    "rach": "Rachel", 
+    "rachael": "Rachel",
+    "vinny": "Vince",
+    "vinnie": "Vince",
+    "mick": "Mickey",
+    "ash": "Ashley",
+    "jim": "Jimmy",
+    "ry": "Rylie"
+}
 
 COMPETITION_KEYWORDS = [
     'hoh', 'head of household', 'power of veto', 'pov', 'nomination', 
@@ -1759,14 +1776,12 @@ class AllianceTracker:
     
     # Alliance detection patterns
     ALLIANCE_FORMATION_PATTERNS = [
+        # Only the most reliable patterns
         (r"([\w\s]+) and ([\w\s]+) make a final (\d+)", "final_deal"),
         (r"([\w\s]+) forms? an? alliance with ([\w\s]+)", "alliance"),
         (r"([\w\s]+) and ([\w\s]+) agree to work together", "agreement"),
-        (r"([\w\s]+) and ([\w\s]+) shake on it", "handshake"),
-        (r"([\w\s]+), ([\w\s]+),? and ([\w\s]+) form an? alliance", "group_alliance"),
-        (r"([\w\s]+) joins? forces with ([\w\s]+)", "joining_forces"),
-        (r"([\w\s]+) wants? to work with ([\w\s]+)", "wants_work"),
-        (r"([\w\s]+) trusts? ([\w\s]+) completely", "trust"),
+        (r"([\w\s]+) and ([\w\s]+) form an? alliance", "alliance"),
+        # Removed the overly broad patterns that were causing issues
     ]
     
     BETRAYAL_PATTERNS = [
@@ -1900,93 +1915,231 @@ class AllianceTracker:
         logger.info("Alliance tracking tables initialized")
     
     def analyze_update_for_alliances(self, update: BBUpdate) -> List[Dict]:
-        """Analyze an update for alliance information"""
+        """Enhanced analysis with better filtering"""
         content = f"{update.title} {update.description}".strip()
         detected_events = []
         
-        # Skip finale/voting/competition winner updates
+        # ENHANCED SKIP LOGIC - More comprehensive exclusions
         skip_phrases = [
             'votes for', 'voted for', 'to be the winner', 'winner of big brother',
             'jury vote', 'crown the winner', 'wins bb', 'wins hoh', 'wins pov',
             'wins the power', 'eviction vote', 'evicted', 'julie pulls the keys',
             'america\'s favorite', 'afp', 'finale', 'final vote', 'cast their vote',
             'announces the winner', 'wins big brother', 'jury votes', 'key to vote',
-            'official with a vote', 'makes it official'
+            'official with a vote', 'makes it official', 'competition winner',
+            'diary room', 'live feeds', 'feeds are', 'cameras', 'production',
+            'episode', 'tonight on', 'watch tonight', 'tune in', 'coming up',
+            # Add more exclusions for common false positives
+            'ground adrian finished', 'way by', 'easiest thing', 'radar and be',
+            'notes morgan', 'says that he knows'
         ]
         
         content_lower = content.lower()
         if any(phrase in content_lower for phrase in skip_phrases):
-            return []  # Don't process these updates for alliances
-        
-        # Also skip if it's clearly a competition/ceremony result
-        if re.search(r'wins?\s+(the\s+)?(hoh|pov|veto|competition|challenge|big\s+brother)', content, re.IGNORECASE):
             return []
         
-        # Skip eviction and ceremony updates
-        if re.search(r'(eviction|nomination|veto)\s+ceremony', content, re.IGNORECASE):
+        # Skip very short content that's likely not alliance-related
+        if len(content.strip()) < 20:
             return []
         
-        # Check for alliance formations
+        # Check for alliance formations with better validation
         for pattern, pattern_type in self.ALLIANCE_FORMATION_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 groups = match.groups()
-                houseguests = [g.strip() for g in groups if g and not g.isdigit()]
+                houseguests = []
                 
-                # Filter out common words that aren't houseguests
-                houseguests = [hg for hg in houseguests if hg not in EXCLUDE_WORDS]
+                # Better houseguest extraction and validation
+                for group in groups:
+                    if group and not group.isdigit():
+                        cleaned_name = self._clean_and_validate_houseguest(group.strip())
+                        if cleaned_name:
+                            houseguests.append(cleaned_name)
                 
-                # Additional filtering for common false positives
-                houseguests = [hg for hg in houseguests if len(hg) > 2 and not hg.lower() in ['big', 'brother', 'julie', 'host', 'america']]
-                
+                # Only proceed if we have 2+ valid houseguests
                 if len(houseguests) >= 2:
-                    detected_events.append({
-                        'type': AllianceEventType.FORMED,
-                        'houseguests': houseguests,
-                        'pattern_type': pattern_type,
-                        'confidence': self._calculate_confidence(pattern_type),
-                        'update': update
-                    })
+                    # Additional context check - make sure this actually sounds like alliance talk
+                    if self._is_likely_alliance_context(content, houseguests):
+                        detected_events.append({
+                            'type': AllianceEventType.FORMED,
+                            'houseguests': houseguests,
+                            'pattern_type': pattern_type,
+                            'confidence': self._calculate_confidence(pattern_type),
+                            'update': update
+                        })
         
-        # Check for betrayals
-        for pattern, pattern_type in self.BETRAYAL_PATTERNS:
-            matches = re.finditer(pattern, content, re.IGNORECASE)
-            for match in matches:
-                groups = match.groups()
-                if len(groups) >= 2:
-                    betrayer = groups[0].strip()
-                    betrayed = groups[1].strip()
-                    
-                    if betrayer not in EXCLUDE_WORDS and betrayed not in EXCLUDE_WORDS:
-                        if len(betrayer) > 2 and len(betrayed) > 2:  # Additional length check
-                            detected_events.append({
-                                'type': AllianceEventType.BETRAYAL,
-                                'betrayer': betrayer,
-                                'betrayed': betrayed,
-                                'pattern_type': pattern_type,
-                                'update': update
-                            })
-        
-        # Check for named alliances
+        # Process named alliances with much stricter validation
         for pattern in self.ALLIANCE_NAME_PATTERNS:
             matches = re.finditer(pattern, content, re.IGNORECASE)
             for match in matches:
                 alliance_name = match.group(1).strip()
-                # Skip if alliance name contains finale/winner phrases
-                if alliance_name and len(alliance_name) > 2:
-                    if not any(skip in alliance_name.lower() for skip in ['winner', 'big brother', 'finale']):
-                        # Try to extract members mentioned nearby
-                        members = self._extract_nearby_houseguests(content, match.start(), match.end())
+                
+                # Strict alliance name validation
+                if self._is_valid_alliance_name(alliance_name):
+                    # Extract members from surrounding context
+                    members = self._extract_alliance_members_from_context(content, match.start(), match.end())
+                    
+                    if len(members) >= 2:  # Need at least 2 valid members
                         detected_events.append({
                             'type': AllianceEventType.FORMED,
                             'alliance_name': alliance_name,
                             'houseguests': members,
                             'pattern_type': 'named_alliance',
-                            'confidence': 80,  # Named alliances have higher confidence
+                            'confidence': 85,
                             'update': update
                         })
         
         return detected_events
+
+    def _clean_and_validate_houseguest(self, name: str) -> Optional[str]:
+        """Clean and validate a houseguest name"""
+        if not name or len(name) < 2:
+            return None
+            
+        # Clean the name
+        cleaned = re.sub(r'[^\w\s]', '', name).strip().title()
+        
+        # Check if it's a known houseguest
+        if cleaned in BB27_HOUSEGUESTS_SET:
+            return cleaned
+            
+        # Check nicknames
+        if cleaned.lower() in NICKNAME_MAP:
+            return NICKNAME_MAP[cleaned.lower()]
+            
+        # Reject if it's a common word that's not a houseguest
+        common_words = {
+            'Ground', 'Way', 'Thing', 'Person', 'Notes', 'Says', 'Knows', 'Going',
+            'Easy', 'Under', 'Cover', 'First', 'Second', 'Third', 'Brother',
+            'House', 'Game', 'Winner', 'Player', 'Member', 'Group', 'Team'
+        }
+        
+        if cleaned in common_words or cleaned in EXCLUDE_WORDS:
+            return None
+            
+        return None  # Only return validated houseguest names
+    
+    def _is_valid_alliance_name(self, name: str) -> bool:
+        """Validate alliance name to prevent nonsense names"""
+        if not name or len(name) < 3 or len(name) > 25:
+            return False
+            
+        # Reject names that are clearly not alliance names
+        invalid_names = {
+            'ground adrian finished his first', 'way by', 'easiest thing',
+            'radar and be an under cover', 'notes morgan is the person',
+            'says that he knows who', 'going to be easy'
+        }
+        
+        if name.lower() in [n.lower() for n in invalid_names]:
+            return False
+            
+        # Reject if it contains houseguest names (those should be members, not the name)
+        for hg in BB27_HOUSEGUESTS_SET:
+            if hg.lower() in name.lower():
+                return False
+                
+        # Reject if it's mostly common words
+        words = name.split()
+        common_word_count = sum(1 for word in words if word.title() in EXCLUDE_WORDS)
+        if common_word_count > len(words) * 0.6:  # More than 60% common words
+            return False
+            
+        return True
+    
+    def _is_likely_alliance_context(self, content: str, houseguests: List[str]) -> bool:
+        """Check if the content actually sounds like alliance discussion"""
+        content_lower = content.lower()
+        
+        # Must contain alliance-related keywords
+        alliance_keywords = [
+            'alliance', 'work together', 'team up', 'final', 'deal', 'agreement',
+            'partnership', 'collaborate', 'join forces', 'stick together'
+        ]
+        
+        if not any(keyword in content_lower for keyword in alliance_keywords):
+            return False
+            
+        # Must contain actual conversation or strategy talk
+        conversation_indicators = [
+            'told', 'said', 'mentioned', 'discussed', 'talking about',
+            'wants to', 'planning to', 'decided to', 'agreed to'
+        ]
+        
+        if not any(indicator in content_lower for indicator in conversation_indicators):
+            return False
+            
+        return True
+    
+    def _extract_alliance_members_from_context(self, content: str, start: int, end: int) -> List[str]:
+        """Extract valid houseguest names from context around alliance mention"""
+        # Look in a larger window for member names
+        window = 150
+        search_start = max(0, start - window)
+        search_end = min(len(content), end + window)
+        search_text = content[search_start:search_end]
+        
+        # Find potential names
+        potential_names = re.findall(r'\b[A-Z][a-z]+\b', search_text)
+        
+        # Validate each name
+        valid_members = []
+        for name in potential_names:
+            validated = self._clean_and_validate_houseguest(name)
+            if validated and validated not in valid_members:
+                valid_members.append(validated)
+                
+        return valid_members[:6]  # Max 6 members per alliance
+    
+    def cleanup_invalid_alliances(self) -> int:
+        """Remove alliances with invalid names or members"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get all alliances
+            cursor.execute("SELECT alliance_id, name FROM alliances")
+            alliances = cursor.fetchall()
+            
+            cleaned_count = 0
+            
+            for alliance_id, name in alliances:
+                should_remove = False
+                
+                # Check if name is invalid
+                if not name or not self._is_valid_alliance_name(name):
+                    should_remove = True
+                
+                # Check if members are invalid
+                if not should_remove:
+                    cursor.execute("""
+                        SELECT houseguest_name FROM alliance_members 
+                        WHERE alliance_id = ? AND is_active = 1
+                    """, (alliance_id,))
+                    
+                    members = [row[0] for row in cursor.fetchall()]
+                    valid_members = [m for m in members if self._clean_and_validate_houseguest(m)]
+                    
+                    if len(valid_members) < 2:  # Need at least 2 valid members
+                        should_remove = True
+                
+                if should_remove:
+                    # Remove the alliance
+                    cursor.execute("DELETE FROM alliance_events WHERE alliance_id = ?", (alliance_id,))
+                    cursor.execute("DELETE FROM alliance_members WHERE alliance_id = ?", (alliance_id,))
+                    cursor.execute("DELETE FROM alliances WHERE alliance_id = ?", (alliance_id,))
+                    cleaned_count += 1
+            
+            conn.commit()
+            logger.info(f"Cleaned up {cleaned_count} invalid alliances")
+            return cleaned_count
+            
+        except Exception as e:
+            logger.error(f"Error cleaning alliances: {e}")
+            conn.rollback()
+            return 0
+        finally:
+            conn.close()
     
     def _calculate_confidence(self, pattern_type: str) -> int:
         """Calculate confidence level based on pattern type"""
@@ -9978,6 +10131,30 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error testing LLM: {e}")
                 await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
 
+        @self.tree.command(name="cleanalliances", description="Clean up invalid alliance data (Owner only)")
+        async def clean_alliances_slash(interaction: discord.Interaction):
+            """Clean up invalid alliances"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Clean up invalid alliances
+                cleaned_count = self.alliance_tracker.cleanup_invalid_alliances()
+                
+                await interaction.followup.send(
+                    f"✅ Cleaned up {cleaned_count} invalid alliances.\n"
+                    f"Alliance detection has been improved to prevent future false positives.",
+                    ephemeral=True
+                )
+                
+            except Exception as e:
+                logger.error(f"Error cleaning alliances: {e}")
+                await interaction.followup.send("Error cleaning alliance data", ephemeral=True)
+        
         @self.tree.command(name="sync", description="Sync slash commands (Owner only)")
         async def sync_slash(interaction: discord.Interaction):
             """Manually sync slash commands"""
