@@ -9785,7 +9785,99 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error forcing batch: {e}")
                 await interaction.followup.send("Error sending batch.", ephemeral=True)
 
-        
+        # Add this diagnostic command to see what's actually being processed
+
+        @self.tree.command(name="testrss", description="Test RSS feed processing (Owner only)")
+        async def test_rss_slash(interaction: discord.Interaction):
+            """Test RSS feed processing"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Manually fetch and parse RSS
+                import feedparser
+                
+                try:
+                    feed = feedparser.parse(self.rss_url)
+                    
+                    if not feed.entries:
+                        await interaction.followup.send("❌ No RSS entries found!", ephemeral=True)
+                        return
+                    
+                    # Show first 3 entries
+                    rss_info = []
+                    rss_info.append(f"**RSS URL:** {self.rss_url}")
+                    rss_info.append(f"**Feed Title:** {feed.feed.get('title', 'Unknown')}")
+                    rss_info.append(f"**Total Entries:** {len(feed.entries)}")
+                    rss_info.append(f"**Feed Updated:** {feed.feed.get('updated', 'Unknown')}")
+                    rss_info.append("\n**FIRST 3 ENTRIES:**")
+                    
+                    for i, entry in enumerate(feed.entries[:3], 1):
+                        title = entry.get('title', 'No title')[:100]
+                        pub_date_raw = getattr(entry, 'published', 'No date')
+                        pub_date_parsed = getattr(entry, 'published_parsed', None)
+                        
+                        # Try to convert pub_date
+                        if pub_date_parsed:
+                            pub_date_obj = datetime(*pub_date_parsed[:6])
+                        else:
+                            pub_date_obj = "Could not parse"
+                        
+                        rss_info.append(f"\n**Entry {i}:**")
+                        rss_info.append(f"Title: {title}...")
+                        rss_info.append(f"Raw pubDate: {pub_date_raw}")
+                        rss_info.append(f"Parsed pubDate: {pub_date_obj}")
+                        
+                        # Test what your time extraction would return
+                        if hasattr(entry, 'title'):
+                            # Create a fake BBUpdate to test time extraction
+                            fake_update = BBUpdate(
+                                title=entry.title,
+                                description=entry.get('description', ''),
+                                link=entry.get('link', ''),
+                                pub_date=pub_date_obj if isinstance(pub_date_obj, datetime) else datetime.now(),
+                                content_hash="test",
+                                author=""
+                            )
+                            extracted_time = self.update_batcher._extract_correct_time(fake_update)
+                            rss_info.append(f"Extracted time: {extracted_time}")
+                    
+                    # Check if these are being filtered as duplicates
+                    if len(feed.entries) > 0:
+                        first_entry = feed.entries[0]
+                        content_hash = self.create_content_hash(
+                            first_entry.get('title', ''), 
+                            first_entry.get('description', '')
+                        )
+                        is_duplicate = self.db.is_duplicate(content_hash)
+                        is_in_cache = await self.update_batcher.processed_hashes_cache.contains(content_hash)
+                        
+                        rss_info.append(f"\n**DUPLICATE CHECK (First Entry):**")
+                        rss_info.append(f"Content Hash: {content_hash[:12]}...")
+                        rss_info.append(f"In Database: {is_duplicate}")
+                        rss_info.append(f"In Cache: {is_in_cache}")
+                    
+                    # Send the info
+                    full_info = "\n".join(rss_info)
+                    
+                    # Split if too long
+                    if len(full_info) > 1900:
+                        chunks = [full_info[i:i+1900] for i in range(0, len(full_info), 1900)]
+                        for chunk in chunks[:3]:  # Max 3 chunks
+                            await interaction.followup.send(f"```{chunk}```", ephemeral=True)
+                    else:
+                        await interaction.followup.send(f"```{full_info}```", ephemeral=True)
+                    
+                except Exception as e:
+                    await interaction.followup.send(f"❌ RSS fetch error: {e}", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in test RSS: {e}")
+                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
         
         @self.tree.command(name="testllm", description="Test LLM connection and functionality")
         async def test_llm_slash(interaction: discord.Interaction):
