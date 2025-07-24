@@ -3906,7 +3906,8 @@ class UpdateBatcher:
         logger.info(f"DEBUG: Cache contains: {cache_contains}, DB duplicate: {db_duplicate}")
         
         # Check BOTH cache AND database before processing
-        if not cache_contains and not db_duplicate:
+        is_rss = "@" not in update.author  # RSS updates don't have @ in author
+        if not cache_contains and (is_rss or not db_duplicate):
             logger.info(f"DEBUG: Adding update to queues - {update.title[:50]}...")
             
             # Add to queues
