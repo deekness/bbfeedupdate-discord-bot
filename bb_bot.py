@@ -4136,37 +4136,46 @@ CRITICAL INSTRUCTIONS:
         ])
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-    
-    UPDATES IN CHRONOLOGICAL ORDER (earliest first):
-    {updates_text}
-    
-    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-    
-    HIGHLIGHT-WORTHY updates include:
-    - Competition wins (HOH, POV, etc.)
-    - Major strategic moves or betrayals
-    - Dramatic fights or confrontations  
-    - Romantic moments (first kiss, breakup, etc.)
-    - Hilarious or memorable incidents
-    - Game-changing twists revealed
-    - Eviction results or surprise votes
-    - Alliance formations or breaks
-    
-    For each selected update, provide them in CHRONOLOGICAL ORDER (earliest to latest):
-    
-    {{
-        "highlights": [
-            {{
-                "time": "exact time from update",
-                "title": "exact title from update BUT REMOVE the time if it appears at the beginning",
-                "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-                "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-            }}
-        ]
-    }}
-    
-    CRITICAL: Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest time.
-    Be selective - these should be the updates that a superfan would want to know about from this batch."""
+
+        UPDATES IN CHRONOLOGICAL ORDER (earliest first):
+        {updates_text}
+        
+        Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+        
+        HIGHLIGHT-WORTHY updates include:
+        - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
+        - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
+        - Major strategic moves or betrayals between houseguests
+        - Dramatic fights or confrontations between houseguests
+        - Romantic moments between houseguests (first kiss, breakup, etc.)
+        - Hilarious or memorable incidents happening in the house
+        - Alliance formations or breaks between houseguests
+        - Emotional moments, breakdowns, celebrations by houseguests
+        
+        AVOID highlighting:
+        - TV episode schedules or upcoming shows (unless houseguests are discussing them)
+        - Production updates not involving houseguest reactions
+        - Technical feed issues (unless houseguests react to them)
+        - General announcements not affecting house dynamics
+        
+        For each selected update, provide them in CHRONOLOGICAL ORDER (earliest to latest) with PACIFIC TIMES:
+        
+        {{
+            "highlights": [
+                {{
+                    "time": "extract the PACIFIC time from the update and format as 'HH:MM PM PST' (e.g., '04:56 PM PST')",
+                    "title": "FULL title from update - DO NOT TRUNCATE - include complete text",
+                    "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
+                    "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
+                }}
+            ]
+        }}
+        
+        CRITICAL: 
+        - Use COMPLETE titles - never truncate or shorten them
+        - Times must be in Pacific timezone format
+        - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
+        - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest time."""
     
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
@@ -4210,6 +4219,9 @@ CRITICAL INSTRUCTIONS:
             for highlight in highlights[:10]:
                 title = highlight.get('title', 'Update')
                 title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                
+                # REMOVE ANY TRUNCATION - keep full title
+                # OLD: if len(title) > 1000: title = title[:997] + "..."  # Remove this line
                 
                 if highlight.get('reason') and highlight['reason'].strip():
                     embed.add_field(
@@ -4895,26 +4907,45 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return [embed]
 
     def _extract_correct_time(self, update: BBUpdate) -> str:
-        """Extract the correct time from the update content rather than pub_date"""
-        # Look for time patterns in the title like "07:56 PM PST"
-        time_pattern = r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST'
+        """Extract the correct PACIFIC time from the update content"""
+        # Look for Pacific time patterns first
+        pacific_patterns = [
+            r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PST',
+            r'(\d{1,2}:\d{2})\s*(PM|AM)\s*Pacific',
+            r'(\d{1,2}:\d{2})\s*(PM|AM)\s*PT'
+        ]
         
         # First try the title
-        match = re.search(time_pattern, update.title)
-        if match:
-            time_str = match.group(1)
-            ampm = match.group(2)
-            return f"{time_str} {ampm}"
+        for pattern in pacific_patterns:
+            match = re.search(pattern, update.title, re.IGNORECASE)
+            if match:
+                time_str = match.group(1)
+                ampm = match.group(2).upper()
+                return f"{time_str} {ampm} PST"
         
         # Then try the description
-        match = re.search(time_pattern, update.description)
-        if match:
-            time_str = match.group(1)
-            ampm = match.group(2)
-            return f"{time_str} {ampm}"
+        for pattern in pacific_patterns:
+            match = re.search(pattern, update.description, re.IGNORECASE)
+            if match:
+                time_str = match.group(1)
+                ampm = match.group(2).upper()
+                return f"{time_str} {ampm} PST"
         
-        # Fallback to pub_date if no time found in content
-        return update.pub_date.strftime("%I:%M %p")
+        # Fallback - convert pub_date to Pacific
+        try:
+            import pytz
+            pacific_tz = pytz.timezone('US/Pacific')
+            if update.pub_date.tzinfo is None:
+                # Assume UTC if no timezone
+                utc_time = pytz.utc.localize(update.pub_date)
+            else:
+                utc_time = update.pub_date.astimezone(pytz.utc)
+            
+            pacific_time = utc_time.astimezone(pacific_tz)
+            return pacific_time.strftime("%I:%M %p PST").lstrip('0')
+        except:
+            # Final fallback
+            return update.pub_date.strftime("%I:%M %p PST").lstrip('0')
     
     def get_rate_limit_stats(self) -> Dict[str, int]:
         """Get current rate limiting statistics"""
