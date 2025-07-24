@@ -3841,7 +3841,7 @@ class UpdateBatcher:
             categories = self.analyzer.categorize_update(update)
             importance = self.analyzer.analyze_strategic_importance(update)
             self.db.store_update(update, importance, categories)
-            self.total_updates_processed += 1
+            
             
             # ONLY add to cache after successful processing
             await self.processed_hashes_cache.add(update.content_hash)
@@ -11100,13 +11100,18 @@ class BBDiscordBot(commands.Bot):
             
             # Process each new update (same as before)
             # Process each new update using the proper add_update method
+            # Process each new update using the proper add_update method
             for update in new_updates:
                 try:
                     # Use the UpdateBatcher's add_update method (this handles queues properly)
                     await self.update_batcher.add_update(update)
                     
+                    # Count processed updates in the bot class
+                    self.total_updates_processed += 1
+                    
                     # Process for alliance tracking
                     alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    # ... rest of your processing ...
                     for event in alliance_events:
                         alliance_id = self.alliance_tracker.process_alliance_event(event)
                         if alliance_id:
