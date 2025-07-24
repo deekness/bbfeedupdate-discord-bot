@@ -3820,19 +3820,22 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
-        # Only check cache for highlights queue (not database)
-        if not await self.processed_hashes_cache.contains(update.content_hash):
+        # Check BOTH cache AND database before processing
+        if (not await self.processed_hashes_cache.contains(update.content_hash) and 
+            not self.db.is_duplicate(update.content_hash)):
+            
+            # Add to queues
             self.highlights_queue.append(update)
             self.hourly_queue.append(update)
-            await self.processed_hashes_cache.add(update.content_hash)
             
-            # THEN check database for storage
-            if not self.db.is_duplicate(update.content_hash):
-                # Store new updates
-                categories = self.analyzer.categorize_update(update)
-                importance = self.analyzer.analyze_strategic_importance(update)
-                self.db.store_update(update, importance, categories)
-                self.total_updates_processed += 1
+            # Store in database
+            categories = self.analyzer.categorize_update(update)
+            importance = self.analyzer.analyze_strategic_importance(update)
+            self.db.store_update(update, importance, categories)
+            self.total_updates_processed += 1
+            
+            # ONLY add to cache after successful processing
+            await self.processed_hashes_cache.add(update.content_hash)
     
     async def _can_make_llm_request(self) -> bool:
         """Check if we can make an LLM request without hitting rate limits"""
@@ -3863,37 +3866,31 @@ class UpdateBatcher:
         return embeds
     
     async def create_hourly_summary(self) -> List[discord.Embed]:
-        """Create hourly summary - ONLY USE DATABASE DATA"""
+        """Create hourly summary - ALWAYS USE DATABASE DATA FOR SPECIFIC TIMEFRAME"""
         now = datetime.now()
         
-        # Define the hour period
+        # Define the previous hour period
         summary_hour = now.replace(minute=0, second=0, microsecond=0)
         hour_start = summary_hour - timedelta(hours=1)
         hour_end = summary_hour
         
-        # ALWAYS use database for hourly summaries
-        if hasattr(self, 'db') and self.db:
-            hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
-            self._used_queue_for_last_summary = False  # Flag for queue management
-        else:
-            hourly_updates = []
+        # ALWAYS get data from database for the specific hour
+        hourly_updates = self.db.get_updates_in_timeframe(hour_start, hour_end)
         
         if not hourly_updates:
             return []  # This will trigger quiet hour message
         
-        # Create summary from database data
+        # Create summary from database data only
         if self.llm_client and await self._can_make_llm_request():
             try:
                 embeds = await self._create_forced_structured_summary_from_db(hourly_updates, hour_start, hour_end)
                 return embeds
             except Exception as e:
                 logger.error(f"LLM hourly summary failed: {e}")
-                # Fall back to pattern-based summary
                 return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
         else:
-            # Use pattern-based fallback
             return self._create_pattern_hourly_summary_for_timeframe(hourly_updates, hour_start, hour_end)
-
+            
     def _create_pattern_hourly_summary_for_timeframe(self, updates: List[BBUpdate], hour_start: datetime, hour_end: datetime) -> List[discord.Embed]:
         """Pattern-based hourly summary for timeframe - LAST RESORT"""
         hour_display = hour_end.strftime("%I %p").lstrip('0')
@@ -6551,6 +6548,21 @@ async def save_queue_state(self):
         except Exception as e:
             logger.error(f"Error cleaning checkpoints: {e}")
 
+    async def cleanup_old_hourly_queue_items(self):
+        """Remove items older than 2 hours from hourly queue to prevent endless growth"""
+        if not self.hourly_queue:
+            return
+        
+        cutoff_time = datetime.now() - timedelta(hours=2)
+        original_size = len(self.hourly_queue)
+        
+        # Keep only items from last 2 hours
+        self.hourly_queue = [update for update in self.hourly_queue if update.pub_date > cutoff_time]
+        
+        cleaned_count = original_size - len(self.hourly_queue)
+        if cleaned_count > 0:
+            logger.info(f"Cleaned {cleaned_count} old items from hourly queue")
+    
     async def save_queue_state(self):
             """Save current queue state to database"""
             try:
@@ -10626,6 +10638,7 @@ class BBDiscordBot(commands.Bot):
             try:
                 await asyncio.sleep(3600)  # Run every hour
                 await self.update_batcher.clear_old_checkpoints()
+                await self.update_batcher.cleanup_old_hourly_queue_items()  # Add this line
             except Exception as e:
                 logger.error(f"Error in periodic cleanup: {e}")
     
@@ -10917,34 +10930,29 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Channel {channel_id} not found")
                 return
             
-            queue_size_before = len(self.update_batcher.highlights_queue)
             embeds = await self.update_batcher.create_highlights_batch()
             
             if not embeds:
                 logger.warning("No embeds created for highlights batch")
                 return
             
-            # Send to Discord first
+            # Send to Discord
             for embed in embeds:
                 await channel.send(embed=embed)
             
-            self.highlights_queue.clear()
-            self.last_batch_time = datetime.now()
-            
-            # ONLY clear queue after Discord success
+            # Clear ONLY highlights queue after successful send
             processed_count = len(self.update_batcher.highlights_queue)
             self.update_batcher.highlights_queue.clear()
             self.update_batcher.last_batch_time = datetime.now()
             await self.update_batcher.save_queue_state()
             
-            logger.info(f"✅ Sent highlights batch: {len(embeds)} embeds, cleared {processed_count} updates from queue")
+            logger.info(f"✅ Sent highlights batch: {len(embeds)} embeds, cleared {processed_count} updates from highlights queue")
             
         except Exception as e:
             logger.error(f"Error sending highlights batch: {e}")
-            logger.error(f"Queue preserved with {len(self.update_batcher.highlights_queue)} updates")
 
     async def send_hourly_summary(self):
-        """Fixed version - only clear queue when actually used"""
+        """Send hourly summary - never touches the queue"""
         channel_id = self.config.get('update_channel_id')
         if not channel_id:
             return
@@ -10954,31 +10962,21 @@ class BBDiscordBot(commands.Bot):
             if not channel:
                 return
             
-            # Create hourly summary (gets data from database by timeframe)
+            # Create hourly summary (always uses database with specific timeframe)
             embeds = await self.update_batcher.create_hourly_summary()
             
             if embeds:  
-                # Send the normal summary
                 for embed in embeds:
                     await channel.send(embed=embed)
                 logger.info(f"Sent hourly summary with {len(embeds)} embeds")
-                
-                # ONLY clear queue if it was actually used for the summary
-                # Check if summary method used queue vs database
-                if hasattr(self.update_batcher, '_used_queue_for_last_summary'):
-                    if self.update_batcher._used_queue_for_last_summary:
-                        processed_count = len(self.update_batcher.hourly_queue)
-                        self.update_batcher.hourly_queue.clear()
-                        logger.info(f"Cleared hourly queue of {processed_count} updates")
-                    else:
-                        logger.info("Summary used database data - keeping queue intact")
-                
-                self.update_batcher.last_hourly_summary = datetime.now()
             else:
                 # Send quiet hour embed
                 quiet_embed = self._create_quiet_hour_embed()
                 await channel.send(embed=quiet_embed)
                 logger.info("Sent quiet hour summary")
+            
+            # Update timestamp
+            self.update_batcher.last_hourly_summary = datetime.now()
                 
         except Exception as e:
             logger.error(f"Error sending hourly summary: {e}")
