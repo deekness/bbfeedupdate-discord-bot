@@ -1992,61 +1992,118 @@ class AllianceTracker:
         return detected_events
 
     def _clean_and_validate_houseguest(self, name: str) -> Optional[str]:
-        """Clean and validate a houseguest name"""
+        """Much stricter houseguest validation"""
         if not name or len(name) < 2:
             return None
             
         # Clean the name
         cleaned = re.sub(r'[^\w\s]', '', name).strip().title()
         
-        # Check if it's a known houseguest (using the global constants)
+        # Check if it's a known houseguest
         if cleaned in BB27_HOUSEGUESTS_SET:
             return cleaned
             
-        # Check nicknames (using the global constants)
+        # Check nicknames
         if cleaned.lower() in NICKNAME_MAP:
             return NICKNAME_MAP[cleaned.lower()]
+        
+        # Reject non-BB27 houseguests (like Kaycee from other seasons)
+        other_season_names = {
+            'Kaycee', 'Tyler', 'Angela', 'Brett', 'JC', 'Sam', 'Haleigh', 
+            'Faysal', 'Scottie', 'Rockstar', 'Bayleigh', 'Swaggy', 'Kaitlyn',
+            'Steve', 'Winston', 'Chris', 'She', 'He', 'Her', 'Him', 'They',
+            'Them', 'I', 'You', 'We', 'Us', 'Me', 'If', 'Best', 'Do'
+        }
+        
+        if cleaned in other_season_names:
+            return None
             
         # Reject if it's a common word that's not a houseguest
         common_words = {
             'Ground', 'Way', 'Thing', 'Person', 'Notes', 'Says', 'Knows', 'Going',
             'Easy', 'Under', 'Cover', 'First', 'Second', 'Third', 'Brother',
             'House', 'Game', 'Winner', 'Player', 'Member', 'Group', 'Team', 'And',
-            'The', 'Of', 'To', 'In', 'For', 'On', 'At', 'By', 'With', 'From'
+            'The', 'Of', 'To', 'In', 'For', 'On', 'At', 'By', 'With', 'From',
+            'She', 'He', 'Him', 'Her', 'They', 'Them', 'I', 'You', 'We', 'Us',
+            'Me', 'If', 'Best', 'Do', 'Feeds', 'Cut', 'Table', 'Bathroom', 'Comp',
+            'Bond', 'Wall', 'Mom', 'Big', 'Block', 'Spoke', 'Tell', 'World'
         }
         
         if cleaned in common_words or cleaned in EXCLUDE_WORDS:
             return None
             
-        return None  # Only return validated houseguest names
+        return None  # Only return validated BB27 houseguest names
     
     def _is_valid_alliance_name(self, name: str) -> bool:
-        """Validate alliance name to prevent nonsense names"""
+        """Much stricter validation to prevent nonsense names"""
         if not name or len(name) < 3 or len(name) > 25:
             return False
-            
-        # Reject names that are clearly not alliance names
-        invalid_names = {
+        
+        name_lower = name.lower().strip()
+        
+        # Reject single words that are clearly not alliance names
+        single_word_rejects = {
+            'bathroom', 'comp', 'bond', 'house', 'table', 'wall', 'mom', 'big', 
+            'game', 'feeds', 'cut', 'him', 'her', 'she', 'he', 'they', 'them',
+            'and', 'the', 'of', 'to', 'in', 'for', 'on', 'at', 'by', 'with',
+            'from', 'up', 'about', 'into', 'through', 'during', 'before',
+            'after', 'above', 'below', 'between', 'among', 'strings', 'world',
+            'block', 'person', 'people', 'blindfolded', 'throw', 'spoke', 'notes'
+        }
+        
+        if name_lower in single_word_rejects:
+            return False
+        
+        # Reject names that are clearly not alliance names (expanded list)
+        invalid_phrases = {
             'ground adrian finished his first', 'way by', 'easiest thing',
             'radar and be an under cover', 'notes morgan is the person',
             'says that he knows who', 'going to be easy', 'ground adrian finished',
-            'am', 'so', 'day', 'when', 'zae', 'blockbuster'
+            'am', 'so', 'day', 'when', 'zae', 'blockbuster', 'table feeds cut',
+            'house on him', 'wall blindfolded but he will throw it',
+            'block and have to put another person up', 'close with rachel',
+            'world tell you that showing emotions feeds switch',
+            'tells vince that he needs to know other people'
         }
         
-        if name.lower() in [n.lower() for n in invalid_names]:
-            return False
-            
+        for invalid in invalid_phrases:
+            if invalid in name_lower:
+                return False
+        
         # Reject if it contains houseguest names (those should be members, not the name)
         for hg in BB27_HOUSEGUESTS_SET:
-            if hg.lower() in name.lower():
+            if hg.lower() in name_lower:
                 return False
-                
-        # Reject if it's mostly common words
-        words = name.split()
-        common_word_count = sum(1 for word in words if word.title() in EXCLUDE_WORDS)
-        if common_word_count > len(words) * 0.6:  # More than 60% common words
+        
+        # Reject if it contains pronouns (indicates it's extracted from conversation)
+        pronouns = {'he', 'she', 'him', 'her', 'his', 'hers', 'they', 'them', 'their'}
+        name_words = set(name_lower.split())
+        if pronouns.intersection(name_words):
             return False
-            
+        
+        # Reject if it's mostly common words or stop words
+        stop_words = {
+            'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 
+            'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
+            'before', 'after', 'above', 'below', 'between', 'among', 'is', 'are',
+            'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do',
+            'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might',
+            'must', 'can', 'that', 'this', 'these', 'those', 'who', 'what',
+            'where', 'when', 'why', 'how', 'feeds', 'cut', 'tell', 'you',
+            'showing', 'emotions', 'switch', 'close', 'more', 'needs', 'know',
+            'other', 'people', 'spoke', 'bc'
+        }
+        
+        words = name_lower.split()
+        stop_word_count = sum(1 for word in words if word in stop_words)
+        if len(words) > 1 and stop_word_count > len(words) * 0.4:  # More than 40% stop words
+            return False
+        
+        # Only allow names that sound like actual alliance names
+        # Alliance names should be creative/memorable, not fragments of sentences
+        if len(words) > 4:  # Alliance names shouldn't be long sentences
+            return False
+        
         return True
     
     def _is_likely_alliance_context(self, content: str, houseguests: List[str]) -> bool:
