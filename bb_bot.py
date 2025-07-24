@@ -4004,7 +4004,7 @@ class UpdateBatcher:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model="claude-3-haiku-20240307",
-                max_tokens=1200,
+                max_tokens=3000,
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -4087,7 +4087,7 @@ CRITICAL INSTRUCTIONS:
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model="claude-3-haiku-20240307",
-            max_tokens=1200,
+            max_tokens=3000,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -4161,7 +4161,7 @@ CRITICAL INSTRUCTIONS:
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
-            max_tokens=800,
+            max_tokens=2500,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -4352,7 +4352,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model=self.llm_model,
-                max_tokens=1500,
+                max_tokens=3000,
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -4959,7 +4959,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model="claude-3-haiku-20240307",
-                max_tokens=1000,
+                max_tokens=3000,
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -5082,7 +5082,7 @@ INSTRUCTIONS:
     response = await asyncio.to_thread(
         self.llm_client.messages.create,
         model="claude-3-haiku-20240307",
-        max_tokens=1000,
+        max_tokens=3000,
         temperature=0.3,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -5203,7 +5203,7 @@ Be selective - these should be the updates that a superfan would want to know ab
     response = await asyncio.to_thread(
         self.llm_client.messages.create,
         model=self.llm_model,
-        max_tokens=800,
+        max_tokens=2500,
         temperature=0.3,
         messages=[{"role": "user", "content": prompt}]
     )
@@ -5348,7 +5348,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
-            max_tokens=1500,
+            max_tokens=3000,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -5852,7 +5852,7 @@ async def save_queue_state(self):
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model="claude-3-haiku-20240307",
-            max_tokens=1200,
+            max_tokens=3000,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -6242,7 +6242,7 @@ async def save_queue_state(self):
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
-            max_tokens=1000,
+            max_tokens=3000,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -6353,7 +6353,7 @@ async def save_queue_state(self):
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
-            max_tokens=1000,
+            max_tokens=3000,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -6480,7 +6480,7 @@ async def save_queue_state(self):
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
-            max_tokens=300,
+            max_tokens=800,
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -8394,7 +8394,7 @@ Focus on answering their specific question about power and control."""
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model="claude-3-haiku-20240307",
-                max_tokens=800,
+                max_tokens=2500,
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -8438,7 +8438,7 @@ Focus on answering their specific question about danger and eviction threats."""
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model="claude-3-haiku-20240307",
-                max_tokens=800,
+                max_tokens=2500,
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
