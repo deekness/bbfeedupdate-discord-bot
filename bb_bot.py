@@ -9556,6 +9556,16 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error generating content status: {e}")
                 await interaction.followup.send("Error generating status.", ephemeral=True)
         
+        @self.tree.command(name="clearcache", description="Clear duplicate cache (Owner only)")
+        async def clear_cache_slash(interaction: discord.Interaction):
+            owner_id = self.config.get('owner_id')
+            if not owner_id or interaction.user.id != owner_id:
+                await interaction.response.send_message("Owner only", ephemeral=True)
+                return
+            
+            await self.update_batcher.processed_hashes_cache.clear()
+            await interaction.response.send_message("✅ Cache cleared - RSS updates will now flow through", ephemeral=True)
+        
         @self.tree.command(name="status", description="Show bot status and statistics")
         async def status_slash(interaction: discord.Interaction):
             """Show bot status"""
