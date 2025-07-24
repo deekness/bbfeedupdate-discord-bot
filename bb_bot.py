@@ -11099,15 +11099,19 @@ class BBDiscordBot(commands.Bot):
             new_updates = await self.content_monitor.check_all_sources()
             
             # Process each new update (same as before)
+            # Process each new update using the proper add_update method
             for update in new_updates:
                 try:
-                    categories = self.analyzer.categorize_update(update)
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                
-                    # Store in database
-                    self.db.store_update(update, importance, categories)
+                    # Use the UpdateBatcher's add_update method (this handles queues properly)
+                    await self.update_batcher.add_update(update)
                     
-                    # Add to batching system (both highlights and hourly queues)
+                    # Process for alliance tracking
+                    alliance_events = self.alliance_tracker.analyze_update_for_alliances(update)
+                    for event in alliance_events:
+                        alliance_id = self.alliance_tracker.process_alliance_event(event)
+                        if alliance_id:
+                            logger.info(f"Alliance event processed: {event['type'].value}")
+                    
                     # Process for historical context if available
                     if hasattr(self, 'context_tracker') and self.context_tracker:
                         try:
