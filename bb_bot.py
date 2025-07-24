@@ -1258,16 +1258,12 @@ class BBAnalyzer:
         # Nickname to full name mapping
         nickname_mapping = {
             "vinny": "Vince", "vinnie": "Vince",
-            "kat": "Katherine", "katie": "Katherine", "kath": "Katherine",
-            "rach": "Rachel", "rachie": "Rachel",
-            "mike": "Mickey", "mick": "Mickey",
+            "kat": "Katherine",
+            "rach": "Rachel", "rachael": "Rachel",
+            "mick": "Mickey",
             "ash": "Ashley",
             "jim": "Jimmy",
-            "ken": "Keanu",
-            "kell": "Kelley",
-            "laur": "Lauren",
             "morg": "Morgan",
-            "ry": "Rylie"
         }
         
         # Full names list
