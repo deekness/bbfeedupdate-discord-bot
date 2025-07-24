@@ -3820,13 +3820,22 @@ class UpdateBatcher:
         return any(keyword in content for keyword in URGENT_KEYWORDS)
     
     async def add_update(self, update: BBUpdate):
+        logger.info(f"DEBUG: Checking update hash {update.content_hash[:8]}...")
+        
+        cache_contains = await self.processed_hashes_cache.contains(update.content_hash)
+        db_duplicate = self.db.is_duplicate(update.content_hash)
+        
+        logger.info(f"DEBUG: Cache contains: {cache_contains}, DB duplicate: {db_duplicate}")
+        
         # Check BOTH cache AND database before processing
-        if (not await self.processed_hashes_cache.contains(update.content_hash) and 
-            not self.db.is_duplicate(update.content_hash)):
+        if not cache_contains and not db_duplicate:
+            logger.info(f"DEBUG: Adding update to queues - {update.title[:50]}...")
             
             # Add to queues
             self.highlights_queue.append(update)
             self.hourly_queue.append(update)
+            
+            logger.info(f"DEBUG: After adding - Highlights: {len(self.highlights_queue)}, Hourly: {len(self.hourly_queue)}")
             
             # Store in database
             categories = self.analyzer.categorize_update(update)
@@ -3836,6 +3845,10 @@ class UpdateBatcher:
             
             # ONLY add to cache after successful processing
             await self.processed_hashes_cache.add(update.content_hash)
+            
+            logger.info(f"DEBUG: Successfully processed update")
+        else:
+            logger.info(f"DEBUG: Skipping duplicate - cache: {cache_contains}, db: {db_duplicate}")
     
     async def _can_make_llm_request(self) -> bool:
         """Check if we can make an LLM request without hitting rate limits"""
