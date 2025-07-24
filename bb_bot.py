@@ -1992,14 +1992,14 @@ class AllianceTracker:
         return detected_events
 
     def _clean_and_validate_houseguest(self, name: str) -> Optional[str]:
-        """Much stricter houseguest validation"""
+        """Ultra-strict houseguest validation - only BB27 cast"""
         if not name or len(name) < 2:
             return None
             
         # Clean the name
         cleaned = re.sub(r'[^\w\s]', '', name).strip().title()
         
-        # Check if it's a known houseguest
+        # ONLY allow actual BB27 houseguests
         if cleaned in BB27_HOUSEGUESTS_SET:
             return cleaned
             
@@ -2007,16 +2007,8 @@ class AllianceTracker:
         if cleaned.lower() in NICKNAME_MAP:
             return NICKNAME_MAP[cleaned.lower()]
         
-        # Reject non-BB27 houseguests (like Kaycee from other seasons)
-        other_season_names = {
-            'Kaycee', 'Tyler', 'Angela', 'Brett', 'JC', 'Sam', 'Haleigh', 
-            'Faysal', 'Scottie', 'Rockstar', 'Bayleigh', 'Swaggy', 'Kaitlyn',
-            'Steve', 'Winston', 'Chris', 'She', 'He', 'Her', 'Him', 'They',
-            'Them', 'I', 'You', 'We', 'Us', 'Me', 'If', 'Best', 'Do'
-        }
-        
-        if cleaned in other_season_names:
-            return None
+        # REJECT EVERYTHING ELSE - be extremely strict
+        return None
             
         # Reject if it's a common word that's not a houseguest
         common_words = {
@@ -2035,75 +2027,80 @@ class AllianceTracker:
         return None  # Only return validated BB27 houseguest names
     
     def _is_valid_alliance_name(self, name: str) -> bool:
-        """Much stricter validation to prevent nonsense names"""
-        if not name or len(name) < 3 or len(name) > 25:
+        """Final ultra-strict validation - only allow clearly legitimate alliance names"""
+        if not name or len(name) < 2 or len(name) > 25:
             return False
         
         name_lower = name.lower().strip()
         
-        # Reject single words that are clearly not alliance names
-        single_word_rejects = {
-            'bathroom', 'comp', 'bond', 'house', 'table', 'wall', 'mom', 'big', 
-            'game', 'feeds', 'cut', 'him', 'her', 'she', 'he', 'they', 'them',
-            'and', 'the', 'of', 'to', 'in', 'for', 'on', 'at', 'by', 'with',
-            'from', 'up', 'about', 'into', 'through', 'during', 'before',
-            'after', 'above', 'below', 'between', 'among', 'strings', 'world',
-            'block', 'person', 'people', 'blindfolded', 'throw', 'spoke', 'notes'
+        # WHITELIST: Only allow these specific patterns for alliance names
+        # 1. Known real alliance naming patterns
+        known_alliance_patterns = {
+            'the bond', 'bond', 'the core', 'core', 'the committee', 'committee',
+            'the cookout', 'cookout', 'the brigade', 'brigade', 'the six', 'six',
+            'final two', 'final three', 'final four', 'final five', 'final six',
+            'the showmance', 'showmance', 'the veterans', 'veterans', 'the newbies',
+            'newbies', 'the alliance', 'alliance', 'the group', 'group'
         }
         
-        if name_lower in single_word_rejects:
-            return False
+        # 2. Allow names that sound like real alliances (adjective + noun patterns)
+        if name_lower in known_alliance_patterns:
+            return True
         
-        # Reject names that are clearly not alliance names (expanded list)
-        invalid_phrases = {
-            'ground adrian finished his first', 'way by', 'easiest thing',
-            'radar and be an under cover', 'notes morgan is the person',
-            'says that he knows who', 'going to be easy', 'ground adrian finished',
-            'am', 'so', 'day', 'when', 'zae', 'blockbuster', 'table feeds cut',
-            'house on him', 'wall blindfolded but he will throw it',
-            'block and have to put another person up', 'close with rachel',
-            'world tell you that showing emotions feeds switch',
-            'tells vince that he needs to know other people'
-        }
-        
-        for invalid in invalid_phrases:
-            if invalid in name_lower:
-                return False
-        
-        # Reject if it contains houseguest names (those should be members, not the name)
-        for hg in BB27_HOUSEGUESTS_SET:
-            if hg.lower() in name_lower:
-                return False
-        
-        # Reject if it contains pronouns (indicates it's extracted from conversation)
-        pronouns = {'he', 'she', 'him', 'her', 'his', 'hers', 'they', 'them', 'their'}
-        name_words = set(name_lower.split())
-        if pronouns.intersection(name_words):
-            return False
-        
-        # Reject if it's mostly common words or stop words
-        stop_words = {
-            'the', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for', 'of', 
-            'with', 'by', 'from', 'up', 'about', 'into', 'through', 'during',
-            'before', 'after', 'above', 'below', 'between', 'among', 'is', 'are',
-            'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'do',
-            'does', 'did', 'will', 'would', 'could', 'should', 'may', 'might',
-            'must', 'can', 'that', 'this', 'these', 'those', 'who', 'what',
-            'where', 'when', 'why', 'how', 'feeds', 'cut', 'tell', 'you',
-            'showing', 'emotions', 'switch', 'close', 'more', 'needs', 'know',
-            'other', 'people', 'spoke', 'bc'
-        }
-        
+        # 3. Allow compound names that follow alliance naming conventions
         words = name_lower.split()
-        stop_word_count = sum(1 for word in words if word in stop_words)
-        if len(words) > 1 and stop_word_count > len(words) * 0.4:  # More than 40% stop words
+        
+        # Single words that could be alliance names (very restrictive)
+        if len(words) == 1:
+            # Only allow if it's clearly an alliance-style name
+            valid_single_words = {
+                'bond', 'core', 'committee', 'cookout', 'brigade', 'six',
+                'showmance', 'veterans', 'newbies', 'alliance', 'group',
+                'team', 'crew', 'squad', 'trio', 'quartet', 'quintet'
+            }
+            return name_lower in valid_single_words
+        
+        # Two word combinations that could be alliances
+        if len(words) == 2:
+            # Pattern: "The [Name]" or "[Adjective] [Noun]"
+            if words[0] == 'the':
+                return True  # "The Something" format is usually legitimate
+            
+            # Common alliance word combinations
+            alliance_adjectives = {'final', 'strong', 'solid', 'tight', 'close', 'secret', 'inner'}
+            alliance_nouns = {'two', 'three', 'four', 'five', 'six', 'seven', 'eight', 'circle', 'alliance', 'group', 'team', 'crew', 'squad'}
+            
+            if words[0] in alliance_adjectives and words[1] in alliance_nouns:
+                return True
+        
+        # BLACKLIST: Reject obvious non-alliance names
+        
+        # Reject single words that are clearly not alliance names
+        if len(words) == 1:
+            obvious_rejects = {
+                'bathroom', 'dishes', 'loose', 'nicest', 'comp', 'house', 'same',
+                'real', 'show', 'camera', 'life', 'powers', 'right', 'side',
+                'vote', 'proposing', 'caught', 'lived', 'blockbuster'
+            }
+            if name_lower in obvious_rejects:
+                return False
+        
+        # Reject any name containing these words (sentence fragments)
+        reject_if_contains = {
+            'proposing', 'caught', 'lived', 'camera', 'powers', 'comp',
+            'blockbuster', 'tamar', 'she', 'he', 'has', 'them', 'side',
+            'vote', 'us', 'on', 'from', 'hoh', 'is', 'are'
+        }
+        
+        for word in words:
+            if word in reject_if_contains:
+                return False
+        
+        # Reject long phrases (more than 3 words are usually sentence fragments)
+        if len(words) > 3:
             return False
         
-        # Only allow names that sound like actual alliance names
-        # Alliance names should be creative/memorable, not fragments of sentences
-        if len(words) > 4:  # Alliance names shouldn't be long sentences
-            return False
-        
+        # If we get here, it might be legitimate - allow it
         return True
     
     def _is_likely_alliance_context(self, content: str, houseguests: List[str]) -> bool:
@@ -2151,7 +2148,7 @@ class AllianceTracker:
         return valid_members[:6]  # Max 6 members per alliance
     
     def cleanup_invalid_alliances(self) -> int:
-        """Remove alliances with invalid names or members"""
+        """Ultra-aggressive cleanup - remove anything suspicious"""
         conn = self.get_connection()
         cursor = conn.cursor()
         
@@ -2174,13 +2171,14 @@ class AllianceTracker:
                     alliance_id, name = alliance_row
                 
                 should_remove = False
+                removal_reason = ""
                 
-                # Check if name is invalid
+                # Ultra-strict name validation
                 if not name or not self._is_valid_alliance_name(name):
                     should_remove = True
-                    logger.info(f"Marking alliance for removal - invalid name: '{name}'")
+                    removal_reason = f"invalid name: '{name}'"
                 
-                # Check if members are invalid
+                # Ultra-strict member validation
                 if not should_remove:
                     if self.use_postgresql:
                         cursor.execute("""
@@ -2199,11 +2197,27 @@ class AllianceTracker:
                     else:
                         members = [row[0] for row in members_result]
                     
-                    valid_members = [m for m in members if self._clean_and_validate_houseguest(m)]
+                    # Validate each member strictly
+                    valid_members = []
+                    for member in members:
+                        validated = self._clean_and_validate_houseguest(member)
+                        if validated:
+                            valid_members.append(validated)
                     
-                    if len(valid_members) < 2:  # Need at least 2 valid members
+                    # Require at least 2 valid BB27 houseguests
+                    if len(valid_members) < 2:
                         should_remove = True
-                        logger.info(f"Marking alliance for removal - invalid members: {members} -> {valid_members}")
+                        removal_reason = f"insufficient valid members: {members} -> {valid_members}"
+                    
+                    # Additional check: if any member is clearly invalid, remove the whole alliance
+                    invalid_member_patterns = {
+                        'She', 'He', 'Small', 'In', 'As', 'The', 'And', 'Or', 'But',
+                        'With', 'From', 'To', 'For', 'Of', 'At', 'By', 'On'
+                    }
+                    
+                    if any(member in invalid_member_patterns for member in members):
+                        should_remove = True
+                        removal_reason = f"contains invalid member words: {members}"
                 
                 if should_remove:
                     # Remove the alliance
@@ -2216,14 +2230,14 @@ class AllianceTracker:
                         cursor.execute("DELETE FROM alliance_members WHERE alliance_id = ?", (alliance_id,))
                         cursor.execute("DELETE FROM alliances WHERE alliance_id = ?", (alliance_id,))
                     cleaned_count += 1
-                    logger.info(f"Removed alliance {alliance_id}: '{name}'")
+                    logger.info(f"Removed alliance {alliance_id}: {removal_reason}")
             
             conn.commit()
-            logger.info(f"Cleaned up {cleaned_count} invalid alliances")
+            logger.info(f"Ultra-aggressive cleanup removed {cleaned_count} alliances")
             return cleaned_count
             
         except Exception as e:
-            logger.error(f"Error cleaning alliances: {e}")
+            logger.error(f"Error in cleanup: {e}")
             logger.error(traceback.format_exc())
             conn.rollback()
             return 0
