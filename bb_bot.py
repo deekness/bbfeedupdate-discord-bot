@@ -1991,6 +1991,105 @@ class AllianceTracker:
         
         return detected_events
 
+    def clean_alliance_members(self) -> int:
+        """Clean invalid members from existing alliances"""
+        conn = self.get_connection()
+        cursor = conn.cursor()
+        
+        try:
+            # Get all alliance members
+            cursor.execute("""
+                SELECT alliance_id, houseguest_name 
+                FROM alliance_members 
+                WHERE is_active = TRUE
+            """)
+            
+            all_members = cursor.fetchall()
+            cleaned_count = 0
+            
+            for member_row in all_members:
+                if self.use_postgresql:
+                    alliance_id = member_row['alliance_id']
+                    houseguest_name = member_row['houseguest_name']
+                else:
+                    alliance_id, houseguest_name = member_row
+                
+                # Validate the houseguest name using the existing validation
+                validated_name = self._clean_and_validate_houseguest(houseguest_name)
+                
+                if not validated_name:
+                    # Remove invalid member
+                    if self.use_postgresql:
+                        cursor.execute("""
+                            DELETE FROM alliance_members 
+                            WHERE alliance_id = %s AND houseguest_name = %s
+                        """, (alliance_id, houseguest_name))
+                    else:
+                        cursor.execute("""
+                            DELETE FROM alliance_members 
+                            WHERE alliance_id = ? AND houseguest_name = ?
+                        """, (alliance_id, houseguest_name))
+                    
+                    cleaned_count += 1
+                    logger.info(f"Removed invalid member '{houseguest_name}' from alliance {alliance_id}")
+            
+            # Now remove alliances that have fewer than 2 valid members
+            if self.use_postgresql:
+                cursor.execute("""
+                    SELECT a.alliance_id, a.name, COUNT(am.houseguest_name) as member_count
+                    FROM alliances a
+                    LEFT JOIN alliance_members am ON a.alliance_id = am.alliance_id AND am.is_active = TRUE
+                    WHERE a.status = 'active'
+                    GROUP BY a.alliance_id, a.name
+                    HAVING COUNT(am.houseguest_name) < 2
+                """)
+            else:
+                cursor.execute("""
+                    SELECT a.alliance_id, a.name, COUNT(am.houseguest_name) as member_count
+                    FROM alliances a
+                    LEFT JOIN alliance_members am ON a.alliance_id = am.alliance_id AND am.is_active = 1
+                    WHERE a.status = 'active'
+                    GROUP BY a.alliance_id, a.name
+                    HAVING COUNT(am.houseguest_name) < 2
+                """)
+            
+            invalid_alliances = cursor.fetchall()
+            
+            for alliance_row in invalid_alliances:
+                if self.use_postgresql:
+                    alliance_id = alliance_row['alliance_id']
+                    name = alliance_row['name']
+                else:
+                    alliance_id, name, _ = alliance_row
+                
+                # Mark alliance as dissolved
+                if self.use_postgresql:
+                    cursor.execute("""
+                        UPDATE alliances 
+                        SET status = 'dissolved', confidence_level = 0 
+                        WHERE alliance_id = %s
+                    """, (alliance_id,))
+                else:
+                    cursor.execute("""
+                        UPDATE alliances 
+                        SET status = 'dissolved', confidence_level = 0 
+                        WHERE alliance_id = ?
+                    """, (alliance_id,))
+                
+                cleaned_count += 1
+                logger.info(f"Dissolved alliance '{name}' (ID: {alliance_id}) - insufficient valid members")
+            
+            conn.commit()
+            logger.info(f"Member cleanup completed: {cleaned_count} actions taken")
+            return cleaned_count
+            
+        except Exception as e:
+            logger.error(f"Error cleaning alliance members: {e}")
+            conn.rollback()
+            return 0
+        finally:
+            conn.close()
+    
     def _clean_and_validate_houseguest(self, name: str) -> Optional[str]:
         """Ultra-strict houseguest validation - only BB27 cast"""
         if not name or len(name) < 2:
@@ -10234,6 +10333,29 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error testing LLM: {e}")
                 await interaction.followup.send(f"❌ LLM test failed: {str(e)}", ephemeral=True)
 
+        @self.tree.command(name="cleanmembers", description="Clean invalid members from alliances (Admin only)")
+        async def clean_members_slash(interaction: discord.Interaction):
+            """Clean invalid alliance members"""
+            try:
+                if not self.is_owner_or_admin(interaction.user, interaction):
+                    await interaction.response.send_message("You need administrator permissions or be the bot owner to use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Clean invalid members
+                cleaned_count = self.alliance_tracker.clean_alliance_members()
+                
+                await interaction.followup.send(
+                    f"✅ Cleaned {cleaned_count} invalid alliance members.\n"
+                    f"Alliances should now only show valid BB27 houseguest names.",
+                    ephemeral=True
+                )
+                
+            except Exception as e:
+                logger.error(f"Error cleaning alliance members: {e}")
+                await interaction.followup.send("Error cleaning alliance members", ephemeral=True)
+        
         @self.tree.command(name="cleanalliances", description="Clean up invalid alliance data (Owner only)")
         async def clean_alliances_slash(interaction: discord.Interaction):
             """Clean up invalid alliances"""
