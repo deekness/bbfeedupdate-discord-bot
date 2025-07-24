@@ -9785,6 +9785,32 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error forcing batch: {e}")
                 await interaction.followup.send("Error sending batch.", ephemeral=True)
 
+        @self.tree.command(name="checkduplicates", description="Check recent database entries (Owner only)")
+        async def check_duplicates_slash(interaction: discord.Interaction):
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Get recent database entries
+                recent_updates = self.db.get_recent_updates(24)  # Last 24 hours
+                
+                if recent_updates:
+                    info = f"**Database has {len(recent_updates)} updates from last 24h**\n\n"
+                    for i, update in enumerate(recent_updates[:5], 1):
+                        info += f"**{i}.** {update.title[:80]}...\n"
+                        info += f"Stored: {update.pub_date}\n\n"
+                    
+                    await interaction.followup.send(info, ephemeral=True)
+                else:
+                    await interaction.followup.send("No recent updates in database", ephemeral=True)
+                    
+            except Exception as e:
+                await interaction.followup.send(f"Error: {e}", ephemeral=True)
+        
         # Add this diagnostic command to see what's actually being processed
 
         @self.tree.command(name="testrss", description="Test RSS feed processing (Owner only)")
