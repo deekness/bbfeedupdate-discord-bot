@@ -8623,6 +8623,166 @@ Focus on answering their specific question about power and control."""
             logger.error(f"LLM competition analysis failed: {e}")
             return self._pattern_competition_analysis(comp_updates)
     
+    async def _llm_alliance_analysis(self, active_alliances: List[dict], broken_alliances: List[dict], recent_betrayals: List[dict], question: str) -> dict:
+        """Use LLM to analyze alliance structure"""
+        
+        if not self.llm_client:
+            return self._pattern_alliance_analysis(active_alliances, broken_alliances, recent_betrayals)
+        
+        try:
+            # Format alliance data
+            active_text = "\n".join([
+                f"• {alliance['name']}: {', '.join(alliance['members'])} (confidence: {alliance['confidence']}%)"
+                for alliance in active_alliances[:8]
+            ])
+            
+            broken_text = "\n".join([
+                f"• {alliance['name']}: {', '.join(alliance['members'])} (broke {alliance.get('days_ago', 'recently')} days ago)"
+                for alliance in broken_alliances[:5]
+            ])
+            
+            betrayals_text = "\n".join([
+                f"• {betrayal['description']}"
+                for betrayal in recent_betrayals[:5]
+            ])
+            
+            prompt = f"""Analyze Big Brother alliance dynamics based on current tracking data.
+    
+    ACTIVE ALLIANCES:
+    {active_text if active_text else "No active alliances detected"}
+    
+    RECENTLY BROKEN ALLIANCES:
+    {broken_text if broken_text else "No recently broken alliances"}
+    
+    RECENT BETRAYALS:
+    {betrayals_text if betrayals_text else "No recent betrayals"}
+    
+    USER QUESTION: {question}
+    
+    Provide analysis in this format:
+    {{
+        "main_answer": "Direct answer to the user's question about alliances",
+        "strongest_alliances": ["list", "of", "strongest", "current", "alliances"],
+        "alliance_analysis": "Analysis of current alliance landscape and dynamics",
+        "betrayal_risk": "Assessment of which alliances might be at risk",
+        "trust_levels": "Overview of trust dynamics in the house",
+        "confidence": "high/medium/low based on available data"
+    }}
+    
+    Focus on answering their specific question about alliances and relationships."""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2500,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "alliances")
+            
+        except Exception as e:
+            logger.error(f"LLM alliance analysis failed: {e}")
+            return self._pattern_alliance_analysis(active_alliances, broken_alliances, recent_betrayals)
+    
+    async def _llm_winner_analysis(self, strategic_updates: List[BBUpdate], active_alliances: List[dict], question: str) -> dict:
+        """Use LLM to analyze winner potential"""
+        
+        if not self.llm_client:
+            return self._pattern_winner_analysis(strategic_updates, active_alliances)
+        
+        try:
+            # Format strategic updates
+            updates_text = "\n".join([f"• {update.title}" for update in strategic_updates[:12]])
+            
+            # Format alliance data
+            alliances_text = "\n".join([
+                f"• {alliance['name']}: {', '.join(alliance['members'])}"
+                for alliance in active_alliances[:6]
+            ])
+            
+            prompt = f"""Analyze Big Brother winner potential based on recent strategic activity and alliances.
+    
+    RECENT STRATEGIC UPDATES:
+    {updates_text if updates_text else "No recent strategic updates"}
+    
+    CURRENT ALLIANCES:
+    {alliances_text if alliances_text else "No current alliances detected"}
+    
+    USER QUESTION: {question}
+    
+    Provide analysis in this format:
+    {{
+        "main_answer": "Direct answer about winner potential and positioning",
+        "top_contenders": ["houseguests", "best", "positioned", "to", "win"],
+        "winner_analysis": "Analysis of who's positioned well and why",
+        "strategic_threats": ["houseguests", "who", "are", "strategic", "threats"],
+        "social_game_leaders": ["houseguests", "with", "strong", "social", "games"],
+        "confidence": "high/medium/low based on available information"
+    }}
+    
+    Focus on strategic positioning, alliance strength, and overall game positioning."""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2500,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "winners")
+            
+        except Exception as e:
+            logger.error(f"LLM winner analysis failed: {e}")
+            return self._pattern_winner_analysis(strategic_updates, active_alliances)
+    
+    async def _llm_general_analysis(self, updates: List[BBUpdate], question: str) -> dict:
+        """Use LLM for general analysis when no specific category matches"""
+        
+        if not self.llm_client:
+            return self._pattern_general_analysis(updates)
+        
+        try:
+            # Prepare update data
+            updates_text = "\n".join([
+                f"• {update.title}"
+                for update in updates[:15]  # Limit to prevent token overflow
+            ])
+            
+            prompt = f"""You are a Big Brother superfan analyst answering a question about the current game state.
+    
+    RECENT UPDATES FROM THE HOUSE:
+    {updates_text}
+    
+    USER QUESTION: {question}
+    
+    Analyze the current situation and provide your response in this format:
+    
+    {{
+        "main_answer": "Direct answer to the user's question based on recent updates",
+        "supporting_details": "Additional context or details that support your answer",
+        "key_houseguests": ["houseguests", "relevant", "to", "this", "question"],
+        "confidence": "high/medium/low based on available information",
+        "additional_context": "Any other relevant information about the current game state"
+    }}
+    
+    Focus on answering their specific question using the most recent house activity."""
+    
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=2500,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            return self._parse_llm_chat_response(response.content[0].text, "general")
+            
+        except Exception as e:
+            logger.error(f"LLM general analysis failed: {e}")
+            return self._pattern_general_analysis(updates)
+    
     async def _llm_drama_analysis(self, drama_updates: List[BBUpdate], question: str) -> dict:
         """Use LLM to analyze current drama and conflicts"""
         
