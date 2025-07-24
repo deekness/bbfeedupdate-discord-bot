@@ -2091,7 +2091,7 @@ class AllianceTracker:
                            GROUP_CONCAT(am.houseguest_name) as members
                     FROM alliances a
                     JOIN alliance_members am ON a.alliance_id = am.alliance_id
-                    WHERE a.status = ? AND am.is_active = 1
+                    WHERE a.status = ? AND am.is_active = TRUE
                     GROUP BY a.alliance_id
                     ORDER BY a.confidence_level DESC, a.last_activity DESC
                 """, (AllianceStatus.ACTIVE.value,))
@@ -2430,7 +2430,7 @@ class AllianceTracker:
                 SELECT DISTINCT a.alliance_id, a.name, a.confidence_level
                 FROM alliance_members am
                 JOIN alliances a ON am.alliance_id = a.alliance_id
-                WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = 1
+                WHERE am.houseguest_name = ? AND a.status = ? AND am.is_active = TRUE
             """, (houseguests[0], AllianceStatus.ACTIVE.value))
             
             for row in cursor.fetchall():
