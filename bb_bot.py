@@ -1130,18 +1130,25 @@ class UnifiedContentMonitor:
             return True
         
         # HOUSEGUEST CONVERSATIONS: Look for houseguest names/nicknames followed by dialogue
-        all_names = list(houseguest_names.keys())  # All names and nicknames
+        all_names = list(houseguest_names.keys())
+        names_pattern = "|".join(re.escape(name) for name in all_names)  # Escape special chars
         
         houseguest_dialogue_patterns = [
-            rf'\b({"|".join(all_names)})\s*:\s*[^:{{10,}}',  # "Name/Nickname: longer dialogue"
-            rf'\b({"|".join(all_names)})\s+says?\s+',        # "Name/Nickname says"
-            rf'\b({"|".join(all_names)})\s+tells?\s+',       # "Name/Nickname tells"
-            rf'\b({"|".join(all_names)})\s+asks?\s+',        # "Name/Nickname asks"
-            rf'\b({"|".join(all_names)})\s+mentions?\s+',    # "Name/Nickname mentions"
+            rf'\b({names_pattern})\s*:\s*.{{10,}}',      # "Name: longer dialogue" (10+ chars after colon)
+            rf'\b({names_pattern})\s+says?\s+',          # "Name says"
+            rf'\b({names_pattern})\s+tells?\s+',         # "Name tells"
+            rf'\b({names_pattern})\s+asks?\s+',          # "Name asks"
+            rf'\b({names_pattern})\s+mentions?\s+',      # "Name mentions"
         ]
         
-        if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in houseguest_dialogue_patterns):
-            return True
+        try:
+            if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in houseguest_dialogue_patterns):
+                return True
+        except re.error as e:
+            logger.error(f"Regex error in dialogue patterns: {e}")
+            # Fallback to simpler name detection
+            if any(name in text_lower for name in all_names):
+                return True
         
         # STRATEGIC CONTENT: Allow strategic discussion
         strategy_keywords = [
@@ -1168,16 +1175,23 @@ class UnifiedContentMonitor:
         # HOUSEGUEST NAMES/NICKNAMES: Include if mentioned with meaningful context
         for name_or_nickname in all_names:
             if name_or_nickname in text_lower:
-                # Check if there's meaningful context around the name/nickname
-                name_context_patterns = [
-                    rf"{name_or_nickname}\s*:.*",           # "Name: dialogue"
-                    rf"{name_or_nickname}\s+(says?|tells?|asks?|mentions?|wants?|thinks?)",  # "Name says/tells/etc"
-                    rf"(says?|tells?).*{name_or_nickname}",  # "says to Name"
-                    rf"{name_or_nickname}.*\b(strategy|alliance|vote|target|deal|plan)\b"  # Name + strategy words
-                ]
-                
-                if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in name_context_patterns):
-                    return True
+                try:
+                    # Escape the name to handle special regex characters
+                    escaped_name = re.escape(name_or_nickname)
+                    name_context_patterns = [
+                        rf'{escaped_name}\s*:.*',           # "Name: dialogue"
+                        rf'{escaped_name}\s+(says?|tells?|asks?|mentions?|wants?|thinks?)',  # "Name says/tells/etc"
+                        rf'(says?|tells?).*{escaped_name}',  # "says to Name"
+                        rf'{escaped_name}.*\b(strategy|alliance|vote|target|deal|plan)\b'  # Name + strategy words
+                    ]
+                    
+                    if any(re.search(pattern, text_lower, re.IGNORECASE) for pattern in name_context_patterns):
+                        return True
+                except re.error as e:
+                    logger.error(f"Regex error with name '{name_or_nickname}': {e}")
+                    # Simple fallback - just check if name appears with strategy words
+                    if any(word in text_lower for word in ["strategy", "alliance", "vote", "target", "deal", "plan"]):
+                        return True
         
         # DEFAULT: If none of the above criteria match, exclude
         return False
