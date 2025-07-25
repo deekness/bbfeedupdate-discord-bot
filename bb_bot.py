@@ -8288,10 +8288,17 @@ class ResolveConfirmButton(discord.ui.Button):
             conn = self.view.prediction_manager.get_connection()
             cursor = conn.cursor()
             
-            cursor.execute("""
-                SELECT user_id FROM user_predictions 
-                WHERE prediction_id = ? AND option = ?
-            """, (prediction_id, correct_answer))
+            # FIXED: Use proper database syntax
+            if self.view.prediction_manager.use_postgresql:
+                cursor.execute("""
+                    SELECT user_id FROM user_predictions 
+                    WHERE prediction_id = %s AND option = %s
+                """, (prediction_id, correct_answer))
+            else:
+                cursor.execute("""
+                    SELECT user_id FROM user_predictions 
+                    WHERE prediction_id = ? AND option = ?
+                """, (prediction_id, correct_answer))
             
             user_ids = [row[0] for row in cursor.fetchall()]
             conn.close()
