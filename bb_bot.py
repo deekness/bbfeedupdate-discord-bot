@@ -4563,58 +4563,71 @@ CRITICAL INSTRUCTIONS:
         # Sort updates chronologically BEFORE sending to LLM
         sorted_updates = sorted(self.highlights_queue, key=lambda x: x.pub_date)
         
-        # Prepare update data in chronological order
-        updates_text = "\n".join([
-            f"{self._extract_correct_time(u)} - {re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', u.title)}"
-            for u in sorted_updates
-        ])
+        # Prepare update data in chronological order with full content
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates, 1):
+            # Get the full title without truncation
+            full_title = update.title
+            # Clean time prefix if it exists
+            cleaned_title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_title)
+            
+            # Include description if it's different and adds value
+            if update.description and update.description != update.title and len(update.description.strip()) > 10:
+                content = f"{cleaned_title} - {update.description}"
+            else:
+                content = cleaned_title
+            
+            formatted_updates.append(f"{i}. {content}")
+        
+        updates_text = "\n".join(formatted_updates)
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-
-        UPDATES IN CHRONOLOGICAL ORDER (earliest first):
-        {updates_text}
-        
-        Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-        
-        HIGHLIGHT-WORTHY updates include:
-        - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
-        - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
-        - Major strategic moves or betrayals between houseguests
-        - Dramatic fights or confrontations between houseguests
-        - Romantic moments between houseguests (first kiss, breakup, etc.)
-        - Hilarious or memorable incidents happening in the house
-        - Alliance formations or breaks between houseguests
-        - Emotional moments, breakdowns, celebrations by houseguests
-        
-        AVOID highlighting:
-        - TV episode schedules or upcoming shows (unless houseguests are discussing them)
-        - Production updates not involving houseguest reactions
-        - Technical feed issues (unless houseguests react to them)
-        - General announcements not affecting house dynamics
-        
-        For each selected update, provide them in CHRONOLOGICAL ORDER (earliest to latest) with PACIFIC TIMES:
-        
-        {{
-            "highlights": [
-                {{
-                    "time": "extract the PACIFIC time from the update and format as 'HH:MM PM PST' (e.g., '04:56 PM PST')",
-                    "title": "FULL title from update - DO NOT TRUNCATE - include complete text",
-                    "importance_emoji": "🔥 for high, ⭐ for medium, 📝 for low",
-                    "reason": "ONLY add this field if the title needs crucial context that isn't obvious. Keep it VERY brief (under 10 words). Most updates won't need this."
-                }}
-            ]
-        }}
-        
-        CRITICAL: 
-        - Use COMPLETE titles - never truncate or shorten them
-        - Times must be in Pacific timezone format
-        - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
-        - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest time."""
+    
+    UPDATES IN CHRONOLOGICAL ORDER (earliest first):
+    {updates_text}
+    
+    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+    
+    HIGHLIGHT-WORTHY updates include:
+    - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
+    - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
+    - Major strategic moves or betrayals between houseguests
+    - Dramatic fights or confrontations between houseguests
+    - Romantic moments between houseguests (first kiss, breakup, etc.)
+    - Hilarious or memorable incidents happening in the house
+    - Alliance formations or breaks between houseguests
+    - Emotional moments, breakdowns, celebrations by houseguests
+    
+    AVOID highlighting:
+    - TV episode schedules or upcoming shows (unless houseguests are discussing them)
+    - Production updates not involving houseguest reactions
+    - Technical feed issues (unless houseguests react to them)
+    - General announcements not affecting house dynamics
+    
+    For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS:
+    
+    {{
+        "highlights": [
+            {{
+                "summary": "Create a COMPLETE SUMMARY (not truncated) that captures the full essence of this moment. Make it engaging and informative - tell the whole story in 1-2 sentences.",
+                "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
+                "context": "ONLY add this field if crucial context is needed that isn't obvious from the summary. Keep very brief (under 15 words). Most highlights won't need this."
+            }}
+        ]
+    }}
+    
+    CRITICAL INSTRUCTIONS:
+    - NO TIMESTAMPS - remove all time references 
+    - Create COMPLETE summaries - never truncate or cut off mid-sentence
+    - Make summaries engaging and informative - tell the full story
+    - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
+    - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
+    - Each summary should be a complete thought that stands alone"""
     
         response = await asyncio.to_thread(
             self.llm_client.messages.create,
             model=self.llm_model,
-            max_tokens=2500,
+            max_tokens=3500,  # Increased for longer summaries
             temperature=0.3,
             messages=[{"role": "user", "content": prompt}]
         )
@@ -4627,21 +4640,8 @@ CRITICAL INSTRUCTIONS:
                 logger.warning("No highlights in LLM response, using pattern fallback")
                 return [self._create_pattern_highlights_embed()]
             
-            # SORT THE HIGHLIGHTS BY TIME after parsing (backup enforcement)
+            # SORT THE HIGHLIGHTS BY CHRONOLOGICAL ORDER (backup enforcement)
             highlights = highlights_data['highlights']
-            
-            # Extract time for sorting
-            def extract_time_for_sorting(highlight):
-                time_str = highlight.get('time', '00:00 AM')
-                try:
-                    # Convert to 24-hour format for proper sorting
-                    time_obj = datetime.strptime(time_str, '%I:%M %p')
-                    return time_obj.time()
-                except:
-                    return datetime.strptime('00:00', '%H:%M').time()
-            
-            # Sort highlights chronologically
-            highlights.sort(key=extract_time_for_sorting)
             
             embed = discord.Embed(
                 title="📹 Feed Highlights - What Just Happened",
@@ -4650,27 +4650,27 @@ CRITICAL INSTRUCTIONS:
                 timestamp=datetime.now()
             )
             
-            for highlight in highlights[:10]:
-                title = highlight.get('title', 'Update')
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+            for i, highlight in enumerate(highlights[:10], 1):
+                summary = highlight.get('summary', 'Update')
+                importance_emoji = highlight.get('importance_emoji', '📝')
+                context = highlight.get('context', '').strip()
                 
-                # REMOVE ANY TRUNCATION - keep full title
-                # OLD: if len(title) > 1000: title = title[:997] + "..."  # Remove this line
+                # Create field name without timestamp
+                field_name = f"{importance_emoji} Highlight {i}"
                 
-                if highlight.get('reason') and highlight['reason'].strip():
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                        value=f"{title}\n*{highlight['reason']}*",
-                        inline=False
-                    )
+                # Create field value
+                if context:
+                    field_value = f"{summary}\n\n*{context}*"
                 else:
-                    embed.add_field(
-                        name=f"{highlight.get('importance_emoji', '📝')} {highlight.get('time', 'Time')}",
-                        value=title,
-                        inline=False
-                    )
+                    field_value = summary
+                
+                embed.add_field(
+                    name=field_name,
+                    value=field_value,
+                    inline=False
+                )
             
-            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed")
+            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed • No timestamps for cleaner reading")
             return [embed]
             
         except Exception as e:
@@ -5237,29 +5237,32 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
                 timestamp=datetime.now()
             )
             
-            # Add selected highlights
+            # Add selected highlights without timestamps
             for i, (update, importance) in enumerate(selected_updates, 1):
-                # Extract correct time from content rather than pub_date
-                time_str = self._extract_correct_time(update)
-                
                 # Clean the title - remove time if it appears at the beginning
                 title = update.title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
                 
-                # Only truncate if extremely long
-                if len(title) > 1000:
-                    title = title[:997] + "..."
+                # Include description if it adds value
+                if update.description and update.description != update.title and len(update.description.strip()) > 10:
+                    # Create a complete summary
+                    if len(title + update.description) > 800:
+                        summary = f"{title} - {update.description[:600]}..."
+                    else:
+                        summary = f"{title} - {update.description}"
+                else:
+                    summary = title
                 
                 # Add importance indicators
                 importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
                 
                 embed.add_field(
-                    name=f"{importance_emoji} {time_str}",
-                    value=title,
+                    name=f"{importance_emoji} Highlight {i}",
+                    value=summary,
                     inline=False
                 )
             
-            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
+            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected • No timestamps")
             
             return embed
             
