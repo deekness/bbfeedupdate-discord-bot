@@ -1387,27 +1387,58 @@ class HistoricalContextTracker:
         'SHOWMANCE_START': 'showmance_start',
         'SHOWMANCE_END': 'showmance_end',
         'FIGHT': 'fight',
-        'BETRAYAL': 'betrayal'
+        'BETRAYAL': 'betrayal',
+        'JURY_TALK': 'jury_talk',
+        'TARGET_DISCUSSION': 'target_discussion',
+        'STRATEGY_SESSION': 'strategy_session',
+        'POWER_DISCUSSION': 'power_discussion'
     }
+    
     
     # Competition detection patterns
     COMPETITION_PATTERNS = [
+        # Original patterns
         (r'(\w+)\s+wins?\s+(?:the\s+)?hoh', 'HOH_WIN'),
         (r'(\w+)\s+wins?\s+(?:the\s+)?(?:power\s+of\s+)?veto', 'VETO_WIN'),
         (r'(\w+)\s+wins?\s+(?:the\s+)?pov', 'VETO_WIN'),
         (r'(\w+)\s+(?:is\s+)?nominated?', 'NOMINATION'),
         (r'(\w+)\s+(?:gets?\s+)?evicted', 'EVICTION'),
-        (r'(\w+)\s+(?:was\s+)?eliminated', 'EVICTION')
+        (r'(\w+)\s+(?:was\s+)?eliminated', 'EVICTION'),
+        
+        # NEW: More flexible HOH patterns
+        (r'(\w+)\s+(?:becomes?|is\s+now)\s+hoh', 'HOH_WIN'),
+        (r'hoh\s+(?:winner|champion):\s*(\w+)', 'HOH_WIN'),
+        (r'congratulations\s+(\w+).*hoh', 'HOH_WIN'),
+        (r'(\w+)\s+(?:has\s+)?won\s+hoh', 'HOH_WIN'),
+        
+        # NEW: Current power holder references
+        (r'(\w+)\s+(?:is|as)\s+(?:the\s+)?current\s+hoh', 'HOH_WIN'),
+        (r'(\w+)\s+(?:holds?|has)\s+(?:the\s+)?hoh\s+power', 'HOH_WIN'),
     ]
-    
-    # Social event patterns  
+      
+    # Enhanced social/strategic patterns  
     SOCIAL_PATTERNS = [
+        # Original patterns
         (r'(\w+)\s+and\s+(\w+)\s+(?:kiss|kissed|make\s+out)', 'SHOWMANCE_START'),
         (r'(\w+)\s+and\s+(\w+)\s+(?:fight|argue|confrontation)', 'FIGHT'),
         (r'(\w+)\s+betrays?\s+(\w+)', 'BETRAYAL'),
-        (r'(\w+)\s+(?:throws?\s+)?(\w+)\s+under\s+the\s+bus', 'BETRAYAL')
+        (r'(\w+)\s+(?:throws?\s+)?(\w+)\s+under\s+the\s+bus', 'BETRAYAL'),
+        (r'(\w+)\s+says?\s+he\s+wants?\s+([^.]+)\s+in\s+his\s+jury', 'JURY_TALK'),
+        (r'(\w+)\s+says?\s+she\s+wants?\s+([^.]+)\s+in\s+her\s+jury', 'JURY_TALK'),
+        (r'(\w+)\s+(?:wants?|targeting)\s+([^.]+)\s+(?:out|gone|evicted)', 'TARGET_DISCUSSION'),
+        (r'(\w+)\s+tells?\s+(\w+)\s+(?:about|that)', 'STRATEGY_SESSION'),
+        (r'(\w+)\s+(?:mentions?|says?)\s+(?:he|she)\s+(?:wants?|needs?)', 'STRATEGY_SESSION'),
     ]
-    
+
+
+    # NEW: Context-aware patterns for current game state
+    GAME_STATE_PATTERNS = [
+        (r'(\w+)\s+(?:is|as)\s+hoh', 'POWER_DISCUSSION'),
+        (r'(\w+)\s+has\s+(?:the\s+)?power', 'POWER_DISCUSSION'),
+        (r'(\w+)\s+(?:on\s+the\s+)?block', 'NOMINATION'),
+        (r'(\w+)\s+nominated', 'NOMINATION'),
+    ]
+
     def __init__(self, database_url: str = None, use_postgresql: bool = True):
         self.database_url = database_url
         self.use_postgresql = use_postgresql
@@ -1423,11 +1454,11 @@ class HistoricalContextTracker:
             raise NotImplementedError("SQLite context tracking not implemented")
     
     async def analyze_update_for_events(self, update: BBUpdate) -> List[Dict]:
-        """Analyze an update for trackable events"""
+        """Enhanced analysis with more patterns"""
         detected_events = []
         content = f"{update.title} {update.description}".lower()
         
-        # Skip finale/voting updates (like we do for alliances)
+        # Skip finale/voting updates
         skip_phrases = [
             'votes for', 'voted for', 'to be the winner', 'winner of big brother',
             'jury vote', 'crown the winner', 'wins bb', 'finale', 'final vote'
@@ -1436,39 +1467,60 @@ class HistoricalContextTracker:
         if any(phrase in content for phrase in skip_phrases):
             return []
         
-        # Detect competition events
-        for pattern, event_type in self.COMPETITION_PATTERNS:
-            matches = re.finditer(pattern, content, re.IGNORECASE)
-            for match in matches:
-                houseguest = match.group(1).strip().title()
-                
-                # Filter out common false positives
-                if houseguest not in EXCLUDE_WORDS and len(houseguest) > 2:
-                    detected_events.append({
-                        'type': self.EVENT_TYPES[event_type],
-                        'houseguest': houseguest,
-                        'description': f"{houseguest} {event_type.lower().replace('_', ' ')}",
-                        'update': update,
-                        'confidence': self._calculate_event_confidence(event_type, content)
-                    })
+        # Check all pattern categories
+        all_patterns = [
+            (self.COMPETITION_PATTERNS, "competition"),
+            (self.SOCIAL_PATTERNS, "social"), 
+            (self.GAME_STATE_PATTERNS, "game_state")
+        ]
         
-        # Detect social events (involving 2+ people)
-        for pattern, event_type in self.SOCIAL_PATTERNS:
-            matches = re.finditer(pattern, content, re.IGNORECASE)
-            for match in matches:
-                if len(match.groups()) >= 2:
-                    hg1 = match.group(1).strip().title()
-                    hg2 = match.group(2).strip().title()
-                    
-                    if (hg1 not in EXCLUDE_WORDS and hg2 not in EXCLUDE_WORDS and 
-                        len(hg1) > 2 and len(hg2) > 2):
-                        detected_events.append({
-                            'type': self.EVENT_TYPES[event_type],
-                            'houseguests': [hg1, hg2],
-                            'description': f"{hg1} and {hg2} {event_type.lower().replace('_', ' ')}",
-                            'update': update,
-                            'confidence': self._calculate_event_confidence(event_type, content)
-                        })
+        for patterns, category in all_patterns:
+            for pattern, event_type in patterns:
+                matches = re.finditer(pattern, content, re.IGNORECASE)
+                for match in matches:
+                    groups = match.groups()
+                    if groups:
+                        # Handle different event types
+                        if event_type in ['JURY_TALK', 'TARGET_DISCUSSION']:
+                            houseguest = groups[0].strip().title()
+                            details = groups[1] if len(groups) > 1 else ""
+                            
+                            if houseguest not in EXCLUDE_WORDS and len(houseguest) > 2:
+                                detected_events.append({
+                                    'type': self.EVENT_TYPES[event_type],
+                                    'houseguest': houseguest,
+                                    'description': f"{houseguest} {event_type.lower().replace('_', ' ')}: {details[:100]}",
+                                    'update': update,
+                                    'confidence': self._calculate_event_confidence(event_type, content),
+                                    'details': details
+                                })
+                        
+                        elif len(groups) == 1:
+                            # Single houseguest events
+                            houseguest = groups[0].strip().title()
+                            if houseguest not in EXCLUDE_WORDS and len(houseguest) > 2:
+                                detected_events.append({
+                                    'type': self.EVENT_TYPES[event_type],
+                                    'houseguest': houseguest,
+                                    'description': f"{houseguest} {event_type.lower().replace('_', ' ')}",
+                                    'update': update,
+                                    'confidence': self._calculate_event_confidence(event_type, content)
+                                })
+                        
+                        elif len(groups) >= 2:
+                            # Multi-houseguest events
+                            hg1 = groups[0].strip().title()
+                            hg2 = groups[1].strip().title()
+                            
+                            if (hg1 not in EXCLUDE_WORDS and hg2 not in EXCLUDE_WORDS and 
+                                len(hg1) > 2 and len(hg2) > 2):
+                                detected_events.append({
+                                    'type': self.EVENT_TYPES[event_type],
+                                    'houseguests': [hg1, hg2],
+                                    'description': f"{hg1} and {hg2} {event_type.lower().replace('_', ' ')}",
+                                    'update': update,
+                                    'confidence': self._calculate_event_confidence(event_type, content)
+                                })
         
         return detected_events
     
