@@ -4624,57 +4624,62 @@ CRITICAL INSTRUCTIONS:
     - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
     - Each summary should be a complete thought that stands alone"""
     
-        response = await asyncio.to_thread(
-            self.llm_client.messages.create,
-            model=self.llm_model,
-            max_tokens=3500,  # Increased for longer summaries
-            temperature=0.3,
-            messages=[{"role": "user", "content": prompt}]
-        )
-        
-        # Parse and create embed
         try:
-            highlights_data = self._parse_llm_response(response.content[0].text)
-            
-            if not highlights_data.get('highlights'):
-                logger.warning("No highlights in LLM response, using pattern fallback")
-                return [self._create_pattern_highlights_embed()]
-            
-            # SORT THE HIGHLIGHTS BY CHRONOLOGICAL ORDER (backup enforcement)
-            highlights = highlights_data['highlights']
-            
-            embed = discord.Embed(
-                title="📹 Feed Highlights - What Just Happened",
-                description=f"Key moments from the last {len(self.highlights_queue)} updates",
-                color=0xe74c3c,
-                timestamp=datetime.now()
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model=self.llm_model,
+                max_tokens=4000,  # INCREASED from 3500 to prevent cutoff
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
             )
             
-            for i, highlight in enumerate(highlights[:10], 1):
-                summary = highlight.get('summary', 'Update')
-                importance_emoji = highlight.get('importance_emoji', '📝')
-                context = highlight.get('context', '').strip()
+            # Parse and create embed
+            try:
+                highlights_data = self._parse_llm_response(response.content[0].text)
                 
-                # Create field name without timestamp
-                field_name = f"{importance_emoji} Highlight {i}"
+                if not highlights_data.get('highlights'):
+                    logger.warning("No highlights in LLM response, using pattern fallback")
+                    return [self._create_pattern_highlights_embed()]
                 
-                # Create field value
-                if context:
-                    field_value = f"{summary}\n\n*{context}*"
-                else:
-                    field_value = summary
+                # SORT THE HIGHLIGHTS BY CHRONOLOGICAL ORDER (backup enforcement)
+                highlights = highlights_data['highlights']
                 
-                embed.add_field(
-                    name=field_name,
-                    value=field_value,
-                    inline=False
+                embed = discord.Embed(
+                    title="📹 Feed Highlights - What Just Happened",
+                    description=f"Key moments from the last {len(self.highlights_queue)} updates",
+                    color=0xe74c3c,
+                    timestamp=datetime.now()
                 )
-            
-            embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed • No timestamps for cleaner reading")
-            return [embed]
-            
+                
+                for i, highlight in enumerate(highlights[:10], 1):
+                    summary = highlight.get('summary', 'Update')
+                    importance_emoji = highlight.get('importance_emoji', '📝')
+                    context = highlight.get('context', '').strip()
+                    
+                    # Create field name without timestamp
+                    field_name = f"{importance_emoji} Highlight {i}"
+                    
+                    # Create field value
+                    if context:
+                        field_value = f"{summary}\n\n*{context}*"
+                    else:
+                        field_value = summary
+                    
+                    embed.add_field(
+                        name=field_name,
+                        value=field_value,
+                        inline=False
+                    )
+                
+                embed.set_footer(text=f"Highlights • {len(self.highlights_queue)} updates processed • No timestamps for cleaner reading")
+                return [embed]
+                
+            except Exception as e:
+                logger.error(f"Failed to parse highlights response: {e}")
+                return [self._create_pattern_highlights_embed()]
+                
         except Exception as e:
-            logger.error(f"Failed to parse highlights response: {e}")
+            logger.error(f"LLM highlights request failed: {e}")
             return [self._create_pattern_highlights_embed()]
         
     async def save_queue_state(self):
@@ -4822,7 +4827,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             return self._create_enhanced_pattern_hourly_summary()
 
     def _parse_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response with better JSON handling"""
+        """Parse LLM response with better JSON handling and debugging"""
         try:
             # Clean the response first
             cleaned_text = response_text.strip()
@@ -4833,6 +4838,9 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             
             if json_start != -1 and json_end > json_start:
                 json_text = cleaned_text[json_start:json_end]
+                
+                # Log the JSON for debugging
+                logger.debug(f"Attempting to parse JSON: {json_text[:500]}...")
                 
                 # Clean up common JSON issues
                 json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
@@ -4848,13 +4856,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             
             # Better fallback that doesn't show raw JSON
             return {
-                "headline": "Day 7 Big Brother Recap",
-                "summary": "Multiple strategic and social developments occurred throughout the day.",
-                "strategic_analysis": "Strategic gameplay and power dynamics evolved.",
-                "alliance_dynamics": "Alliance relationships and trust levels shifted.",
-                "entertainment_highlights": "Various memorable moments and interactions took place.",
-                "key_players": [],
-                "strategic_importance": 6
+                "highlights": []  # Return empty list to trigger pattern fallback
             }
     
     def _parse_text_response(self, response_text: str) -> dict:
@@ -5218,7 +5220,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         return "\n".join(narratives)
 
     def _create_pattern_highlights_embed(self) -> discord.Embed:
-        """Create highlights embed using pattern matching when LLM unavailable"""
+        """Create highlights embed using pattern matching when LLM unavailable - FIXED"""
         try:
             # Sort updates by importance score
             updates_with_importance = [
@@ -5242,14 +5244,19 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
                 # Clean the title - remove time if it appears at the beginning
                 title = update.title
                 title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)  # Remove other time formats too
                 
-                # Include description if it adds value
+                # Include description if it adds value and is different
                 if update.description and update.description != update.title and len(update.description.strip()) > 10:
-                    # Create a complete summary
-                    if len(title + update.description) > 800:
-                        summary = f"{title} - {update.description[:600]}..."
+                    # Check if description starts with cleaned title - if so, just use description
+                    if update.description.startswith(title):
+                        summary = update.description
                     else:
-                        summary = f"{title} - {update.description}"
+                        # Create a complete summary
+                        if len(title + update.description) > 800:
+                            summary = f"{title} - {update.description[:600]}..."
+                        else:
+                            summary = f"{title} - {update.description}"
                 else:
                     summary = title
                 
