@@ -5271,68 +5271,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         return "\n".join(narratives)
 
-    def _create_pattern_highlights_embed(self) -> discord.Embed:
-        """Create highlights embed using pattern matching when LLM unavailable - FIXED"""
-        try:
-            # Sort updates by importance score
-            updates_with_importance = [
-                (update, self.analyzer.analyze_strategic_importance(update))
-                for update in self.highlights_queue
-            ]
-            updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-            
-            # Select top 6-10 most important updates
-            selected_updates = updates_with_importance[:min(10, len(updates_with_importance))]
-            
-            embed = discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Key moments from this batch ({len(selected_updates)} of {len(self.highlights_queue)} updates)",
-                color=0x95a5a6,  # Gray for pattern-based
-                timestamp=datetime.now()
-            )
-            
-            # Add selected highlights without timestamps
-            for i, (update, importance) in enumerate(selected_updates, 1):
-                # Clean the title - remove time if it appears at the beginning
-                title = update.title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*[-–]\s*', '', title)  # Remove other time formats too
-                
-                # Include description if it adds value and is different
-                if update.description and update.description != update.title and len(update.description.strip()) > 10:
-                    # Check if description starts with cleaned title - if so, just use description
-                    if update.description.startswith(title):
-                        summary = update.description
-                    else:
-                        # Create a complete summary
-                        if len(title + update.description) > 800:
-                            summary = f"{title} - {update.description[:600]}..."
-                        else:
-                            summary = f"{title} - {update.description}"
-                else:
-                    summary = title
-                
-                # Add importance indicators
-                importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-                
-                embed.add_field(
-                    name=f"{importance_emoji} Highlight {i}",
-                    value=summary,
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected • No timestamps")
-            
-            return embed
-            
-        except Exception as e:
-            logger.error(f"Pattern highlights creation failed: {e}")
-            # Return a basic embed if everything fails
-            return discord.Embed(
-                title="🎯 Feed Highlights - What Just Happened",
-                description=f"Recent updates from the feed ({len(self.highlights_queue)} updates)",
-                color=0x95a5a6
-            )
+    
 
     def _create_hourly_summary_embed(self, analysis: dict, update_count: int) -> List[discord.Embed]:
         """Create hourly summary embed"""
@@ -5788,60 +5727,6 @@ Be selective - these should be the updates that a superfan would want to know ab
         logger.error(f"Failed to parse highlights response: {e}")
         return [self._create_pattern_highlights_embed()]
 
-def _create_pattern_highlights_embed(self) -> discord.Embed:
-    """Create highlights embed using pattern matching when LLM unavailable"""
-    try:
-        # Sort updates by importance score
-        updates_with_importance = [
-            (update, self.analyzer.analyze_strategic_importance(update))
-            for update in self.highlights_queue
-        ]
-        updates_with_importance.sort(key=lambda x: x[1], reverse=True)
-        
-        # Select top 6-10 most important updates
-        selected_updates = updates_with_importance[:min(10, len(updates_with_importance))]
-        
-        embed = discord.Embed(
-            title="🎯 Feed Highlights - What Just Happened",
-            description=f"Key moments from this batch ({len(selected_updates)} of {len(self.highlights_queue)} updates)",
-            color=0x95a5a6,  # Gray for pattern-based
-            timestamp=datetime.now()
-        )
-        
-        # Add selected highlights
-        for i, (update, importance) in enumerate(selected_updates, 1):
-            # Extract correct time from content rather than pub_date
-            time_str = self._extract_correct_time(update)
-            
-            # Clean the title - remove time if it appears at the beginning
-            title = update.title
-            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*-\s*', '', title)
-            
-            # Only truncate if extremely long
-            if len(title) > 1000:
-                title = title[:997] + "..."
-            
-            # Add importance indicators
-            importance_emoji = "🔥" if importance >= 7 else "⭐" if importance >= 5 else "📝"
-            
-            embed.add_field(
-                name=f"{importance_emoji} {time_str}",
-                value=title,
-                inline=False
-            )
-        
-        embed.set_footer(text=f"Pattern Analysis • {len(selected_updates)} key moments selected")
-        
-        return embed
-        
-    except Exception as e:
-        logger.error(f"Pattern highlights creation failed: {e}")
-        # Return a basic embed if everything fails
-        return discord.Embed(
-            title="🎯 Feed Highlights - What Just Happened",
-            description=f"Recent updates from the feed ({len(self.highlights_queue)} updates)",
-            color=0x95a5a6
-        )
 
 async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
     """Create narrative LLM hourly summary as fallback"""
