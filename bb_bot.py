@@ -5572,67 +5572,70 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         return [embed]
 
-async def _create_llm_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
-    """Create LLM-powered Daily Buzz format"""
-    await self.rate_limiter.wait_if_needed()
-    
-    # Sort updates chronologically and format for LLM
-    sorted_updates = sorted(updates, key=lambda x: x.pub_date)
-    
-    # Limit updates to prevent token overflow
-    formatted_updates = []
-    for i, update in enumerate(sorted_updates[:30], 1):  # Top 30 most recent
-        time_str = self._extract_correct_time(update)
-        formatted_updates.append(f"{i}. {time_str} - {update.title}")
-        if update.description and update.description != update.title:
-            desc = update.description[:100] + "..." if len(update.description) > 100 else update.description
-            formatted_updates.append(f"   {desc}")
-    
-    updates_text = "\n".join(formatted_updates)
-    
-    prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
-
-UPDATES FROM DAY {day_number} (chronological order):
-{updates_text}
-
-Create a Daily Buzz in this EXACT format:
-
-{{
-    "buzz_items": [
-        "Morgan pitched a seven-person voting group to Zach with herself, Vince, Rachel, Ava, Will, and Lauren, with some talk of including Mickey or looping in Amy as an extension...but nothing official has formed.",
-        "Jimmy told Will he's considering nominating him as a replacement, despite promising he wouldn't.",
-        "Rachel tried to shift Jimmy toward targeting Adrian, not realizing Jimmy had already moved his sights to Will.",
-        "Rachel and Keanu clashed again after he brought up her low points from BB12. She called him out, he deflected, and later apologized...but as they hugged it out, Rachel rolled her eyes and smirked at the camera.",
-        "Rachel started rallying support to keep Amy or Will, depending on who lands on the block."
-    ]
-}}
-
-INSTRUCTIONS:
-- Create 5-10 bullet points of the MOST IMPORTANT house dynamics/developments from Day {day_number}
-- Focus on: alliance talks, targeting decisions, relationship shifts, strategic moves, key confrontations
-- Write in a casual, engaging Twitter style like the example
-- Each bullet should be 1-2 sentences max
-- Include specific names and concrete actions
-- Prioritize information that affects the current game state going into today
-- Don't include minor daily routine stuff unless it's strategically significant"""
-
-    response = await asyncio.to_thread(
-        self.llm_client.messages.create,
-        model="claude-3-haiku-20240307",
-        max_tokens=3000,
-        temperature=0.3,
-        messages=[{"role": "user", "content": prompt}]
-    )
-    
-    try:
-        # Parse JSON response
-        buzz_data = self._parse_llm_response(response.content[0].text)
-        return self._create_daily_buzz_embed(buzz_data, day_number, len(updates))
+    async def _create_llm_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
+        """Create LLM-powered Daily Buzz format"""
+        if not self.llm_client:
+            return self._create_pattern_daily_buzz(updates, day_number)
         
-    except Exception as e:
-        logger.error(f"Failed to parse daily buzz response: {e}")
-        return self._create_pattern_daily_buzz(updates, day_number)
-
+        await self.rate_limiter.wait_if_needed()
+        
+        # Sort updates chronologically and format for LLM
+        sorted_updates = sorted(updates, key=lambda x: x.pub_date)
+        
+        # Limit updates to prevent token overflow
+        formatted_updates = []
+        for i, update in enumerate(sorted_updates[:30], 1):  # Top 30 most recent
+            time_str = self._extract_correct_time(update)
+            formatted_updates.append(f"{i}. {time_str} - {update.title}")
+            if update.description and update.description != update.title:
+                desc = update.description[:100] + "..." if len(update.description) > 100 else update.description
+                formatted_updates.append(f"   {desc}")
+        
+        updates_text = "\n".join(formatted_updates)
+        
+        prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
+    
+    UPDATES FROM DAY {day_number} (chronological order):
+    {updates_text}
+    
+    Create a Daily Buzz in this EXACT format:
+    
+    {{
+        "buzz_items": [
+            "Morgan pitched a seven-person voting group to Zach with herself, Vince, Rachel, Ava, Will, and Lauren, with some talk of including Mickey or looping in Amy as an extension...but nothing official has formed.",
+            "Jimmy told Will he's considering nominating him as a replacement, despite promising he wouldn't.",
+            "Rachel tried to shift Jimmy toward targeting Adrian, not realizing Jimmy had already moved his sights to Will.",
+            "Rachel and Keanu clashed again after he brought up her low points from BB12. She called him out, he deflected, and later apologized...but as they hugged it out, Rachel rolled her eyes and smirked at the camera.",
+            "Rachel started rallying support to keep Amy or Will, depending on who lands on the block."
+        ]
+    }}
+    
+    INSTRUCTIONS:
+    - Create 5-10 bullet points of the MOST IMPORTANT house dynamics/developments from Day {day_number}
+    - Focus on: alliance talks, targeting decisions, relationship shifts, strategic moves, key confrontations
+    - Write in a casual, engaging Twitter style like the example
+    - Each bullet should be 1-2 sentences max
+    - Include specific names and concrete actions
+    - Prioritize information that affects the current game state going into today
+    - Don't include minor daily routine stuff unless it's strategically significant"""
+    
+        try:
+            response = await asyncio.to_thread(
+                self.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=3000,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse JSON response
+            buzz_data = self._parse_llm_response(response.content[0].text)
+            return self._create_daily_buzz_embed(buzz_data, day_number, len(updates))
+            
+        except Exception as e:
+            logger.error(f"Failed to parse daily buzz response: {e}")
+            return self._create_pattern_daily_buzz(updates, day_number)
+            
 def _create_pattern_daily_buzz(self, updates: List[BBUpdate], day_number: int) -> List[discord.Embed]:
     """Pattern-based fallback for Daily Buzz"""
     
@@ -5692,9 +5695,10 @@ def _create_daily_buzz_embed(self, buzz_data: dict, day_number: int, total_updat
         inline=False
     )
     
-    embed.set_footer(text=f"Daily Rundown • Day {day_number} ")
+    embed.set_footer(text=f"Daily Rundown • Day {day_number} • Based on {total_updates} feed updates")
     
     return [embed]
+
 # Add these methods to your UpdateBatcher class
 
 async def _create_llm_highlights_only(self) -> List[discord.Embed]:
@@ -10248,6 +10252,58 @@ class BBDiscordBot(commands.Bot):
         
         # Add this diagnostic command to see what's actually being processed
 
+        @self.tree.command(name="testdailybuzz", description="Test daily buzz generation (Owner only)")
+        async def test_daily_buzz(interaction: discord.Interaction):
+            """Test daily buzz generation"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Only the bot owner can use this command.", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Get current Pacific time
+                pacific_tz = pytz.timezone('US/Pacific')
+                now_pacific = datetime.now(pacific_tz)
+                
+                # Calculate yesterday's period (for testing)
+                end_time = now_pacific.replace(hour=6, minute=0, second=0, microsecond=0, tzinfo=None)
+                start_time = end_time - timedelta(hours=24)
+                
+                # Get updates from the period
+                daily_updates = self.db.get_daily_updates(start_time, end_time)
+                
+                # Calculate day number
+                season_start = datetime(2025, 7, 8)
+                buzz_date = start_time.date()
+                day_number = (buzz_date - season_start.date()).days + 1
+                
+                await interaction.followup.send(
+                    f"**Daily Buzz Test**\n"
+                    f"Day {day_number}: Found {len(daily_updates)} updates\n"
+                    f"Period: {start_time.strftime('%m/%d %I:%M %p')} to {end_time.strftime('%m/%d %I:%M %p')} Pacific\n"
+                    f"Generating buzz...",
+                    ephemeral=True
+                )
+                
+                if daily_updates:
+                    # Create and send buzz
+                    try:
+                        buzz_embeds = await self.update_batcher._create_llm_daily_buzz(daily_updates, day_number)
+                    except AttributeError:
+                        buzz_embeds = self.update_batcher._create_pattern_daily_buzz(daily_updates, day_number)
+                    
+                    await self.send_daily_recap(buzz_embeds)
+                    await interaction.followup.send(f"✅ Daily buzz sent with {len(buzz_embeds)} embeds", ephemeral=True)
+                else:
+                    await self.send_quiet_day_recap(day_number)
+                    await interaction.followup.send("✅ Quiet day recap sent", ephemeral=True)
+                
+            except Exception as e:
+                logger.error(f"Error in test daily buzz: {e}")
+                await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+        
         @self.tree.command(name="testrss", description="Test RSS feed processing (Owner only)")
         async def test_rss_slash(interaction: discord.Interaction):
             """Test RSS feed processing"""
@@ -11736,9 +11792,9 @@ class BBDiscordBot(commands.Bot):
         return new_updates
     
 
-    @tasks.loop(hours=24)
+    @tasks.loop(minutes=10)  # Check every 10 minutes instead of every 24 hours
     async def daily_recap_task(self):
-        """Daily buzz task that runs at 8:00 AM Pacific Time"""
+        """Daily buzz task that runs at 6:00 AM Pacific Time"""
         if self.is_shutting_down:
             return
     
@@ -11747,9 +11803,8 @@ class BBDiscordBot(commands.Bot):
             pacific_tz = pytz.timezone('US/Pacific')
             now_pacific = datetime.now(pacific_tz)
             
-            # Only run during 6 AM hour Pacific (6:00-6:59 AM)
-            if now_pacific.hour != 6:
-                logger.info(f"Daily buzz skipped - not 6 AM Pacific hour (current: {now_pacific.hour}:XX)")
+            # Only run during 6:00-6:09 AM Pacific (10-minute window)
+            if now_pacific.hour != 6 or now_pacific.minute >= 10:
                 return
             
             logger.info(f"Daily buzz task running at {now_pacific.strftime('%I:%M %p Pacific')}")
@@ -11777,8 +11832,14 @@ class BBDiscordBot(commands.Bot):
                 logger.info("No updates found for daily buzz - sending quiet day message")
                 await self.send_quiet_day_recap(day_number)
             else:
-                # Create daily buzz (using your new method)
-                buzz_embeds = await self.update_batcher.create_daily_buzz_recap(daily_updates, day_number)
+                # Create daily buzz - FIX: Use the correct method name
+                try:
+                    # Try the new method first
+                    buzz_embeds = await self.update_batcher._create_llm_daily_buzz(daily_updates, day_number)
+                except AttributeError:
+                    # Fallback to pattern-based if LLM method doesn't exist
+                    logger.info("LLM daily buzz method not available, using pattern fallback")
+                    buzz_embeds = self.update_batcher._create_pattern_daily_buzz(daily_updates, day_number)
                 
                 # Send daily buzz
                 await self.send_daily_recap(buzz_embeds)
