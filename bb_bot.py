@@ -8709,18 +8709,39 @@ class BBChatAnalyzer:
                 r'(\w+)\s+(?:has\s+)?won\s+hoh',
                 r'(\w+)\s+(?:is\s+)?(?:the\s+)?(?:current\s+)?hoh',
                 r'(\w+)\s+hoh\s+(?:win|victory|reign)',
+                r'hoh\s+(\w+)',
+                r'(\w+)\'s\s+hoh',
             ]
             
+            # Sort by most recent first
+            power_updates_sorted = sorted(power_updates, key=lambda x: x.pub_date, reverse=True)
+            
             # Check most recent power updates first
-            for update in power_updates[:50]:  # Check more updates
+            for update in power_updates_sorted[:100]:  # Check more updates
                 content = f"{update.title} {update.description}".lower()
                 
                 for pattern in hoh_patterns:
                     matches = re.finditer(pattern, content, re.IGNORECASE)
                     for match in matches:
                         potential_hoh = match.group(1).strip().title()
-                        if potential_hoh in BB27_HOUSEGUESTS_SET or potential_hoh.lower() in NICKNAME_MAP:
-                            current_hoh = NICKNAME_MAP.get(potential_hoh.lower(), potential_hoh)
+                        
+                        # More flexible validation
+                        if potential_hoh in BB27_HOUSEGUESTS_SET:
+                            current_hoh = potential_hoh
+                            logger.info(f"Found HOH from pattern: {potential_hoh} in update: {update.title[:50]}")
+                            break
+                        elif potential_hoh.lower() in NICKNAME_MAP:
+                            current_hoh = NICKNAME_MAP[potential_hoh.lower()]
+                            logger.info(f"Found HOH from nickname: {potential_hoh} -> {current_hoh} in update: {update.title[:50]}")
+                            break
+                        # Try partial matching
+                        for houseguest in BB27_HOUSEGUESTS:
+                            if houseguest.lower().startswith(potential_hoh.lower()) and len(potential_hoh) >= 3:
+                                current_hoh = houseguest
+                                logger.info(f"Found HOH from partial match: {potential_hoh} -> {houseguest} in update: {update.title[:50]}")
+                                break
+                        
+                        if current_hoh:
                             break
                 if current_hoh:
                     break
@@ -9001,16 +9022,117 @@ Provide comprehensive analysis using this COMPLETE season alliance data:
         }
     
     async def _analyze_competitions(self, question: str) -> dict:
+        """Analyze competitions and actually find specific winners"""
+        question_lower = question.lower()
+        
         # Get ALL competition updates
         all_updates = self.db.get_recent_updates(24 * 30)
-        comp_updates = [u for u in all_updates if "🏆 Competition" in self.analyzer.categorize_update(u)]
+        comp_updates = [u for u in all_updates if "🏆 Competition" in self.analyzer.categorize_update(u) or 
+                       any(word in f"{u.title} {u.description}".lower() for word in ['veto', 'pov', 'hoh', 'competition', 'wins', 'winner'])]
+        
+        # Sort by most recent first
+        comp_updates_sorted = sorted(comp_updates, key=lambda x: x.pub_date, reverse=True)
+        
+        # Determine what they're asking about
+        asking_about_veto = any(word in question_lower for word in ['veto', 'pov', 'power of veto'])
+        asking_about_hoh = any(word in question_lower for word in ['hoh', 'head of household'])
+        
+        found_winner = None
+        winning_update = None
+        
+        # Look for specific competition winners
+        if asking_about_veto:
+            veto_patterns = [
+                r'(\w+)\s+(?:wins?|won)\s+(?:the\s+)?(?:power\s+of\s+)?veto',
+                r'(\w+)\s+(?:wins?|won)\s+(?:the\s+)?pov',
+                r'veto\s+(?:winner|champion):\s*(\w+)',
+                r'pov\s+(?:winner|champion):\s*(\w+)',
+                r'(\w+)\s+(?:has\s+)?won\s+veto',
+            ]
+            
+            for update in comp_updates_sorted[:50]:
+                content = f"{update.title} {update.description}".lower()
+                
+                for pattern in veto_patterns:
+                    matches = re.finditer(pattern, content, re.IGNORECASE)
+                    for match in matches:
+                        potential_winner = match.group(1).strip().title()
+                        if self._validate_houseguest(potential_winner):
+                            found_winner = self._validate_houseguest(potential_winner)
+                            winning_update = update
+                            logger.info(f"Found veto winner: {found_winner} in update: {update.title[:50]}")
+                            break
+                if found_winner:
+                    break
+        
+        elif asking_about_hoh:
+            hoh_patterns = [
+                r'(\w+)\s+(?:wins?|won)\s+(?:the\s+)?hoh',
+                r'hoh\s+(?:winner|champion):\s*(\w+)',
+                r'(\w+)\s+(?:has\s+)?won\s+hoh',
+            ]
+            
+            for update in comp_updates_sorted[:50]:
+                content = f"{update.title} {update.description}".lower()
+                
+                for pattern in hoh_patterns:
+                    matches = re.finditer(pattern, content, re.IGNORECASE)
+                    for match in matches:
+                        potential_winner = match.group(1).strip().title()
+                        if self._validate_houseguest(potential_winner):
+                            found_winner = self._validate_houseguest(potential_winner)
+                            winning_update = update
+                            logger.info(f"Found HOH winner: {found_winner} in update: {update.title[:50]}")
+                            break
+                if found_winner:
+                    break
+        
+        # Create response
+        if found_winner:
+            comp_type = "veto" if asking_about_veto else "HOH" if asking_about_hoh else "competition"
+            main_answer = f"**{found_winner}** won the most recent {comp_type} based on the available data."
+            if winning_update:
+                days_ago = (datetime.now() - winning_update.pub_date).days
+                if days_ago == 0:
+                    time_desc = "today"
+                elif days_ago == 1:
+                    time_desc = "yesterday"
+                else:
+                    time_desc = f"{days_ago} days ago"
+                main_answer += f" (Update from {time_desc})"
+        else:
+            comp_type = "veto" if asking_about_veto else "HOH" if asking_about_hoh else "competition"
+            main_answer = f"Could not identify the most recent {comp_type} winner from the available data ({len(comp_updates)} competition updates searched)."
         
         return {
             "response_type": "competitions",
-            "main_answer": f"Competition analysis based on {len(comp_updates)} competition updates from complete season data.",
-            "confidence": "medium",
+            "main_answer": main_answer,
+            "winner": found_winner,
+            "confidence": "high" if found_winner else "low",
             "data_source": "comprehensive_season_data"
         }
+    
+    def _validate_houseguest(self, name: str) -> Optional[str]:
+        """Validate and normalize houseguest name"""
+        if not name:
+            return None
+        
+        name = name.strip().title()
+        
+        # Direct match
+        if name in BB27_HOUSEGUESTS_SET:
+            return name
+        
+        # Nickname match
+        if name.lower() in NICKNAME_MAP:
+            return NICKNAME_MAP[name.lower()]
+        
+        # Partial match
+        for houseguest in BB27_HOUSEGUESTS:
+            if houseguest.lower().startswith(name.lower()) and len(name) >= 3:
+                return houseguest
+        
+        return None
     
     async def _general_analysis(self, question: str) -> dict:
         # Use ALL available data for general questions
