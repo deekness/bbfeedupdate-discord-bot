@@ -8898,41 +8898,42 @@ class BBChatAnalyzer:
     
     # LLM-powered analysis methods
     async def _llm_power_analysis(self, power_updates: List[BBUpdate], alliances: List[dict], current_hoh: str, question: str) -> dict:
-        """Use LLM to analyze power structure"""
+        """Use LLM to analyze power structure with better JSON formatting"""
         
-        updates_text = "\n".join([f"• {update.title}" for update in power_updates[:10]])
+        updates_text = "\n".join([f"• {update.title}" for update in power_updates[:15]])
         alliances_text = "\n".join([f"• {alliance['name']}: {', '.join(alliance['members'])}" for alliance in alliances[:5]])
         
         prompt = f"""Based on recent Big Brother updates, analyze the current power structure in the house.
-
-RECENT POWER-RELATED UPDATES:
-{updates_text}
-
-CURRENT ALLIANCES:
-{alliances_text}
-
-CURRENT HOH: {current_hoh or "Unknown"}
-
-USER QUESTION: {question}
-
-Provide analysis in this format:
-{{
-    "main_answer": "Direct answer to the user's question",
-    "current_hoh": "Current HOH if known",
-    "power_players": ["list", "of", "houseguests", "with", "influence"],
-    "power_analysis": "2-3 sentence analysis of who controls the house and why",
-    "next_targets": ["potential", "targets", "for", "eviction"],
-    "confidence": "high/medium/low based on available information"
-}}
-
-Focus on answering their specific question about power and control."""
-
+    
+    RECENT POWER-RELATED UPDATES:
+    {updates_text}
+    
+    CURRENT ALLIANCES:
+    {alliances_text}
+    
+    CURRENT HOH: {current_hoh or "Unknown"}
+    
+    USER QUESTION: {question}
+    
+    You must respond with VALID JSON in exactly this format (no extra text before or after):
+    
+    {{
+        "main_answer": "Direct answer to the user's question about who controls the house",
+        "current_hoh": "{current_hoh or "Unknown"}",
+        "power_players": ["list", "of", "houseguests", "with", "influence"],
+        "power_analysis": "Brief analysis of who controls the house and why",
+        "next_targets": ["potential", "targets", "for", "eviction"],
+        "confidence": "high"
+    }}
+    
+    CRITICAL: Return only valid JSON with no additional text. Use double quotes for all strings."""
+    
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model="claude-3-haiku-20240307",
-                max_tokens=2500,
-                temperature=0.3,
+                max_tokens=2000,
+                temperature=0.1,  # Lower temperature for more consistent JSON
                 messages=[{"role": "user", "content": prompt}]
             )
             
@@ -9429,28 +9430,59 @@ Focus on answering their specific question about danger and eviction threats."""
         }
     
     def _parse_llm_chat_response(self, response_text: str, response_type: str) -> dict:
-        """Parse LLM response for chat feature"""
+        """Parse LLM response for chat feature with better error handling"""
         try:
-            # Try to extract JSON
-            json_start = response_text.find('{')
-            json_end = response_text.rfind('}') + 1
-            if json_start != -1 and json_end != -1:
-                json_text = response_text[json_start:json_end]
+            # Clean the response first
+            cleaned_text = response_text.strip()
+            
+            # Find JSON boundaries more carefully
+            json_start = cleaned_text.find('{')
+            json_end = cleaned_text.rfind('}') + 1
+            
+            if json_start != -1 and json_end > json_start:
+                json_text = cleaned_text[json_start:json_end]
+                
+                # Log the JSON for debugging
+                logger.info(f"Attempting to parse JSON for {response_type}: {json_text[:200]}...")
+                
+                # Clean up common JSON issues
+                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
+                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
+                
                 data = json.loads(json_text)
                 data["response_type"] = response_type
                 data["data_source"] = "llm_analysis"
                 return data
             else:
-                raise ValueError("No JSON found in response")
-        except (json.JSONDecodeError, ValueError) as e:
-            logger.warning(f"LLM chat JSON parsing failed: {e}")
-            # Return basic response with the text
-            return {
-                "response_type": response_type,
-                "main_answer": response_text[:500] + "..." if len(response_text) > 500 else response_text,
-                "confidence": "medium",
-                "data_source": "llm_analysis"
-            }
+                raise ValueError("No valid JSON found")
+                
+        except Exception as e:
+            logger.error(f"JSON parsing failed for {response_type}: {e}")
+            logger.error(f"Raw response: {response_text[:500]}...")
+            
+            # Create a meaningful fallback using the text response
+            return self._create_fallback_chat_response(response_text, response_type)
+    
+    def _create_fallback_chat_response(self, response_text: str, response_type: str) -> dict:
+        """Create a meaningful fallback when JSON parsing fails"""
+        
+        # Extract key information from the text even if JSON is broken
+        main_answer = response_text[:300] + "..." if len(response_text) > 300 else response_text
+        
+        # Try to extract houseguest names mentioned
+        houseguest_names = []
+        for hg in BB27_HOUSEGUESTS:
+            if hg.lower() in response_text.lower():
+                houseguest_names.append(hg)
+        
+        return {
+            "response_type": response_type,
+            "main_answer": main_answer,
+            "key_players": houseguest_names[:5],  # Limit to 5
+            "confidence": "medium",
+            "data_source": "llm_analysis_fallback",
+            "note": "Parsed from text response due to JSON formatting issue"
+        }
     
     def create_chat_response_embed(self, analysis_result: dict, question: str) -> discord.Embed:
         """Create Discord embed for chat response"""
@@ -10180,6 +10212,41 @@ class BBDiscordBot(commands.Bot):
         
         # Add this diagnostic command to see what's actually being processed
 
+        @self.tree.command(name="testjson", description="Test LLM JSON parsing (Owner only)")
+        async def test_json_slash(interaction: discord.Interaction):
+            """Test LLM JSON parsing"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Owner only", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Initialize chat analyzer
+                chat_analyzer = BBChatAnalyzer(
+                    db=self.db,
+                    alliance_tracker=self.alliance_tracker,
+                    analyzer=self.analyzer,
+                    llm_client=self.update_batcher.llm_client
+                )
+                
+                # Test with a simple question
+                result = await chat_analyzer.answer_question("who is hoh")
+                
+                await interaction.followup.send(
+                    f"**Test Result:**\n"
+                    f"Response Type: {result.get('response_type')}\n"
+                    f"Data Source: {result.get('data_source')}\n"
+                    f"Main Answer: {result.get('main_answer', 'None')[:200]}...\n"
+                    f"Current HOH: {result.get('current_hoh', 'None')}\n"
+                    f"Confidence: {result.get('confidence', 'None')}",
+                    ephemeral=True
+                )
+                
+            except Exception as e:
+                await interaction.followup.send(f"Test error: {e}", ephemeral=True)
+        
         @self.tree.command(name="testdailybuzz", description="Test daily buzz generation (Owner only)")
         async def test_daily_buzz(interaction: discord.Interaction):
             """Test daily buzz generation"""
