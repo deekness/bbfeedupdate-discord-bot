@@ -7280,6 +7280,30 @@ class BBDatabase:
             logger.error(f"Database timeframe query error: {e}")
             return []
 
+    def get_strategic_updates(self, hours: int, min_importance: int = 5) -> List[BBUpdate]:
+        """Get high-importance strategic updates from recent period"""
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cutoff_time = datetime.now() - timedelta(hours=hours)
+            cursor.execute("""
+                SELECT title, description, link, pub_date, content_hash, author
+                FROM updates 
+                WHERE pub_date > ? AND importance_score >= ?
+                ORDER BY importance_score DESC, pub_date DESC
+                LIMIT 100
+            """, (cutoff_time, min_importance))
+            
+            results = cursor.fetchall()
+            conn.close()
+            
+            return [BBUpdate(*row) for row in results]
+            
+        except Exception as e:
+            logger.error(f"Database strategic query error: {e}")
+            return []
+    
 class PostgreSQLDatabase:
     """PostgreSQL database handler with connection pooling"""
     
@@ -8644,53 +8668,72 @@ class BBChatAnalyzer:
         self.llm_client = llm_client
     
     async def answer_question(self, question: str) -> dict:
-        """Answer a question about the current game state"""
+        """Answer a question about the current game state with appropriate context windows"""
         question_lower = question.lower()
         
-        # Get recent updates (last 24 hours)
-        recent_updates = self.db.get_recent_updates(24)
-        
-        # Determine question type and route to appropriate handler
+        # Determine appropriate lookback based on question type
         if any(keyword in question_lower for keyword in ['control', 'power', 'hoh', 'head of household']):
+            # Power structure needs recent competition results
+            recent_updates = self.db.get_recent_updates(168)  # 7 days
             return await self._analyze_power_structure(recent_updates, question)
         
         elif any(keyword in question_lower for keyword in ['danger', 'target', 'eviction', 'nominated', 'block']):
+            # Danger analysis - current week dynamics
+            recent_updates = self.db.get_recent_updates(72)   # 3 days
             return await self._analyze_danger_level(recent_updates, question)
         
         elif any(keyword in question_lower for keyword in ['alliance', 'working together', 'team', 'group']):
-            return await self._analyze_alliances(question)
-        
-        elif any(keyword in question_lower for keyword in ['showmance', 'romance', 'relationship', 'dating', 'couple']):
-            return await self._analyze_relationships(recent_updates, question)
+            # Alliances need longer context but mainly use alliance tracker
+            return await self._analyze_alliances(question)  # This uses alliance tracker
         
         elif any(keyword in question_lower for keyword in ['winning', 'winner', 'favorite', 'best positioned']):
+            # Winner analysis needs season-long context
+            recent_updates = self.db.get_recent_updates(1680)  # 10 weeks (whole season)
             return await self._analyze_win_chances(recent_updates, question)
         
+        elif any(keyword in question_lower for keyword in ['showmance', 'romance', 'relationship', 'dating', 'couple']):
+            # Relationships develop over weeks
+            recent_updates = self.db.get_recent_updates(336)  # 14 days
+            return await self._analyze_relationships(recent_updates, question)
+        
         elif any(keyword in question_lower for keyword in ['drama', 'fight', 'argument', 'tension']):
+            # Drama is more recent but needs some context
+            recent_updates = self.db.get_recent_updates(120)  # 5 days
             return await self._analyze_drama(recent_updates, question)
         
         elif any(keyword in question_lower for keyword in ['competition', 'comp', 'challenge', 'veto', 'pov']):
+            # Competitions - recent results
+            recent_updates = self.db.get_recent_updates(168)  # 7 days
             return await self._analyze_competitions(recent_updates, question)
         
         else:
+            # General analysis - broad context
+            recent_updates = self.db.get_recent_updates(240)  # 10 days
             return await self._general_analysis(recent_updates, question)
     
     async def _analyze_power_structure(self, updates: List[BBUpdate], question: str) -> dict:
-        """Analyze who's in control of the house"""
+        """Analyze who's in control of the house - with longer context"""
         
-        # Look for HOH wins and power-related updates
+        # Look for HOH wins and power-related updates in the data provided
         power_updates = []
         current_hoh = None
         
-        for update in updates[:20]:  # Check recent updates
+        # Sort by most recent first
+        sorted_updates = sorted(updates, key=lambda x: x.pub_date, reverse=True)
+        
+        for update in sorted_updates[:50]:  # Check more updates
             content = f"{update.title} {update.description}".lower()
             
             if 'hoh' in content or 'head of household' in content:
-                if 'wins' in content or 'winner' in content:
+                if 'wins' in content or 'winner' in content or 'becomes' in content:
                     # Extract potential HOH winner
                     houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
-                    if houseguests:
+                    if houseguests and not current_hoh:  # Take the most recent
                         current_hoh = houseguests[0]
+                power_updates.append(update)
+            
+            # Also look for nomination and power dynamics
+            if any(word in content for word in ['nomination', 'power', 'control', 'target']):
                 power_updates.append(update)
         
         # Get active alliances to see power structure
@@ -10280,6 +10323,69 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error in test RSS: {e}")
                 await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
+        
+        
+        @self.tree.command(name="askdebug", description="Debug ask command data (Owner only)")
+        async def ask_debug(interaction: discord.Interaction, hours: int = 168):
+            """Debug what data the ask command sees"""
+            try:
+                owner_id = self.config.get('owner_id')
+                if not owner_id or interaction.user.id != owner_id:
+                    await interaction.response.send_message("Owner only", ephemeral=True)
+                    return
+                
+                await interaction.response.defer(ephemeral=True)
+                
+                # Test different time periods
+                updates_24h = self.db.get_recent_updates(24)
+                updates_7d = self.db.get_recent_updates(168)
+                updates_14d = self.db.get_recent_updates(336)
+                
+                # Get alliance data
+                active_alliances = self.alliance_tracker.get_active_alliances()
+                
+                debug_info = []
+                debug_info.append(f"**Database Content Check:**")
+                debug_info.append(f"• Last 24 hours: {len(updates_24h)} updates")
+                debug_info.append(f"• Last 7 days: {len(updates_7d)} updates") 
+                debug_info.append(f"• Last 14 days: {len(updates_14d)} updates")
+                debug_info.append(f"• Active alliances: {len(active_alliances)}")
+                
+                if updates_7d:
+                    debug_info.append(f"\n**Recent Updates (7 days):**")
+                    for i, update in enumerate(updates_7d[:5], 1):
+                        debug_info.append(f"{i}. {update.title[:80]}...")
+                        debug_info.append(f"   Date: {update.pub_date}")
+                
+                if active_alliances:
+                    debug_info.append(f"\n**Active Alliances:**")
+                    for alliance in active_alliances[:3]:
+                        debug_info.append(f"• {alliance['name']}: {', '.join(alliance['members'])}")
+                
+                # Test HOH detection
+                hoh_updates = []
+                for update in updates_7d:
+                    content = f"{update.title} {update.description}".lower()
+                    if 'hoh' in content:
+                        hoh_updates.append(update.title[:80])
+                
+                if hoh_updates:
+                    debug_info.append(f"\n**HOH-related updates found:**")
+                    for hoh in hoh_updates[:3]:
+                        debug_info.append(f"• {hoh}...")
+                
+                full_debug = "\n".join(debug_info)
+                
+                # Split into chunks if too long
+                if len(full_debug) > 1900:
+                    chunks = [full_debug[i:i+1900] for i in range(0, len(full_debug), 1900)]
+                    for chunk in chunks[:3]:
+                        await interaction.followup.send(f"```{chunk}```", ephemeral=True)
+                else:
+                    await interaction.followup.send(f"```{full_debug}```", ephemeral=True)
+                    
+            except Exception as e:
+                await interaction.followup.send(f"Debug error: {e}", ephemeral=True)
         
         @self.tree.command(name="testllm", description="Test LLM connection and functionality")
         async def test_llm_slash(interaction: discord.Interaction):
