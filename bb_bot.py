@@ -9044,6 +9044,114 @@ Provide comprehensive analysis using this COMPLETE season alliance data:
             "confidence": "medium",
             "data_source": "llm_comprehensive_analysis"
         }
+    
+    def create_chat_response_embed(self, analysis_result: dict, question: str) -> discord.Embed:
+        """Create Discord embed for chat response"""
+        
+        response_type = analysis_result.get("response_type", "general")
+        confidence = analysis_result.get("confidence", "medium")
+        data_source = analysis_result.get("data_source", "analysis")
+        
+        # Set embed color based on response type
+        colors = {
+            "power": 0xffd700,      # Gold for power
+            "danger": 0xff1744,     # Red for danger
+            "alliances": 0x3498db,  # Blue for alliances
+            "relationships": 0xe91e63,  # Pink for showmances
+            "winners": 0x9c27b0,    # Purple for winners
+            "drama": 0xff5722,      # Orange for drama
+            "competitions": 0x4caf50,   # Green for comps
+            "general": 0x607d8b     # Blue-gray for general
+        }
+        
+        color = colors.get(response_type, 0x607d8b)
+        
+        # Set title based on response type
+        titles = {
+            "power": "🏛️ Power Structure Analysis",
+            "danger": "⚠️ Eviction Danger Analysis", 
+            "alliances": "🤝 Alliance Analysis",
+            "relationships": "💕 Showmance Analysis",
+            "winners": "👑 Winner Potential Analysis",
+            "drama": "💥 Drama Analysis",
+            "competitions": "🏆 Competition Analysis",
+            "general": "📊 Game Analysis"
+        }
+        
+        title = titles.get(response_type, "📊 Game Analysis")
+        
+        embed = discord.Embed(
+            title=title,
+            description=f"**Your Question:** {question}",
+            color=color,
+            timestamp=datetime.now()
+        )
+        
+        # Main answer
+        main_answer = analysis_result.get("main_answer", "Unable to provide analysis")
+        embed.add_field(
+            name="🎯 Analysis",
+            value=main_answer,
+            inline=False
+        )
+        
+        # Add specific fields based on response type
+        if response_type == "power":
+            if analysis_result.get("current_hoh"):
+                embed.add_field(
+                    name="👑 Current HOH",
+                    value=analysis_result["current_hoh"],
+                    inline=True
+                )
+            
+            if analysis_result.get("power_players"):
+                players = analysis_result["power_players"][:5]
+                embed.add_field(
+                    name="💪 Power Players",
+                    value=" • ".join(players),
+                    inline=True
+                )
+        
+        elif response_type == "danger":
+            if analysis_result.get("threatened_players"):
+                threatened = analysis_result["threatened_players"][:5]
+                embed.add_field(
+                    name="⚠️ In Danger",
+                    value=" • ".join(threatened),
+                    inline=True
+                )
+            
+            if analysis_result.get("safe_players"):
+                safe = analysis_result["safe_players"][:5]
+                embed.add_field(
+                    name="✅ Likely Safe",
+                    value=" • ".join(safe),
+                    inline=True
+                )
+        
+        elif response_type == "alliances":
+            if analysis_result.get("strongest_alliances"):
+                alliances = analysis_result["strongest_alliances"][:3]
+                embed.add_field(
+                    name="💪 Strong Alliances",
+                    value=" • ".join(alliances),
+                    inline=False
+                )
+        
+        # Add confidence and data source
+        confidence_emoji = {"high": "🟢", "medium": "🟡", "low": "🔴"}
+        source_emoji = {"llm_comprehensive_analysis": "🤖", "comprehensive_season_data": "📊", "comprehensive_alliance_tracker": "🤝"}
+        
+        embed.add_field(
+            name="📈 Analysis Quality",
+            value=f"{confidence_emoji.get(confidence, '🟡')} {confidence.title()} confidence\n"
+                  f"{source_emoji.get(data_source, '📊')} Using complete season data",
+            inline=True
+        )
+        
+        embed.set_footer(text="Ask me about power, danger, alliances, showmances, winners, drama, or competitions!")
+        
+        return embed
 
 class BBDiscordBot(commands.Bot):
     """Main Discord bot class with 24/7 reliability features"""
