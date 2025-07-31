@@ -7280,30 +7280,6 @@ class BBDatabase:
             logger.error(f"Database timeframe query error: {e}")
             return []
 
-    def get_strategic_updates(self, hours: int, min_importance: int = 5) -> List[BBUpdate]:
-        """Get high-importance strategic updates from recent period"""
-        try:
-            conn = self.get_connection()
-            cursor = conn.cursor()
-            
-            cutoff_time = datetime.now() - timedelta(hours=hours)
-            cursor.execute("""
-                SELECT title, description, link, pub_date, content_hash, author
-                FROM updates 
-                WHERE pub_date > ? AND importance_score >= ?
-                ORDER BY importance_score DESC, pub_date DESC
-                LIMIT 100
-            """, (cutoff_time, min_importance))
-            
-            results = cursor.fetchall()
-            conn.close()
-            
-            return [BBUpdate(*row) for row in results]
-            
-        except Exception as e:
-            logger.error(f"Database strategic query error: {e}")
-            return []
-    
 class PostgreSQLDatabase:
     """PostgreSQL database handler with connection pooling"""
     
@@ -8668,72 +8644,53 @@ class BBChatAnalyzer:
         self.llm_client = llm_client
     
     async def answer_question(self, question: str) -> dict:
-        """Answer a question about the current game state with appropriate context windows"""
+        """Answer a question about the current game state"""
         question_lower = question.lower()
         
-        # Determine appropriate lookback based on question type
+        # Get recent updates (last 24 hours)
+        recent_updates = self.db.get_recent_updates(24)
+        
+        # Determine question type and route to appropriate handler
         if any(keyword in question_lower for keyword in ['control', 'power', 'hoh', 'head of household']):
-            # Power structure needs recent competition results
-            recent_updates = self.db.get_recent_updates(168)  # 7 days
             return await self._analyze_power_structure(recent_updates, question)
         
         elif any(keyword in question_lower for keyword in ['danger', 'target', 'eviction', 'nominated', 'block']):
-            # Danger analysis - current week dynamics
-            recent_updates = self.db.get_recent_updates(72)   # 3 days
             return await self._analyze_danger_level(recent_updates, question)
         
         elif any(keyword in question_lower for keyword in ['alliance', 'working together', 'team', 'group']):
-            # Alliances need longer context but mainly use alliance tracker
-            return await self._analyze_alliances(question)  # This uses alliance tracker
-        
-        elif any(keyword in question_lower for keyword in ['winning', 'winner', 'favorite', 'best positioned']):
-            # Winner analysis needs season-long context
-            recent_updates = self.db.get_recent_updates(1680)  # 10 weeks (whole season)
-            return await self._analyze_win_chances(recent_updates, question)
+            return await self._analyze_alliances(question)
         
         elif any(keyword in question_lower for keyword in ['showmance', 'romance', 'relationship', 'dating', 'couple']):
-            # Relationships develop over weeks
-            recent_updates = self.db.get_recent_updates(336)  # 14 days
             return await self._analyze_relationships(recent_updates, question)
         
+        elif any(keyword in question_lower for keyword in ['winning', 'winner', 'favorite', 'best positioned']):
+            return await self._analyze_win_chances(recent_updates, question)
+        
         elif any(keyword in question_lower for keyword in ['drama', 'fight', 'argument', 'tension']):
-            # Drama is more recent but needs some context
-            recent_updates = self.db.get_recent_updates(120)  # 5 days
             return await self._analyze_drama(recent_updates, question)
         
         elif any(keyword in question_lower for keyword in ['competition', 'comp', 'challenge', 'veto', 'pov']):
-            # Competitions - recent results
-            recent_updates = self.db.get_recent_updates(168)  # 7 days
             return await self._analyze_competitions(recent_updates, question)
         
         else:
-            # General analysis - broad context
-            recent_updates = self.db.get_recent_updates(240)  # 10 days
             return await self._general_analysis(recent_updates, question)
     
     async def _analyze_power_structure(self, updates: List[BBUpdate], question: str) -> dict:
-        """Analyze who's in control of the house - with longer context"""
+        """Analyze who's in control of the house"""
         
-        # Look for HOH wins and power-related updates in the data provided
+        # Look for HOH wins and power-related updates
         power_updates = []
         current_hoh = None
         
-        # Sort by most recent first
-        sorted_updates = sorted(updates, key=lambda x: x.pub_date, reverse=True)
-        
-        for update in sorted_updates[:50]:  # Check more updates
+        for update in updates[:20]:  # Check recent updates
             content = f"{update.title} {update.description}".lower()
             
             if 'hoh' in content or 'head of household' in content:
-                if 'wins' in content or 'winner' in content or 'becomes' in content:
+                if 'wins' in content or 'winner' in content:
                     # Extract potential HOH winner
                     houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
-                    if houseguests and not current_hoh:  # Take the most recent
+                    if houseguests:
                         current_hoh = houseguests[0]
-                power_updates.append(update)
-            
-            # Also look for nomination and power dynamics
-            if any(word in content for word in ['nomination', 'power', 'control', 'target']):
                 power_updates.append(update)
         
         # Get active alliances to see power structure
@@ -8898,42 +8855,41 @@ class BBChatAnalyzer:
     
     # LLM-powered analysis methods
     async def _llm_power_analysis(self, power_updates: List[BBUpdate], alliances: List[dict], current_hoh: str, question: str) -> dict:
-        """Use LLM to analyze power structure with better JSON formatting"""
+        """Use LLM to analyze power structure"""
         
-        updates_text = "\n".join([f"• {update.title}" for update in power_updates[:15]])
+        updates_text = "\n".join([f"• {update.title}" for update in power_updates[:10]])
         alliances_text = "\n".join([f"• {alliance['name']}: {', '.join(alliance['members'])}" for alliance in alliances[:5]])
         
         prompt = f"""Based on recent Big Brother updates, analyze the current power structure in the house.
-    
-    RECENT POWER-RELATED UPDATES:
-    {updates_text}
-    
-    CURRENT ALLIANCES:
-    {alliances_text}
-    
-    CURRENT HOH: {current_hoh or "Unknown"}
-    
-    USER QUESTION: {question}
-    
-    You must respond with VALID JSON in exactly this format (no extra text before or after):
-    
-    {{
-        "main_answer": "Direct answer to the user's question about who controls the house",
-        "current_hoh": "{current_hoh or "Unknown"}",
-        "power_players": ["list", "of", "houseguests", "with", "influence"],
-        "power_analysis": "Brief analysis of who controls the house and why",
-        "next_targets": ["potential", "targets", "for", "eviction"],
-        "confidence": "high"
-    }}
-    
-    CRITICAL: Return only valid JSON with no additional text. Use double quotes for all strings."""
-    
+
+RECENT POWER-RELATED UPDATES:
+{updates_text}
+
+CURRENT ALLIANCES:
+{alliances_text}
+
+CURRENT HOH: {current_hoh or "Unknown"}
+
+USER QUESTION: {question}
+
+Provide analysis in this format:
+{{
+    "main_answer": "Direct answer to the user's question",
+    "current_hoh": "Current HOH if known",
+    "power_players": ["list", "of", "houseguests", "with", "influence"],
+    "power_analysis": "2-3 sentence analysis of who controls the house and why",
+    "next_targets": ["potential", "targets", "for", "eviction"],
+    "confidence": "high/medium/low based on available information"
+}}
+
+Focus on answering their specific question about power and control."""
+
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model="claude-3-haiku-20240307",
-                max_tokens=2000,
-                temperature=0.1,  # Lower temperature for more consistent JSON
+                max_tokens=2500,
+                temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
             
@@ -9430,59 +9386,28 @@ Focus on answering their specific question about danger and eviction threats."""
         }
     
     def _parse_llm_chat_response(self, response_text: str, response_type: str) -> dict:
-        """Parse LLM response for chat feature with better error handling"""
+        """Parse LLM response for chat feature"""
         try:
-            # Clean the response first
-            cleaned_text = response_text.strip()
-            
-            # Find JSON boundaries more carefully
-            json_start = cleaned_text.find('{')
-            json_end = cleaned_text.rfind('}') + 1
-            
-            if json_start != -1 and json_end > json_start:
-                json_text = cleaned_text[json_start:json_end]
-                
-                # Log the JSON for debugging
-                logger.info(f"Attempting to parse JSON for {response_type}: {json_text[:200]}...")
-                
-                # Clean up common JSON issues
-                json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
-                json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
-                
+            # Try to extract JSON
+            json_start = response_text.find('{')
+            json_end = response_text.rfind('}') + 1
+            if json_start != -1 and json_end != -1:
+                json_text = response_text[json_start:json_end]
                 data = json.loads(json_text)
                 data["response_type"] = response_type
                 data["data_source"] = "llm_analysis"
                 return data
             else:
-                raise ValueError("No valid JSON found")
-                
-        except Exception as e:
-            logger.error(f"JSON parsing failed for {response_type}: {e}")
-            logger.error(f"Raw response: {response_text[:500]}...")
-            
-            # Create a meaningful fallback using the text response
-            return self._create_fallback_chat_response(response_text, response_type)
-    
-    def _create_fallback_chat_response(self, response_text: str, response_type: str) -> dict:
-        """Create a meaningful fallback when JSON parsing fails"""
-        
-        # Extract key information from the text even if JSON is broken
-        main_answer = response_text[:300] + "..." if len(response_text) > 300 else response_text
-        
-        # Try to extract houseguest names mentioned
-        houseguest_names = []
-        for hg in BB27_HOUSEGUESTS:
-            if hg.lower() in response_text.lower():
-                houseguest_names.append(hg)
-        
-        return {
-            "response_type": response_type,
-            "main_answer": main_answer,
-            "key_players": houseguest_names[:5],  # Limit to 5
-            "confidence": "medium",
-            "data_source": "llm_analysis_fallback",
-            "note": "Parsed from text response due to JSON formatting issue"
-        }
+                raise ValueError("No JSON found in response")
+        except (json.JSONDecodeError, ValueError) as e:
+            logger.warning(f"LLM chat JSON parsing failed: {e}")
+            # Return basic response with the text
+            return {
+                "response_type": response_type,
+                "main_answer": response_text[:500] + "..." if len(response_text) > 500 else response_text,
+                "confidence": "medium",
+                "data_source": "llm_analysis"
+            }
     
     def create_chat_response_embed(self, analysis_result: dict, question: str) -> discord.Embed:
         """Create Discord embed for chat response"""
@@ -10212,41 +10137,6 @@ class BBDiscordBot(commands.Bot):
         
         # Add this diagnostic command to see what's actually being processed
 
-        @self.tree.command(name="testjson", description="Test LLM JSON parsing (Owner only)")
-        async def test_json_slash(interaction: discord.Interaction):
-            """Test LLM JSON parsing"""
-            try:
-                owner_id = self.config.get('owner_id')
-                if not owner_id or interaction.user.id != owner_id:
-                    await interaction.response.send_message("Owner only", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                # Initialize chat analyzer
-                chat_analyzer = BBChatAnalyzer(
-                    db=self.db,
-                    alliance_tracker=self.alliance_tracker,
-                    analyzer=self.analyzer,
-                    llm_client=self.update_batcher.llm_client
-                )
-                
-                # Test with a simple question
-                result = await chat_analyzer.answer_question("who is hoh")
-                
-                await interaction.followup.send(
-                    f"**Test Result:**\n"
-                    f"Response Type: {result.get('response_type')}\n"
-                    f"Data Source: {result.get('data_source')}\n"
-                    f"Main Answer: {result.get('main_answer', 'None')[:200]}...\n"
-                    f"Current HOH: {result.get('current_hoh', 'None')}\n"
-                    f"Confidence: {result.get('confidence', 'None')}",
-                    ephemeral=True
-                )
-                
-            except Exception as e:
-                await interaction.followup.send(f"Test error: {e}", ephemeral=True)
-        
         @self.tree.command(name="testdailybuzz", description="Test daily buzz generation (Owner only)")
         async def test_daily_buzz(interaction: discord.Interaction):
             """Test daily buzz generation"""
@@ -10390,69 +10280,6 @@ class BBDiscordBot(commands.Bot):
             except Exception as e:
                 logger.error(f"Error in test RSS: {e}")
                 await interaction.followup.send(f"❌ Error: {e}", ephemeral=True)
-        
-        
-        @self.tree.command(name="askdebug", description="Debug ask command data (Owner only)")
-        async def ask_debug(interaction: discord.Interaction, hours: int = 168):
-            """Debug what data the ask command sees"""
-            try:
-                owner_id = self.config.get('owner_id')
-                if not owner_id or interaction.user.id != owner_id:
-                    await interaction.response.send_message("Owner only", ephemeral=True)
-                    return
-                
-                await interaction.response.defer(ephemeral=True)
-                
-                # Test different time periods
-                updates_24h = self.db.get_recent_updates(24)
-                updates_7d = self.db.get_recent_updates(168)
-                updates_14d = self.db.get_recent_updates(336)
-                
-                # Get alliance data
-                active_alliances = self.alliance_tracker.get_active_alliances()
-                
-                debug_info = []
-                debug_info.append(f"**Database Content Check:**")
-                debug_info.append(f"• Last 24 hours: {len(updates_24h)} updates")
-                debug_info.append(f"• Last 7 days: {len(updates_7d)} updates") 
-                debug_info.append(f"• Last 14 days: {len(updates_14d)} updates")
-                debug_info.append(f"• Active alliances: {len(active_alliances)}")
-                
-                if updates_7d:
-                    debug_info.append(f"\n**Recent Updates (7 days):**")
-                    for i, update in enumerate(updates_7d[:5], 1):
-                        debug_info.append(f"{i}. {update.title[:80]}...")
-                        debug_info.append(f"   Date: {update.pub_date}")
-                
-                if active_alliances:
-                    debug_info.append(f"\n**Active Alliances:**")
-                    for alliance in active_alliances[:3]:
-                        debug_info.append(f"• {alliance['name']}: {', '.join(alliance['members'])}")
-                
-                # Test HOH detection
-                hoh_updates = []
-                for update in updates_7d:
-                    content = f"{update.title} {update.description}".lower()
-                    if 'hoh' in content:
-                        hoh_updates.append(update.title[:80])
-                
-                if hoh_updates:
-                    debug_info.append(f"\n**HOH-related updates found:**")
-                    for hoh in hoh_updates[:3]:
-                        debug_info.append(f"• {hoh}...")
-                
-                full_debug = "\n".join(debug_info)
-                
-                # Split into chunks if too long
-                if len(full_debug) > 1900:
-                    chunks = [full_debug[i:i+1900] for i in range(0, len(full_debug), 1900)]
-                    for chunk in chunks[:3]:
-                        await interaction.followup.send(f"```{chunk}```", ephemeral=True)
-                else:
-                    await interaction.followup.send(f"```{full_debug}```", ephemeral=True)
-                    
-            except Exception as e:
-                await interaction.followup.send(f"Debug error: {e}", ephemeral=True)
         
         @self.tree.command(name="testllm", description="Test LLM connection and functionality")
         async def test_llm_slash(interaction: discord.Interaction):
