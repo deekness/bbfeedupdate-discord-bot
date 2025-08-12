@@ -4623,9 +4623,12 @@ class UpdateBatcher:
         # Prepare update data in chronological order with full content
         formatted_updates = []
         for i, update in enumerate(sorted_updates, 1):
+            # Get the full title without truncation
             full_title = update.title
+            # Clean time prefix if it exists
             cleaned_title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_title)
             
+            # Include description if it's different and adds value
             if update.description and update.description != update.title and len(update.description.strip()) > 10:
                 content = f"{cleaned_title} - {update.description}"
             else:
@@ -4642,12 +4645,11 @@ class UpdateBatcher:
     - You throw shade at bad gameplay (especially Rachel's questionable choices)
     - You get genuinely excited when things get messy
     - You reluctantly give Rachel credit when she does well ("Ugh, fine, Rachel actually did something right")
-
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
     
-    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+    Select 6-10 updates that are TRUE HIGHLIGHTS - the juiciest, messiest, most strategic moments.
     
     HIGHLIGHT-WORTHY updates include:
     - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
@@ -4668,25 +4670,17 @@ class UpdateBatcher:
     For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS:
     
     {{
-    "highlights": [
-        {{
-            "summary": "Create a COMPLETE SUMMARY with your sassy take. If it's bad gameplay, roast it. If it's Rachel messing up, enjoy it. If it's drama, celebrate it! Make it engaging and fun while informative.",
-            "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments, 🙄 for Rachel's questionable choices",
-            "context": "ONLY add this field if crucial context is needed. Keep it brief and sassy."
-        }}
-    ]
-}}
-
-Remember: We're here for the MESS. Give us the tea with extra sass!"""
+        "highlights": [
+            {{
+                "summary": "Create a COMPLETE SUMMARY with your sassy take. If it's bad gameplay, roast it. If it's Rachel messing up, enjoy it. If it's drama, celebrate it! Make it engaging and fun while informative.",
+                "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments, 🙄 for Rachel's questionable choices",
+                "context": "ONLY add this field if crucial context is needed. Keep it brief and sassy."
+            }}
+        ]
+    }}
     
-    CRITICAL INSTRUCTIONS:
-    - NO TIMESTAMPS - remove all time references 
-    - Create COMPLETE summaries - never truncate or cut off mid-sentence
-    - Make summaries engaging and informative - tell the full story
-    - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
-    - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
-    - Each summary should be a complete thought that stands alone"""
-    
+    Remember: We're here for the MESS. Give us the tea with extra sass!"""  # <-- FIXED: Added closing quotes
+        
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
@@ -4744,91 +4738,6 @@ Remember: We're here for the MESS. Give us the tea with extra sass!"""
         except Exception as e:
             logger.error(f"LLM highlights request failed: {e}")
             return [self._create_pattern_highlights_embed()]
-        
-    async def save_queue_state(self):
-        """Save current queue state to database"""
-        try:
-            database_url = os.getenv('DATABASE_URL')
-            if not database_url:
-                logger.debug("No database URL for queue persistence")
-                return
-                
-            import psycopg2
-            import psycopg2.extras
-            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
-            cursor = conn.cursor()
-            
-            # Save highlights queue
-            highlights_data = {
-                'updates': [
-                    {
-                        'title': update.title,
-                        'description': update.description,
-                        'link': update.link,
-                        'pub_date': update.pub_date.isoformat(),
-                        'content_hash': update.content_hash,
-                        'author': update.author
-                    }
-                    for update in self.highlights_queue
-                ]
-            }
-            
-            cursor.execute("""
-                INSERT INTO summary_checkpoints 
-                (summary_type, queue_state, queue_size, last_summary_time)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (summary_type) 
-                DO UPDATE SET 
-                    queue_state = EXCLUDED.queue_state,
-                    queue_size = EXCLUDED.queue_size,
-                    last_summary_time = EXCLUDED.last_summary_time,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (
-                'highlights',
-                json.dumps(highlights_data),
-                len(self.highlights_queue),
-                self.last_batch_time.isoformat()
-            ))
-            
-            # Save hourly queue
-            hourly_data = {
-                'updates': [
-                    {
-                        'title': update.title,
-                        'description': update.description,
-                        'link': update.link,
-                        'pub_date': update.pub_date.isoformat(),
-                        'content_hash': update.content_hash,
-                        'author': update.author
-                    }
-                    for update in self.hourly_queue
-                ]
-            }
-            
-            cursor.execute("""
-                INSERT INTO summary_checkpoints 
-                (summary_type, queue_state, queue_size, last_summary_time)
-                VALUES (%s, %s, %s, %s)
-                ON CONFLICT (summary_type) 
-                DO UPDATE SET 
-                    queue_state = EXCLUDED.queue_state,
-                    queue_size = EXCLUDED.queue_size,
-                    last_summary_time = EXCLUDED.last_summary_time,
-                    updated_at = CURRENT_TIMESTAMP
-            """, (
-                'hourly',
-                json.dumps(hourly_data),
-                len(self.hourly_queue),
-                self.last_hourly_summary.isoformat()
-            ))
-            
-            conn.commit()
-            conn.close()
-            
-            logger.debug(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
-            
-        except Exception as e:
-            logger.error(f"Error saving queue state: {e}")
     
     async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
         """Create narrative LLM hourly summary as fallback"""
