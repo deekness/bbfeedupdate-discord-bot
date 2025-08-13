@@ -4552,7 +4552,11 @@ class UpdateBatcher:
         # Build structured prompt
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
 
-NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
+PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
+If she appears in any updates, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
+Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
+
+NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
 {updates_text}
 
 Create a comprehensive summary that presents events chronologically as they happened.
@@ -4635,6 +4639,10 @@ CRITICAL INSTRUCTIONS:
         updates_text = "\n".join(formatted_updates)
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
+    
+    PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
+    If she appears in any updates, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
+    Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
@@ -5407,9 +5415,13 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         updates_text = "\n".join(formatted_updates)
         
         prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
-    
-    UPDATES FROM DAY {day_number} (chronological order):
-    {updates_text}
+
+PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
+If she appears in any updates, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
+Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
+
+UPDATES FROM DAY {day_number} (chronological order):
+{updates_text}
     
     Create a Daily Buzz in this EXACT format:
     
@@ -8814,6 +8826,10 @@ class BBChatAnalyzer:
         alliances_formatted = "\n".join(alliances_text) if alliances_text else "No active alliances detected"
         
         prompt = f"""You are analyzing the COMPLETE Big Brother season data to answer this question about power.
+
+PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
+If she appears in the analysis, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
+Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
 
 USER QUESTION: {question}
 
