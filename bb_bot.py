@@ -1,3 +1,4 @@
+
 import discord
 from discord.ext import commands, tasks
 import feedparser
@@ -4535,54 +4536,49 @@ class UpdateBatcher:
         formatted_updates = []
         for i, update in enumerate(sorted_updates, 1):
             time_str = self._extract_correct_time(update)
+            # Remove leading zero from time
             time_str = time_str.lstrip('0')
             formatted_updates.append(f"{i}. {time_str} - {update.title}")
             if update.description and update.description != update.title:
+                # Truncate long descriptions
                 desc = update.description[:150] + "..." if len(update.description) > 150 else update.description
                 formatted_updates.append(f"   {desc}")
         
         updates_text = "\n".join(formatted_updates)
         
-        # Calculate current day
+        # Calculate current day (simplified)
         current_day = max(1, (datetime.now().date() - datetime(2025, 7, 8).date()).days + 1)
         
-        # Build structured prompt WITH PERSONALITY
-        prompt = f"""You are a Big Brother superfan analyst with a sassy personality creating an hourly summary for Day {current_day}.
-    
-    PERSONALITY TRAITS:
-    - You're a superfan who loves the strategic and messy gameplay
-    - You have a bit of sass and aren't afraid to throw shade when houseguests make questionable moves
-    - You're slightly biased against Rachel - when she does something good, acknowledge it but with a hint of reluctance or backhanded compliment
-    - You love drama and get excited when the house gets messy
-    - You appreciate good gameplay but LOVE calling out bad gameplay with witty commentary
-    
-    NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
-    {updates_text}
-    
-    Create a comprehensive summary that presents events chronologically as they happened.
-    
-    Provide your analysis in this EXACT JSON format:
-    
-    {{
-        "headline": "Brief headline summarizing the most important development this hour (feel free to be sassy if someone made a bad move)",
-        "strategic_analysis": "Analysis of game moves with your honest, slightly sassy take. Be especially critical of bad gameplay. If Rachel is involved, include subtle shade or reluctant praise as appropriate. Only include if there are meaningful strategic developments - otherwise use null.",
-        "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts with commentary on whether these are smart moves or messy choices. Only include if there are meaningful alliance developments - otherwise use null.",
-        "entertainment_highlights": "Get excited about the drama! Funny moments, fights, memorable interactions - this is where your personality shines. Only include if there are entertaining moments - otherwise use null.",
-        "showmance_updates": "Romance developments with your take on whether it's cute or cringe. Only include if there are romance-related developments - otherwise use null.",
-        "house_culture": "Daily routines and house atmosphere with witty observations. Only include if there are meaningful cultural/social developments - otherwise use null.",
-        "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
-        "overall_importance": 8,
-        "importance_explanation": "Brief explanation with personality - get excited about drama, be sassy about bad gameplay"
-    }}
-    
-    CRITICAL INSTRUCTIONS:
-    - Let your personality show! Be a fun, sassy superfan
-    - When Rachel does something good, acknowledge it but maybe add "I can't believe I'm saying this but..." or "Credit where it's due..."
-    - When Rachel messes up, enjoy it a little: "Classic Rachel move" or "Rachel gonna Rachel"
-    - Celebrate messy gameplay and drama
-    - Call out bad strategic moves with wit
-    - Keep it fun but still informative
-    - Use null for any section that doesn't have substantial content"""
+        # Build structured prompt
+        prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
+
+NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
+{updates_text}
+
+Create a comprehensive summary that presents events chronologically as they happened.
+
+Provide your analysis in this EXACT JSON format:
+
+{{
+    "headline": "Brief headline summarizing the most important development this hour",
+    "strategic_analysis": "Analysis of game moves, alliance discussions, targeting decisions, and strategic positioning. Only include if there are meaningful strategic developments - otherwise use null.",
+    "alliance_dynamics": "Analysis of alliance formations, betrayals, trust shifts, and relationship changes. Only include if there are meaningful alliance developments - otherwise use null.",
+    "entertainment_highlights": "Funny moments, drama, memorable interactions, and lighthearted content. Only include if there are entertaining moments - otherwise use null.",
+    "showmance_updates": "Romance developments, flirting, relationship drama, and intimate moments. Only include if there are romance-related developments - otherwise use null.",
+    "house_culture": "Daily routines, traditions, group dynamics, living situations, and house atmosphere. Only include if there are meaningful cultural/social developments - otherwise use null.",
+    "key_players": ["List", "of", "houseguests", "who", "were", "central", "to", "this", "hour's", "developments"],
+    "overall_importance": 8,
+    "importance_explanation": "Brief explanation of why this hour received this importance score (1-10 scale)"
+}}
+
+CRITICAL INSTRUCTIONS:
+- ONLY include sections where there are actual meaningful developments
+- Use null for any section that doesn't have substantial content
+- Present events chronologically (earliest to latest)
+- Key players should be the houseguests most central to this hour's events
+- Overall importance: 1-3 (quiet hour), 4-6 (moderate activity), 7-8 (high drama/strategy), 9-10 (explosive/game-changing)
+- Don't force content into sections - be selective and only include what's truly noteworthy
+- If a section would be empty or just say "nothing happened", use null instead"""
 
         # Call LLM
         response = await asyncio.to_thread(
@@ -4638,18 +4634,12 @@ class UpdateBatcher:
         
         updates_text = "\n".join(formatted_updates)
         
-        prompt = f"""You are a sassy Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
-    
-    PERSONALITY:
-    - You LIVE for the drama and aren't shy about it
-    - You throw shade at bad gameplay (especially Rachel's questionable choices)
-    - You get genuinely excited when things get messy
-    - You reluctantly give Rachel credit when she does well ("Ugh, fine, Rachel actually did something right")
+        prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
     
-    Select 6-10 updates that are TRUE HIGHLIGHTS - the juiciest, messiest, most strategic moments.
+    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
     
     HIGHLIGHT-WORTHY updates include:
     - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
@@ -4672,15 +4662,21 @@ class UpdateBatcher:
     {{
         "highlights": [
             {{
-                "summary": "Create a COMPLETE SUMMARY with your sassy take. If it's bad gameplay, roast it. If it's Rachel messing up, enjoy it. If it's drama, celebrate it! Make it engaging and fun while informative.",
-                "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments, 🙄 for Rachel's questionable choices",
-                "context": "ONLY add this field if crucial context is needed. Keep it brief and sassy."
+                "summary": "Create a COMPLETE SUMMARY (not truncated) that captures the full essence of this moment. Make it engaging and informative - tell the whole story in 1-2 sentences.",
+                "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
+                "context": "ONLY add this field if crucial context is needed that isn't obvious from the summary. Keep very brief (under 15 words). Most highlights won't need this."
             }}
         ]
     }}
     
-    Remember: We're here for the MESS. Give us the tea with extra sass!"""  # <-- FIXED: Added closing quotes
-        
+    CRITICAL INSTRUCTIONS:
+    - NO TIMESTAMPS - remove all time references 
+    - Create COMPLETE summaries - never truncate or cut off mid-sentence
+    - Make summaries engaging and informative - tell the full story
+    - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
+    - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
+    - Each summary should be a complete thought that stands alone"""
+    
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
@@ -4738,6 +4734,91 @@ class UpdateBatcher:
         except Exception as e:
             logger.error(f"LLM highlights request failed: {e}")
             return [self._create_pattern_highlights_embed()]
+        
+    async def save_queue_state(self):
+        """Save current queue state to database"""
+        try:
+            database_url = os.getenv('DATABASE_URL')
+            if not database_url:
+                logger.debug("No database URL for queue persistence")
+                return
+                
+            import psycopg2
+            import psycopg2.extras
+            conn = psycopg2.connect(database_url, cursor_factory=psycopg2.extras.RealDictCursor)
+            cursor = conn.cursor()
+            
+            # Save highlights queue
+            highlights_data = {
+                'updates': [
+                    {
+                        'title': update.title,
+                        'description': update.description,
+                        'link': update.link,
+                        'pub_date': update.pub_date.isoformat(),
+                        'content_hash': update.content_hash,
+                        'author': update.author
+                    }
+                    for update in self.highlights_queue
+                ]
+            }
+            
+            cursor.execute("""
+                INSERT INTO summary_checkpoints 
+                (summary_type, queue_state, queue_size, last_summary_time)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (summary_type) 
+                DO UPDATE SET 
+                    queue_state = EXCLUDED.queue_state,
+                    queue_size = EXCLUDED.queue_size,
+                    last_summary_time = EXCLUDED.last_summary_time,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                'highlights',
+                json.dumps(highlights_data),
+                len(self.highlights_queue),
+                self.last_batch_time.isoformat()
+            ))
+            
+            # Save hourly queue
+            hourly_data = {
+                'updates': [
+                    {
+                        'title': update.title,
+                        'description': update.description,
+                        'link': update.link,
+                        'pub_date': update.pub_date.isoformat(),
+                        'content_hash': update.content_hash,
+                        'author': update.author
+                    }
+                    for update in self.hourly_queue
+                ]
+            }
+            
+            cursor.execute("""
+                INSERT INTO summary_checkpoints 
+                (summary_type, queue_state, queue_size, last_summary_time)
+                VALUES (%s, %s, %s, %s)
+                ON CONFLICT (summary_type) 
+                DO UPDATE SET 
+                    queue_state = EXCLUDED.queue_state,
+                    queue_size = EXCLUDED.queue_size,
+                    last_summary_time = EXCLUDED.last_summary_time,
+                    updated_at = CURRENT_TIMESTAMP
+            """, (
+                'hourly',
+                json.dumps(hourly_data),
+                len(self.hourly_queue),
+                self.last_hourly_summary.isoformat()
+            ))
+            
+            conn.commit()
+            conn.close()
+            
+            logger.debug(f"Saved queue state: {len(self.highlights_queue)} highlights, {len(self.hourly_queue)} hourly")
+            
+        except Exception as e:
+            logger.error(f"Error saving queue state: {e}")
     
     async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
         """Create narrative LLM hourly summary as fallback"""
@@ -6871,49 +6952,6 @@ async def save_queue_state(self):
         
         return [embed]
 
-    # Add these methods to the UpdateBatcher class
-
-    def _get_rachel_commentary(self, is_positive: bool = False) -> str:
-        """Get appropriate Rachel commentary"""
-        if is_positive:
-            return random.choice([
-                "I can't believe I'm saying this, but Rachel actually made a good move",
-                "Credit where it's due, Rachel didn't completely mess this up",
-                "Shocking development: Rachel did something right for once",
-                "In a surprising turn of events, Rachel showed competence",
-                "Rachel accidentally stumbled into a good decision"
-            ])
-        else:
-            return random.choice([
-                "Classic Rachel move right there",
-                "Rachel gonna Rachel, I guess",
-                "And this is why Rachel is... Rachel",
-                "Rachel continuing her streak of questionable choices",
-                "Rachel proving once again why she's... special"
-            ])
-    
-    def _get_sassy_drama_reaction(self) -> str:
-        """Get sassy reactions to drama"""
-        return random.choice([
-            "The girls are FIGHTING!",
-            "And THIS is why we watch feeds!",
-            "The chaos we deserve!",
-            "Someone get the popcorn!",
-            "The mess is IMMACULATE!",
-            "Drama alert! Drama alert!",
-            "This is the content we signed up for!"
-        ])
-    
-    def _get_bad_gameplay_roast(self, houseguest: str) -> str:
-        """Roast bad gameplay"""
-        return random.choice([
-            f"{houseguest} really said 'strategy? never heard of her'",
-            f"{houseguest} playing 4D chess... badly... in a checkers game",
-            f"Someone needs to explain Big Brother to {houseguest} again",
-            f"{houseguest} choosing chaos over logic, we love to see it",
-            f"{houseguest} making choices that would make Dr. Will weep"
-        ])
-    
     async def clear_old_checkpoints(self, days_to_keep: int = 7):
         """Clean up old checkpoint data"""
         try:
@@ -7047,8 +7085,6 @@ async def save_queue_state(self):
                 
             except Exception as e:
                 logger.error(f"Error saving queue state: {e}")
-
-
 
 class BBDatabase:
     """Handles database operations with connection pooling and error recovery"""
