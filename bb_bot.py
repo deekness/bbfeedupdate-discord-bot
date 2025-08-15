@@ -4670,7 +4670,7 @@ CRITICAL INSTRUCTIONS:
             return self._create_enhanced_pattern_hourly_summary()
 
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-        """Create just highlights using LLM - CHRONOLOGICAL ORDER"""
+        """Create just highlights using LLM - CHRONOLOGICAL ORDER with HAIKU"""
         await self.rate_limiter.wait_if_needed()
         
         # Sort updates chronologically BEFORE sending to LLM
@@ -4696,54 +4696,65 @@ CRITICAL INSTRUCTIONS:
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
-    PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-    You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-    If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
-    Subtle eye-roll energy specifically for Rachel and production's interference.
-    Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
-    "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
-
+        PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
+        You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
+        If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+        Subtle eye-roll energy specifically for Rachel and production's interference.
+        Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+        "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
     
-    UPDATES IN CHRONOLOGICAL ORDER (earliest first):
-    {updates_text}
-    
-    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-    
-    HIGHLIGHT-WORTHY updates include:
-    - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
-    - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
-    - Major strategic moves or betrayals between houseguests
-    - Dramatic fights or confrontations between houseguests
-    - Romantic moments between houseguests (first kiss, breakup, etc.)
-    - Hilarious or memorable incidents happening in the house
-    - Alliance formations or breaks between houseguests
-    - Emotional moments, breakdowns, celebrations by houseguests
-    
-    AVOID highlighting:
-    - TV episode schedules or upcoming shows (unless houseguests are discussing them)
-    - Production updates not involving houseguest reactions
-    - Technical feed issues (unless houseguests react to them)
-    - General announcements not affecting house dynamics
-    
-    For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS:
-    
-    {{
-        "highlights": [
-            {{
-                "summary": "Create a COMPLETE SUMMARY (not truncated) that captures the full essence of this moment. Make it engaging and informative - tell the whole story in 1-2 sentences.",
-                "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
-                "context": "ONLY add this field if crucial context is needed that isn't obvious from the summary. Keep very brief (under 15 words). Most highlights won't need this."
+        
+        UPDATES IN CHRONOLOGICAL ORDER (earliest first):
+        {updates_text}
+        
+        Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
+        
+        HIGHLIGHT-WORTHY updates include:
+        - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
+        - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
+        - Major strategic moves or betrayals between houseguests
+        - Dramatic fights or confrontations between houseguests
+        - Romantic moments between houseguests (first kiss, breakup, etc.)
+        - Hilarious or memorable incidents happening in the house
+        - Alliance formations or breaks between houseguests
+        - Emotional moments, breakdowns, celebrations by houseguests
+        
+        AVOID highlighting:
+        - TV episode schedules or upcoming shows (unless houseguests are discussing them)
+        - Production updates not involving houseguest reactions
+        - Technical feed issues (unless houseguests react to them)
+        - General announcements not affecting house dynamics
+        
+        For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
+        
+        THEN, after selecting the highlights, create a haiku poem that captures the essence of these moments.
+        The haiku should follow traditional 5-7-5 syllable structure and reflect the main themes, tensions, or drama from the highlights.
+        
+        {{
+            "highlights": [
+                {{
+                    "summary": "Create a COMPLETE SUMMARY (not truncated) that captures the full essence of this moment. Make it engaging and informative - tell the whole story in 1-2 sentences.",
+                    "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
+                    "context": "ONLY add this field if crucial context is needed that isn't obvious from the summary. Keep very brief (under 15 words). Most highlights won't need this."
+                }}
+            ],
+            "haiku": {{
+                "line1": "First line with exactly 5 syllables",
+                "line2": "Second line with exactly 7 syllables", 
+                "line3": "Third line with exactly 5 syllables",
+                "theme": "Brief description of what the haiku captures from the highlights"
             }}
-        ]
-    }}
-    
-    CRITICAL INSTRUCTIONS:
-    - NO TIMESTAMPS - remove all time references 
-    - Create COMPLETE summaries - never truncate or cut off mid-sentence
-    - Make summaries engaging and informative - tell the full story
-    - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
-    - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
-    - Each summary should be a complete thought that stands alone"""
+        }}
+        
+        CRITICAL INSTRUCTIONS:
+        - NO TIMESTAMPS - remove all time references 
+        - Create COMPLETE summaries - never truncate or cut off mid-sentence
+        - Make summaries engaging and informative - tell the full story
+        - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
+        - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
+        - Each summary should be a complete thought that stands alone
+        - The haiku must capture the essence of the highlights with proper 5-7-5 syllable count
+        - Make the haiku evocative and poetic, capturing the drama/strategy/emotion of the moment"""
     
         try:
             response = await asyncio.to_thread(
@@ -4789,6 +4800,21 @@ CRITICAL INSTRUCTIONS:
                     embed.add_field(
                         name=field_name,
                         value=field_value,
+                        inline=False
+                    )
+                
+                # Add the haiku if it exists
+                if highlights_data.get('haiku'):
+                    haiku = highlights_data['haiku']
+                    haiku_text = f"*{haiku.get('line1', '')}*\n*{haiku.get('line2', '')}*\n*{haiku.get('line3', '')}*"
+                    
+                    # Add theme as a small footer if provided
+                    if haiku.get('theme'):
+                        haiku_text += f"\n\n_{haiku['theme']}_"
+                    
+                    embed.add_field(
+                        name="🌸 Haiku Summary",
+                        value=haiku_text,
                         inline=False
                     )
                 
@@ -4948,7 +4974,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             return self._create_enhanced_pattern_hourly_summary()
 
     def _parse_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response with better JSON handling and debugging"""
+        """Parse LLM response with better JSON handling and debugging - including haiku"""
         try:
             # Clean the response first
             cleaned_text = response_text.strip()
@@ -4967,7 +4993,18 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
                 json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
                 json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
                 
-                return json.loads(json_text)
+                parsed_data = json.loads(json_text)
+                
+                # Validate that we have the expected structure
+                if 'highlights' not in parsed_data:
+                    logger.warning("No highlights in parsed JSON")
+                    return {"highlights": []}
+                
+                # Log if we got a haiku
+                if 'haiku' in parsed_data:
+                    logger.info("Successfully parsed response with haiku")
+                
+                return parsed_data
             else:
                 raise ValueError("No valid JSON found")
                 
@@ -4977,7 +5014,8 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             
             # Better fallback that doesn't show raw JSON
             return {
-                "highlights": []  # Return empty list to trigger pattern fallback
+                "highlights": [],  # Return empty list to trigger pattern fallback
+                "haiku": None
             }
     
     def _parse_text_response(self, response_text: str) -> dict:
