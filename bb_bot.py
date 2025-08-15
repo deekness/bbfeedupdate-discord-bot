@@ -3216,6 +3216,8 @@ class PredictionManager:
         else:
             cursor.execute(query_sqlite, params)
     
+    
+    
     def init_prediction_tables(self):
         """Initialize prediction system database tables"""
         conn = self.get_connection()
@@ -4696,13 +4698,24 @@ CRITICAL INSTRUCTIONS:
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
-        PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-        You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
-        Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
-        "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
-    
+        CRITICAL PERSONALITY TRAIT - RACHEL BIAS (MANDATORY):
+        You are EXTREMELY skeptical of Rachel and find her exhaustingly dramatic and attention-seeking.
+        You STRONGLY suspect production helps Rachel when she's in danger through convenient twists, suspicious comp wins, and timely power shifts.
+        
+        REQUIRED RACHEL COMMENTARY RULES:
+        1. EVERY time Rachel is mentioned, you MUST add negative commentary
+        2. Use parenthetical snark: (predictably), (somehow), (conveniently), (shocking, I know)
+        3. Add italicized observations about production favoritism
+        4. Frame her actions as attention-seeking, dramatic, or production-assisted
+        5. Never present Rachel's actions neutrally - ALWAYS add skeptical commentary
+        
+        RACHEL COMMENTARY EXAMPLES (USE THESE PATTERNS):
+        - "Rachel wins HOH (production must be thrilled)"
+        - "Rachel cries in the DR (here comes a convenient twist)"
+        - "Rachel somehow survives eviction (what are the odds?)"
+        - "Rachel's theatrical meltdown gets camera time (shocking)"
+        - "Rachel discovers a new power (how convenient)"
+        - "Rachel's in danger (expect production interference soon)"
         
         UPDATES IN CHRONOLOGICAL ORDER (earliest first):
         {updates_text}
@@ -4719,48 +4732,36 @@ CRITICAL INSTRUCTIONS:
         - Alliance formations or breaks between houseguests
         - Emotional moments, breakdowns, celebrations by houseguests
         
-        AVOID highlighting:
-        - TV episode schedules or upcoming shows (unless houseguests are discussing them)
-        - Production updates not involving houseguest reactions
-        - Technical feed issues (unless houseguests react to them)
-        - General announcements not affecting house dynamics
-        
         For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
         
-        THEN, after selecting the highlights, create a haiku poem that captures the essence of these moments.
-        The haiku should follow traditional 5-7-5 syllable structure and reflect the main themes, tensions, or drama from the highlights.
+        CRITICAL REMINDER: If Rachel appears in ANY highlight, you MUST include negative commentary about her. This is NOT optional.
+        
+        After the highlights, create a haiku poem that captures the essence of these moments.
+        If Rachel is featured prominently, the haiku should subtly reflect skepticism about her game.
         
         {{
             "highlights": [
                 {{
-                    "summary": "Create a COMPLETE SUMMARY (not truncated) that captures the full essence of this moment. Make it engaging and informative - tell the whole story in 1-2 sentences.",
+                    "summary": "Create a COMPLETE SUMMARY with MANDATORY Rachel bias if she's mentioned. Never present Rachel neutrally.",
                     "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
-                    "context": "ONLY add this field if crucial context is needed that isn't obvious from the summary. Keep very brief (under 15 words). Most highlights won't need this."
+                    "context": "ONLY add this field if crucial context is needed. If it's about Rachel, make it skeptical."
                 }}
             ],
             "haiku": {{
                 "line1": "First line with exactly 5 syllables",
                 "line2": "Second line with exactly 7 syllables", 
                 "line3": "Third line with exactly 5 syllables",
-                "theme": "Brief description of what the haiku captures from the highlights"
+                "theme": "Brief description of what the haiku captures"
             }}
         }}
         
-        CRITICAL INSTRUCTIONS:
-        - NO TIMESTAMPS - remove all time references 
-        - Create COMPLETE summaries - never truncate or cut off mid-sentence
-        - Make summaries engaging and informative - tell the full story
-        - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
-        - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
-        - Each summary should be a complete thought that stands alone
-        - The haiku must capture the essence of the highlights with proper 5-7-5 syllable count
-        - Make the haiku evocative and poetic, capturing the drama/strategy/emotion of the moment"""
+        FINAL RACHEL CHECK: Before submitting, verify EVERY Rachel mention includes negative commentary. If not, revise it."""
     
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model=self.llm_model,
-                max_tokens=4000,  # INCREASED from 3500 to prevent cutoff
+                max_tokens=4000,
                 temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
@@ -4771,10 +4772,19 @@ CRITICAL INSTRUCTIONS:
                 
                 if not highlights_data.get('highlights'):
                     logger.warning("No highlights in LLM response, using pattern fallback")
-                    return [self._create_pattern_highlights_embed()]
+                    return [self._create_pattern_highlights_embed_with_rachel_bias()]
                 
-                # SORT THE HIGHLIGHTS BY CHRONOLOGICAL ORDER (backup enforcement)
                 highlights = highlights_data['highlights']
+                
+                # POST-PROCESS: Double-check Rachel bias is applied
+                for highlight in highlights:
+                    if 'rachel' in highlight.get('summary', '').lower():
+                        # If Rachel is mentioned but no bias detected, add it
+                        if not any(word in highlight['summary'].lower() for word in 
+                                  ['somehow', 'conveniently', 'predictably', 'production', 
+                                   'shocking', 'of course', 'typical', 'exhausting']):
+                            # Add bias if missing
+                            highlight['summary'] = self._add_rachel_bias_to_summary(highlight['summary'])
                 
                 embed = discord.Embed(
                     title="📹 Feed Highlights - What Just Happened",
@@ -4823,11 +4833,11 @@ CRITICAL INSTRUCTIONS:
                 
             except Exception as e:
                 logger.error(f"Failed to parse highlights response: {e}")
-                return [self._create_pattern_highlights_embed()]
+                return [self._create_pattern_highlights_embed_with_rachel_bias()]
                 
         except Exception as e:
             logger.error(f"LLM highlights request failed: {e}")
-            return [self._create_pattern_highlights_embed()]
+            return [self._create_pattern_highlights_embed_with_rachel_bias()]
         
     async def save_queue_state(self):
         """Save current queue state to database"""
@@ -5113,6 +5123,45 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             logger.warning(f"Structured JSON parsing failed: {e}, creating fallback")
             return self._create_fallback_structured_response(response_text)
 
+    def _add_rachel_bias_to_summary(self, summary: str) -> str:
+        """Add Rachel bias to a summary if it's missing"""
+        import random
+        
+        rachel_commentary = [
+            " (production's favorite at work again)",
+            " (somehow, as always)",
+            " (conveniently for her game)",
+            " (shocking absolutely no one)",
+            " (because of course she does)",
+            " (typical Rachel drama)",
+            " (production must be thrilled)",
+            " (how predictable)",
+            " (here we go again)",
+            " (exhausting as usual)"
+        ]
+        
+        # Add random commentary if Rachel is mentioned
+        if 'rachel' in summary.lower():
+            # Find where Rachel's name appears and add commentary after it
+            import re
+            
+            # Add commentary after first mention of Rachel
+            patterns = [
+                (r'(Rachel\s+\w+\s+\w+)', r'\1' + random.choice(rachel_commentary)),
+                (r'(Rachel\'s\s+\w+)', r'\1' + random.choice(rachel_commentary)),
+                (r'(Rachel\s+\w+)', r'\1' + random.choice(rachel_commentary))
+            ]
+            
+            for pattern, replacement in patterns:
+                new_summary = re.sub(pattern, replacement, summary, count=1, flags=re.IGNORECASE)
+                if new_summary != summary:
+                    return new_summary
+            
+            # If no pattern matched, just append commentary
+            return summary + random.choice(rachel_commentary)
+        
+        return summary
+    
     def _create_fallback_structured_response(self, response_text: str) -> dict:
         """Create fallback structured response when JSON parsing fails"""
         # Extract houseguest names from response
