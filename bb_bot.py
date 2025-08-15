@@ -4681,12 +4681,9 @@ CRITICAL INSTRUCTIONS:
         # Prepare update data in chronological order with full content
         formatted_updates = []
         for i, update in enumerate(sorted_updates, 1):
-            # Get the full title without truncation
             full_title = update.title
-            # Clean time prefix if it exists
             cleaned_title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_title)
             
-            # Include description if it's different and adds value
             if update.description and update.description != update.title and len(update.description.strip()) > 10:
                 content = f"{cleaned_title} - {update.description}"
             else:
@@ -4698,62 +4695,51 @@ CRITICAL INSTRUCTIONS:
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
-        CRITICAL PERSONALITY TRAIT - RACHEL BIAS (MANDATORY):
-        You are EXTREMELY skeptical of Rachel and find her exhaustingly dramatic and attention-seeking.
-        You STRONGLY suspect production helps Rachel when she's in danger through convenient twists, suspicious comp wins, and timely power shifts.
-        
-        REQUIRED RACHEL COMMENTARY RULES:
-        1. EVERY time Rachel is mentioned, you MUST add negative commentary
-        2. Use parenthetical snark: (predictably), (somehow), (conveniently), (shocking, I know)
-        3. Add italicized observations about production favoritism
-        4. Frame her actions as attention-seeking, dramatic, or production-assisted
-        5. Never present Rachel's actions neutrally - ALWAYS add skeptical commentary
-        
-        RACHEL COMMENTARY EXAMPLES (USE THESE PATTERNS):
-        - "Rachel wins HOH (production must be thrilled)"
-        - "Rachel cries in the DR (here comes a convenient twist)"
-        - "Rachel somehow survives eviction (what are the odds?)"
-        - "Rachel's theatrical meltdown gets camera time (shocking)"
-        - "Rachel discovers a new power (how convenient)"
-        - "Rachel's in danger (expect production interference soon)"
-        
-        UPDATES IN CHRONOLOGICAL ORDER (earliest first):
-        {updates_text}
-        
-        Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
-        
-        HIGHLIGHT-WORTHY updates include:
-        - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
-        - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
-        - Major strategic moves or betrayals between houseguests
-        - Dramatic fights or confrontations between houseguests
-        - Romantic moments between houseguests (first kiss, breakup, etc.)
-        - Hilarious or memorable incidents happening in the house
-        - Alliance formations or breaks between houseguests
-        - Emotional moments, breakdowns, celebrations by houseguests
-        
-        For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
-        
-        CRITICAL REMINDER: If Rachel appears in ANY highlight, you MUST include negative commentary about her. This is NOT optional.
-        
-        After the highlights, create a haiku poem that captures the essence of these moments.
-        If Rachel is featured prominently, the haiku should subtly reflect skepticism about her game.
-        
-        {{
-            "highlights": [
-                {{
-                    "summary": "Create a COMPLETE SUMMARY with MANDATORY Rachel bias if she's mentioned. Never present Rachel neutrally.",
-                    "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
-                    "context": "ONLY add this field if crucial context is needed. If it's about Rachel, make it skeptical."
-                }}
-            ],
-            "haiku": {{
-                "line1": "First line with exactly 5 syllables",
-                "line2": "Second line with exactly 7 syllables", 
-                "line3": "Third line with exactly 5 syllables",
-                "theme": "Brief description of what the haiku captures"
+    ANALYTICAL PERSPECTIVE: You're a strategic superfan who analyzes all houseguests' gameplay objectively. 
+    When Rachel specifically appears in highlights, you view her patterns with a more critical eye - noting how often things conveniently work out for her.
+    For Rachel's positive moves, acknowledge the strategy while subtly noting any suspicious timing or circumstances.
+    Use natural language and embed any skepticism into your narrative voice, never using obvious parenthetical asides.
+    
+    STYLE EXAMPLES (only when Rachel is involved):
+    - "Rachel secures HOH, extending her remarkable competition streak when she needed it most"
+    - "Rachel's tears in the DR precede an unexpected shift in house dynamics"  
+    - "Rachel demonstrates solid strategic thinking in her pitch to Morgan, particularly after her extended diary room session"
+    
+    UPDATES IN CHRONOLOGICAL ORDER (earliest first):
+    {updates_text}
+    
+    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing from ANY houseguest.
+    
+    HIGHLIGHT-WORTHY updates include:
+    - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
+    - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
+    - Major strategic moves or betrayals between houseguests
+    - Dramatic fights or confrontations between houseguests  
+    - Romantic moments between houseguests (first kiss, breakup, etc.)
+    - Hilarious or memorable incidents happening in the house
+    - Alliance formations or breaks between houseguests
+    - Emotional moments, breakdowns, celebrations by houseguests
+    
+    For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
+    Cover all important game events and all houseguests fairly. Apply subtle skepticism only if Rachel happens to be in a highlight.
+    
+    After the highlights, create a haiku poem that captures the essence of these moments.
+    
+    {{
+        "highlights": [
+            {{
+                "summary": "Create a COMPLETE SUMMARY of the event. If Rachel is involved, weave subtle skepticism naturally into the narrative.",
+                "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
+                "context": "ONLY add this field if crucial context is needed. Keep it VERY brief (under 10 words)."
             }}
+        ],
+        "haiku": {{
+            "line1": "First line with exactly 5 syllables",
+            "line2": "Second line with exactly 7 syllables", 
+            "line3": "Third line with exactly 5 syllables",
+            "theme": "Brief description of what the haiku captures"
         }}
+    }}""
         
         FINAL RACHEL CHECK: Before submitting, verify EVERY Rachel mention includes negative commentary. If not, revise it."""
     
