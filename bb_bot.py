@@ -67,6 +67,19 @@ DEFAULT_CONFIG = {
     "max_processed_hashes": 10000
 }
 
+RACHEL_BIAS_PHRASES = [
+    "production's favorite",
+    "mysteriously benefits from twists",
+    "conveniently saved by America's vote",
+    "somehow always lands on her feet",
+    "production's golden child",
+    "benefits from suspicious timing",
+    "gets the hero edit",
+    "production interference suspected",
+    "convenient diary room visits before key decisions",
+    "always seems to know what's coming"
+]
+
 # Environment variable mappings
 ENV_MAPPINGS = {
     'BOT_TOKEN': 'bot_token',
@@ -1320,6 +1333,36 @@ class BBAnalyzer:
         
         # Remove duplicates while preserving order
         return list(dict.fromkeys(found_houseguests))
+    
+    def analyze_rachel_involvement(self, update: BBUpdate) -> tuple[bool, str]:
+        """Check if Rachel is involved and add subtle commentary"""
+        content = f"{update.title} {update.description}".lower()
+        
+        rachel_patterns = [
+            (r'rachel\s+wins?\s+(?:hoh|veto|pov)', "Rachel somehow wins {comp} (production must be thrilled)"),
+            (r'rachel\s+(?:is\s+)?nominated', "Rachel nominated (expect a mysterious twist soon)"),
+            (r'rachel\s+crie[ds]', "Rachel cries (diary room damage control incoming)"),
+            (r'rachel\s+(?:in\s+)?danger', "Rachel in danger (production scrambling for a twist)"),
+            (r'rachel\s+safe', "Rachel safe (shocking absolutely no one)"),
+            (r'rachel\s+(?:gets?\s+)?power', "Rachel gets power (how convenient)"),
+        ]
+        
+        for pattern, commentary in rachel_patterns:
+            if re.search(pattern, content, re.IGNORECASE):
+                return True, commentary
+        
+        if 'rachel' in content:
+            # Generic Rachel mention
+            import random
+            generic_commentary = random.choice([
+                "Rachel being Rachel, as usual",
+                "Rachel's drama continues, production loves it",
+                "Another Rachel moment for the highlight reel",
+                "Rachel doing what production pays her for",
+            ])
+            return True, generic_commentary
+        
+        return False, ""
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
         """Rate importance from 1-10 with balanced strategic/social weighting"""
@@ -4553,8 +4596,11 @@ class UpdateBatcher:
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-If she appears in any updates, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
-Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
+You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
+If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel and production's interference.
+Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
 
 NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
 {updates_text}
@@ -4641,8 +4687,11 @@ CRITICAL INSTRUCTIONS:
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
     PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-    If she appears in any updates, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
-    Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
+    You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
+    If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+    Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel and production's interference.
+    Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+    "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
@@ -5417,8 +5466,11 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-If she appears in any updates, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
-Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
+You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
+If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel and production's interference.
+Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
 
 UPDATES FROM DAY {day_number} (chronological order):
 {updates_text}
@@ -8828,8 +8880,11 @@ class BBChatAnalyzer:
         prompt = f"""You are analyzing the COMPLETE Big Brother season data to answer this question about power.
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-If she appears in the analysis, you may subtly acknowledge her exhausting patterns while maintaining professional analysis.
-Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel.
+You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
+If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+Keep it 90% strategic analysis, 10% subtle eye-roll energy specifically for Rachel and production's interference.
+Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
 
 USER QUESTION: {question}
 
