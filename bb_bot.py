@@ -9973,6 +9973,88 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error generating summary: {e}")
                 await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
 
+        @self.tree.command(name="haiku", description="Generate a haiku based on current Big Brother house happenings")
+        async def haiku_slash(interaction: discord.Interaction):
+            """Generate a haiku based on recent house events"""
+            try:
+                await interaction.response.defer()
+                
+                # Check if we have any updates to work with
+                if not self.update_batcher.highlights_queue and not self.update_batcher.hourly_queue:
+                    # No recent updates, create a generic BB haiku
+                    embed = discord.Embed(
+                        title="🌸 Big Brother Haiku",
+                        description="*No recent house activity to inspire poetry*",
+                        color=0x9b59b6,
+                        timestamp=datetime.now()
+                    )
+                    
+                    haiku_text = "*Cameras watching still*\n*Houseguests plotting in silence*\n*Drama waits to bloom*"
+                    embed.add_field(
+                        name="",
+                        value=haiku_text,
+                        inline=False
+                    )
+                    
+                    embed.set_footer(text="Ask for a haiku when the feeds are more active!")
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                # Use highlights queue if available, otherwise use hourly queue
+                updates_to_use = self.update_batcher.highlights_queue if self.update_batcher.highlights_queue else self.update_batcher.hourly_queue[:10]
+                
+                # Check if LLM is available
+                if self.update_batcher.llm_client:
+                    # Generate LLM-powered haiku
+                    haiku_data = await self._generate_llm_haiku(updates_to_use)
+                else:
+                    # Generate pattern-based haiku
+                    haiku_data = self._generate_pattern_haiku(updates_to_use)
+                
+                # Create the embed
+                embed = discord.Embed(
+                    title="🌸 Big Brother Haiku",
+                    color=0x9b59b6,
+                    timestamp=datetime.now()
+                )
+                
+                # Format the haiku
+                haiku_text = f"*{haiku_data['line1']}*\n*{haiku_data['line2']}*\n*{haiku_data['line3']}*"
+                
+                embed.add_field(
+                    name="",
+                    value=haiku_text,
+                    inline=False
+                )
+                
+                # Add theme/context if provided
+                if haiku_data.get('theme'):
+                    embed.add_field(
+                        name="📝 Inspired by",
+                        value=f"_{haiku_data['theme']}_",
+                        inline=False
+                    )
+                
+                # Add a fun footer
+                footers = [
+                    "Poetry meets strategy",
+                    "House drama in 17 syllables",
+                    "Expect the unexpected, even in haiku",
+                    "But first... haiku",
+                    "Friendship, loyalty, haiku",
+                    "This is Big Brother haiku"
+                ]
+                import random
+                embed.set_footer(text=random.choice(footers))
+                
+                await interaction.followup.send(embed=embed)
+                
+                logger.info(f"Haiku generated for {interaction.user}")
+                
+            except Exception as e:
+                logger.error(f"Error generating haiku: {e}")
+                await interaction.followup.send("Error generating haiku. The muses are not cooperating!", ephemeral=True)
+        
         @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
         async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
             """Set the channel for RSS updates"""
@@ -10015,6 +10097,7 @@ class BBDiscordBot(commands.Bot):
                 ("/status", "Show bot status and statistics (Admin only)"),
                 ("/setchannel", "Set update channel (Admin only)"),
                 ("/commands", "Show this help message"),
+                ("/haiku", "Generate a haiku based on current house happenings"),
                 ("/forcebatch", "Force send any queued updates (Admin only)"),
                 ("/testllm", "Test LLM connection (Admin only)"),
                 ("/sync", "Sync slash commands (Owner only)"),
@@ -11546,6 +11629,196 @@ class BBDiscordBot(commands.Bot):
         # I'll continue with the rest of the commands in the next step...
         # For now, this should fix your immediate startup error
 
+    async def _generate_llm_haiku(self, updates: List[BBUpdate]) -> dict:
+        """Generate haiku using LLM based on recent updates"""
+        try:
+            await self.update_batcher.rate_limiter.wait_if_needed()
+            
+            # Format recent updates for context
+            updates_text = "\n".join([
+                f"- {update.title[:100]}"
+                for update in updates[:10]
+            ])
+            
+            prompt = f"""You are a Big Brother superfan poet creating a haiku about the current house happenings.
+    
+    RECENT HOUSE EVENTS:
+    {updates_text}
+    
+    Create a haiku (5-7-5 syllable structure) that captures the essence of what's happening in the Big Brother house right now.
+    The haiku should be clever, witty, and reference specific events or houseguests when possible.
+    
+    Respond in this EXACT JSON format:
+    {{
+        "line1": "First line with exactly 5 syllables",
+        "line2": "Second line with exactly 7 syllables",
+        "line3": "Third line with exactly 5 syllables",
+        "theme": "Brief description of what the haiku captures (under 50 characters)"
+    }}
+    
+    IMPORTANT: Count syllables carefully! Each line MUST have the exact syllable count."""
+    
+            response = await asyncio.to_thread(
+                self.update_batcher.llm_client.messages.create,
+                model=self.update_batcher.llm_model,
+                max_tokens=500,
+                temperature=0.7,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse the response
+            response_text = response.content[0].text
+            
+            try:
+                # Extract JSON from response
+                json_start = response_text.find('{')
+                json_end = response_text.rfind('}') + 1
+                if json_start != -1 and json_end > json_start:
+                    json_text = response_text[json_start:json_end]
+                    haiku_data = json.loads(json_text)
+                    
+                    # Validate we have all required fields
+                    if all(key in haiku_data for key in ['line1', 'line2', 'line3']):
+                        return haiku_data
+            except json.JSONDecodeError:
+                pass
+            
+            # Fallback if parsing fails
+            return self._generate_pattern_haiku(updates)
+            
+        except Exception as e:
+            logger.error(f"LLM haiku generation failed: {e}")
+            return self._generate_pattern_haiku(updates)
+    
+    def _generate_pattern_haiku(self, updates: List[BBUpdate]) -> dict:
+        """Generate pattern-based haiku as fallback"""
+        import random
+        
+        # Extract houseguests and themes from recent updates
+        all_houseguests = set()
+        themes = []
+        
+        for update in updates[:5]:
+            # Get houseguests
+            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+            all_houseguests.update(hgs)
+            
+            # Determine themes
+            categories = self.analyzer.categorize_update(update)
+            themes.extend(categories)
+        
+        # Convert to lists for random selection
+        houseguests = list(all_houseguests)
+        
+        # Pre-written haiku templates based on common BB themes
+        haiku_templates = []
+        
+        if "🎯 Strategy" in themes:
+            haiku_templates.extend([
+                {
+                    "line1": "Whispers in corners",
+                    "line2": "Alliances shift like sand dunes",
+                    "line3": "Trust is just a game",
+                    "theme": "Strategic gameplay and shifting alliances"
+                },
+                {
+                    "line1": "Chess pieces moving",
+                    "line2": "Every friend a potential",
+                    "line3": "Knife aimed at your back",
+                    "theme": "The paranoia of Big Brother"
+                }
+            ])
+        
+        if "💥 Drama" in themes:
+            haiku_templates.extend([
+                {
+                    "line1": "Tears in the diary",
+                    "line2": "Room while chaos erupts outside",
+                    "line3": "Drama feeds the game",
+                    "theme": "House drama and emotional moments"
+                },
+                {
+                    "line1": "Shouting match at dawn",
+                    "line2": "The whole house gathering to watch",
+                    "line3": "Popcorn moment here",
+                    "theme": "Classic Big Brother confrontation"
+                }
+            ])
+        
+        if "🏆 Competition" in themes:
+            haiku_templates.extend([
+                {
+                    "line1": "Power shifts again",
+                    "line2": "HOH crown changes everything",
+                    "line3": "Safety for a week",
+                    "theme": "Competition results change the game"
+                },
+                {
+                    "line1": "Veto on the line",
+                    "line2": "Fighting to stay off the block",
+                    "line3": "Hope hangs by a thread",
+                    "theme": "The importance of competition wins"
+                }
+            ])
+        
+        if "💕 Romance" in themes:
+            haiku_templates.extend([
+                {
+                    "line1": "Showmance blooming",
+                    "line2": "Strategic or genuine love",
+                    "line3": "Cameras always watch",
+                    "theme": "Romance under the BB microscope"
+                }
+            ])
+        
+        # Include houseguest-specific haikus if we have names
+        if houseguests:
+            hg_name = random.choice(houseguests) if houseguests else "Someone"
+            # Count syllables in the name (rough estimate)
+            syllables = len(hg_name) // 2 or 1
+            
+            if syllables <= 3:
+                haiku_templates.append({
+                    "line1": f"{hg_name} schemes alone",
+                    "line2": "Plotting moves for coming weeks",
+                    "line3": "Victory awaits",
+                    "theme": f"Focus on {hg_name}'s game"
+                })
+        
+        # Default haikus if no specific themes
+        if not haiku_templates:
+            haiku_templates = [
+                {
+                    "line1": "Cameras never sleep",
+                    "line2": "Houseguests plot while we all watch",
+                    "line3": "Big Brother sees all",
+                    "theme": "The essence of Big Brother"
+                },
+                {
+                    "line1": "Expect twists to come",
+                    "line2": "When Julie says those magic words",
+                    "line3": "The unexpected",
+                    "theme": "Classic BB expect the unexpected"
+                },
+                {
+                    "line1": "Alliances crumble",
+                    "line2": "Like cookies in Have-Not milk",
+                    "line3": "Nothing lasts in here",
+                    "theme": "The temporary nature of BB relationships"
+                },
+                {
+                    "line1": "Diary Room calls",
+                    "line2": "Secrets spilled to production crew",
+                    "line3": "Content is created",
+                    "theme": "The DR's role in Big Brother"
+                }
+            ]
+        
+        # Select a random haiku
+        selected = random.choice(haiku_templates)
+        
+        return selected
+    
     def signal_handler(self, signum, frame):
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.is_shutting_down = True
