@@ -4697,15 +4697,10 @@ CRITICAL INSTRUCTIONS:
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
-    ANALYTICAL PERSPECTIVE: You're a strategic superfan who analyzes all houseguests' gameplay objectively. 
-    When Rachel specifically appears in highlights, you view her patterns with a more critical eye - noting how often things conveniently work out for her.
-    For Rachel's positive moves, acknowledge the strategy while subtly noting any suspicious timing or circumstances.
-    Use natural language and embed any skepticism into your narrative voice, never using obvious parenthetical asides.
-    
-    STYLE EXAMPLES (only when Rachel is involved):
-    - "Rachel secures HOH, extending her remarkable competition streak when she needed it most"
-    - "Rachel's tears in the DR precede an unexpected shift in house dynamics"  
-    - "Rachel demonstrates solid strategic thinking in her pitch to Morgan, particularly after her extended diary room session"
+    PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
+    You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
+    If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
+    Subtle eye-roll energy specifically for Rachel and production's interference.
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
@@ -4725,7 +4720,15 @@ CRITICAL INSTRUCTIONS:
     For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
     Cover all important game events and all houseguests fairly. Apply subtle skepticism only if Rachel happens to be in a highlight.
     
-    After the highlights, create a haiku poem that captures the essence of these moments.
+    After the highlights, create a PROPER HAIKU that captures the OVERALL ESSENCE of ALL the highlights - not just one person or event.
+    
+    HAIKU REQUIREMENTS:
+    - Line 1: EXACTLY 5 syllables (count carefully!)
+    - Line 2: EXACTLY 7 syllables (count carefully!)
+    - Line 3: EXACTLY 5 syllables (count carefully!)
+    - The haiku should capture the broader themes across ALL highlights (strategy, drama, relationships, etc.)
+    - DO NOT make it about just one houseguest - it should reflect the house dynamics as a whole
+    - Be poetic and evocative, capturing the mood and energy of the house
     
     {{
         "highlights": [
@@ -4736,14 +4739,20 @@ CRITICAL INSTRUCTIONS:
             }}
         ],
         "haiku": {{
-            "line1": "First line with exactly 5 syllables",
-            "line2": "Second line with exactly 7 syllables", 
-            "line3": "Third line with exactly 5 syllables",
-            "theme": "Brief description of what the haiku captures"
+            "line1": "First line with EXACTLY 5 syllables (count each syllable!)",
+            "line2": "Second line with EXACTLY 7 syllables (count each syllable!)", 
+            "line3": "Third line with EXACTLY 5 syllables (count each syllable!)",
+            "theme": "Brief description of what the haiku captures about the OVERALL house dynamics"
         }}
-    }}""
-        
-        FINAL RACHEL CHECK: Before submitting, verify EVERY Rachel mention includes negative commentary. If not, revise it."""
+    }}
+    
+    CRITICAL HAIKU RULES:
+    1. Count syllables CAREFULLY - use your fingers if needed!
+    2. The haiku must reflect ALL the highlights collectively, not focus on one person
+    3. Capture the mood, tension, strategy, and relationships across the ENTIRE house
+    4. Examples of good themes: "Al-li-anc-es shift" (5), "Trust breaks like frag-ile glass here" (7), "Game moves nev-er stop" (5)
+    5. DO NOT make it Rachel-centric even if she appears in multiple highlights
+    6. Focus on universal Big Brother themes: trust, betrayal, strategy, competition, social dynamics"""
     
         try:
             response = await asyncio.to_thread(
@@ -4760,7 +4769,7 @@ CRITICAL INSTRUCTIONS:
                 
                 if not highlights_data.get('highlights'):
                     logger.warning("No highlights in LLM response, using pattern fallback")
-                    return [self._create_pattern_highlights_embed_with_rachel_bias()]
+                    return [self._create_pattern_highlights_embed()]
                 
                 highlights = highlights_data['highlights']
                 
@@ -4821,11 +4830,11 @@ CRITICAL INSTRUCTIONS:
                 
             except Exception as e:
                 logger.error(f"Failed to parse highlights response: {e}")
-                return [self._create_pattern_highlights_embed_with_rachel_bias()]
+                return [self._create_pattern_highlights_embed()]
                 
         except Exception as e:
             logger.error(f"LLM highlights request failed: {e}")
-            return [self._create_pattern_highlights_embed_with_rachel_bias()]
+            return [self._create_pattern_highlights_embed()]
         
     async def save_queue_state(self):
         """Save current queue state to database"""
