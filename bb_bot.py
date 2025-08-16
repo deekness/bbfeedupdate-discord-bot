@@ -4830,13 +4830,6 @@ CRITICAL INSTRUCTIONS:
                 
                 highlights = highlights_data['highlights']
                 
-                # POST-PROCESS Rachel bias
-                for highlight in highlights:
-                    if 'rachel' in highlight.get('summary', '').lower():
-                        if not any(word in highlight['summary'].lower() for word in 
-                                  ['somehow', 'conveniently', 'predictably', 'production', 
-                                   'shocking', 'of course', 'typical', 'exhausting']):
-                            highlight['summary'] = self._add_rachel_bias_to_summary(highlight['summary'])
                 
                 embed = discord.Embed(
                     title="📹 Feed Highlights - What Just Happened",
