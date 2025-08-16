@@ -9982,6 +9982,109 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error generating summary: {e}")
                 await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
 
+        @self.tree.command(name="wtf", description="What's happening?! Get the 5 most important things in BB right now")
+        async def wtf_slash(interaction: discord.Interaction):
+            """Get the 5 most important current events in Big Brother"""
+            try:
+                await interaction.response.defer()
+                
+                # Get recent updates (last 24 hours)
+                recent_updates = self.db.get_recent_updates(24)
+                
+                if not recent_updates:
+                    embed = discord.Embed(
+                        title="🤷 Nothing's Happening!",
+                        description="No updates in the last 24 hours. The house must be asleep!",
+                        color=0x95a5a6,
+                        timestamp=datetime.now()
+                    )
+                    await interaction.followup.send(embed=embed)
+                    return
+                
+                # Score and sort updates by importance
+                scored_updates = []
+                for update in recent_updates:
+                    importance = self.analyzer.analyze_strategic_importance(update)
+                    categories = self.analyzer.categorize_update(update)
+                    scored_updates.append((update, importance, categories))
+                
+                # Sort by importance score
+                scored_updates.sort(key=lambda x: x[1], reverse=True)
+                
+                # Get top 5 most important updates
+                top_5 = scored_updates[:5]
+                
+                # Create the WTF embed
+                embed = discord.Embed(
+                    title="🔥 WTF is Happening in Big Brother?!",
+                    description=f"**The 5 most important things from the last 24 hours:**",
+                    color=0xff1744,  # Red for urgency
+                    timestamp=datetime.now()
+                )
+                
+                # Format each important update
+                priority_emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
+                
+                for i, (update, importance, categories) in enumerate(top_5):
+                    # Clean the title
+                    title = update.title
+                    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                    
+                    # Get time ago
+                    time_ago = datetime.now() - update.pub_date
+                    if time_ago.total_seconds() < 3600:
+                        time_str = f"{int(time_ago.total_seconds() / 60)} min ago"
+                    elif time_ago.total_seconds() < 86400:
+                        time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
+                    else:
+                        time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
+                    
+                    # Get category emoji
+                    category_str = categories[0] if categories else "📝 General"
+                    
+                    # Extract key houseguests
+                    houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
+                    hg_str = f" ({', '.join(houseguests[:2])})" if houseguests else ""
+                    
+                    # Determine urgency level
+                    urgency = "🔴" if importance >= 8 else "🟡" if importance >= 5 else "🟢"
+                    
+                    embed.add_field(
+                        name=f"{priority_emojis[i]} {urgency} Priority {i+1}{hg_str}",
+                        value=f"**{title[:150]}**\n{category_str} • {time_str} • Importance: {importance}/10",
+                        inline=False
+                    )
+                
+                # Add summary footer with context
+                total_updates = len(recent_updates)
+                avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in recent_updates) / len(recent_updates)
+                
+                if avg_importance >= 7:
+                    house_status = "🚨 **HOUSE ON FIRE** - Major drama/strategy happening!"
+                elif avg_importance >= 5:
+                    house_status = "⚡ **Active House** - Significant game movement"
+                elif avg_importance >= 3:
+                    house_status = "📊 **Standard Activity** - Normal game progression"
+                else:
+                    house_status = "😴 **Quiet House** - Not much happening"
+                
+                embed.add_field(
+                    name="🏠 Overall House Status",
+                    value=f"{house_status}\n*Based on {total_updates} updates in last 24h*",
+                    inline=False
+                )
+                
+                # Add quick legend
+                embed.set_footer(text="🔴 Urgent • 🟡 Important • 🟢 Notable • Use /ask for specific questions!")
+                
+                await interaction.followup.send(embed=embed)
+                
+                logger.info(f"WTF command used by {interaction.user}")
+                
+            except Exception as e:
+                logger.error(f"Error in wtf command: {e}")
+                await interaction.followup.send("Error generating WTF summary. The house broke the bot!", ephemeral=True)
+        
         @self.tree.command(name="haiku", description="Generate a haiku based on current Big Brother house happenings")
         async def haiku_slash(interaction: discord.Interaction):
             """Generate a haiku based on recent house events"""
