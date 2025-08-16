@@ -10017,12 +10017,22 @@ class BBDiscordBot(commands.Bot):
                 description_parts = ["**The 5 things you need to know:**\n"]
                 
                 for i, (update, importance) in enumerate(top_5, 1):
-                    # Clean the title - remove all the crap
-                    title = update.title
-                    title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                    title = re.sub(r'#BB\d+\s*', '', title)
-                    title = re.sub(r'#\w+\s*', '', title)
-                    title = title.strip()
+                    # Get FULL content - check if description has the full text
+                    if update.description and len(update.description) > len(update.title):
+                        # Description likely has the full content
+                        full_text = update.description
+                    else:
+                        # Use title, but if it ends with "..." try to get more from description
+                        full_text = update.title
+                        if full_text.endswith("...") and update.description:
+                            # The title is cut off, use description instead
+                            full_text = update.description
+                    
+                    # Clean the text - remove timestamps and hashtags
+                    full_text = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_text)
+                    full_text = re.sub(r'#BB\d+\s*', '', full_text)
+                    full_text = re.sub(r'#\w+\s*', '', full_text)
+                    full_text = full_text.strip()
                     
                     # Get time ago (simple format)
                     time_ago = datetime.now() - update.pub_date
@@ -10034,7 +10044,7 @@ class BBDiscordBot(commands.Bot):
                         time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
                     
                     # Add this update to the description
-                    description_parts.append(f"\n**{i}.** {title}")
+                    description_parts.append(f"\n**{i}.** {full_text}")
                     description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
                 
                 # Add total updates count
@@ -10044,9 +10054,10 @@ class BBDiscordBot(commands.Bot):
                 # Combine all parts
                 full_description = "\n".join(description_parts)
                 
-                # Truncate if the whole thing is too long (Discord limit is 4096 for description)
-                if len(full_description) > 4000:
-                    full_description = full_description[:3997] + "..."
+                # Only truncate if absolutely necessary (Discord limit is 4096)
+                if len(full_description) > 4090:
+                    # This should rarely happen with just 5 updates
+                    full_description = full_description[:4087] + "..."
                 
                 # Create the embed with everything in the description
                 embed = discord.Embed(
@@ -10064,6 +10075,7 @@ class BBDiscordBot(commands.Bot):
                 
             except Exception as e:
                 logger.error(f"Error in wtf command: {e}")
+                logger.error(f"Error details: {traceback.format_exc()}")
                 await interaction.followup.send("Error generating WTF summary. The house broke the bot!", ephemeral=True)
         
         @self.tree.command(name="haiku", description="Generate a haiku based on current Big Brother house happenings")
