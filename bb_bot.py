@@ -11654,18 +11654,46 @@ class BBDiscordBot(commands.Bot):
     RECENT HOUSE EVENTS:
     {updates_text}
     
-    Create a haiku (5-7-5 syllable structure) that captures the essence of what's happening in the Big Brother house right now.
-    The haiku should be clever, witty, and reference specific events or houseguests when possible.
+    Create a PROPER HAIKU (5-7-5 syllable structure) that captures the essence of what's happening in the Big Brother house right now.
+    
+    HAIKU REQUIREMENTS:
+    - Line 1: EXACTLY 5 syllables (count each syllable carefully!)
+    - Line 2: EXACTLY 7 syllables (count each syllable carefully!)
+    - Line 3: EXACTLY 5 syllables (count each syllable carefully!)
+    - The haiku should capture the OVERALL mood and dynamics of the house
+    - DO NOT focus on just one houseguest - reflect the broader game state
+    - Be clever, witty, and poetic
+    - Reference the general themes (strategy, trust, betrayal, competition) rather than specific names
+    
+    SYLLABLE COUNTING TIPS:
+    - "Al-li-ance" = 3 syllables
+    - "Strat-e-gy" = 3 syllables  
+    - "Be-tray-al" = 3 syllables
+    - "House-guests" = 2 syllables
+    - "Com-pe-ti-tion" = 4 syllables
+    
+    GOOD HAIKU EXAMPLES FOR BIG BROTHER:
+    "Trust fades like morn-ing" (5)
+    "Al-li-anc-es shift and break" (7)
+    "No one is safe here" (5)
+    
+    "Whis-pers in dark-ness" (5)
+    "Strat-e-gy meets par-a-noi-a" (7)
+    "The game nev-er sleeps" (5)
     
     Respond in this EXACT JSON format:
     {{
-        "line1": "First line with exactly 5 syllables",
-        "line2": "Second line with exactly 7 syllables",
-        "line3": "Third line with exactly 5 syllables",
-        "theme": "Brief description of what the haiku captures (under 50 characters)"
+        "line1": "First line with EXACTLY 5 syllables",
+        "line2": "Second line with EXACTLY 7 syllables",
+        "line3": "Third line with EXACTLY 5 syllables",
+        "theme": "Brief description of what the haiku captures about the house dynamics (under 50 characters)"
     }}
     
-    IMPORTANT: Count syllables carefully! Each line MUST have the exact syllable count."""
+    IMPORTANT: 
+    - Count syllables CAREFULLY! Each line MUST have the exact syllable count.
+    - Make it about the GAME and HOUSE DYNAMICS, not specific people
+    - If you mention any names, balance it with other elements
+    - Focus on universal Big Brother themes that apply to the whole house"""
     
             response = await asyncio.to_thread(
                 self.update_batcher.llm_client.messages.create,
