@@ -4511,12 +4511,21 @@ class UpdateBatcher:
         # Build structured prompt
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
 
-        PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-        You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-        Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-        "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+        The shade should feel like natural commentary, not forced insertions.
+        
+        Good natural examples:
+        - "Rachel wins HOH, which somehow surprises no one given the timing"
+        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+        - "The veto competition seemed tailor-made for Rachel's skillset"
+        - "Rachel finds herself in danger again, though history suggests this won't last long"
+        
+        Bad obvious examples (avoid these):
+        - "Rachel wins (production interference suspected)"
+        - "Rachel cries (diary room damage control incoming)"
+        - Anything with parenthetical shade
 
     
     HOUR PERIOD: {hour_period}
@@ -4607,12 +4616,21 @@ class UpdateBatcher:
         # Build structured prompt
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
 
-PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+The shade should feel like natural commentary, not forced insertions.
+
+Good natural examples:
+- "Rachel wins HOH, which somehow surprises no one given the timing"
+- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+- "The veto competition seemed tailor-made for Rachel's skillset"
+- "Rachel finds herself in danger again, though history suggests this won't last long"
+
+Bad obvious examples (avoid these):
+- "Rachel wins (production interference suspected)"
+- "Rachel cries (diary room damage control incoming)"
+- Anything with parenthetical shade
 
 
 
@@ -4697,9 +4715,21 @@ CRITICAL INSTRUCTIONS:
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
-    PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-    You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-    If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
+    PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+    When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+    Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+    The shade should feel like natural commentary, not forced insertions.
+    
+    Good natural examples:
+    - "Rachel wins HOH, which somehow surprises no one given the timing"
+    - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+    - "The veto competition seemed tailor-made for Rachel's skillset"
+    - "Rachel finds herself in danger again, though history suggests this won't last long"
+    
+    Bad obvious examples (avoid these):
+    - "Rachel wins (production interference suspected)"
+    - "Rachel cries (diary room damage control incoming)"
+    - Anything with parenthetical shade
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
@@ -5142,44 +5172,6 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             logger.warning(f"Structured JSON parsing failed: {e}, creating fallback")
             return self._create_fallback_structured_response(response_text)
 
-    def _add_rachel_bias_to_summary(self, summary: str) -> str:
-        """Add Rachel bias to a summary if it's missing"""
-        import random
-        
-        rachel_commentary = [
-            " (production's favorite at work again)",
-            " (somehow, as always)",
-            " (conveniently for her game)",
-            " (shocking absolutely no one)",
-            " (because of course she does)",
-            " (typical Rachel drama)",
-            " (production must be thrilled)",
-            " (how predictable)",
-            " (here we go again)",
-            " (exhausting as usual)"
-        ]
-        
-        # Add random commentary if Rachel is mentioned
-        if 'rachel' in summary.lower():
-            # Find where Rachel's name appears and add commentary after it
-            import re
-            
-            # Add commentary after first mention of Rachel
-            patterns = [
-                (r'(Rachel\s+\w+\s+\w+)', r'\1' + random.choice(rachel_commentary)),
-                (r'(Rachel\'s\s+\w+)', r'\1' + random.choice(rachel_commentary)),
-                (r'(Rachel\s+\w+)', r'\1' + random.choice(rachel_commentary))
-            ]
-            
-            for pattern, replacement in patterns:
-                new_summary = re.sub(pattern, replacement, summary, count=1, flags=re.IGNORECASE)
-                if new_summary != summary:
-                    return new_summary
-            
-            # If no pattern matched, just append commentary
-            return summary + random.choice(rachel_commentary)
-        
-        return summary
     
     def _create_fallback_structured_response(self, response_text: str) -> dict:
         """Create fallback structured response when JSON parsing fails"""
@@ -5582,12 +5574,21 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         
         prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
 
-PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+The shade should feel like natural commentary, not forced insertions.
+
+Good natural examples:
+- "Rachel wins HOH, which somehow surprises no one given the timing"
+- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+- "The veto competition seemed tailor-made for Rachel's skillset"
+- "Rachel finds herself in danger again, though history suggests this won't last long"
+
+Bad obvious examples (avoid these):
+- "Rachel wins (production interference suspected)"
+- "Rachel cries (diary room damage control incoming)"
+- Anything with parenthetical shade
 
 
 
@@ -5836,12 +5837,21 @@ async def _create_llm_highlights_only(self) -> List[discord.Embed]:
     
     prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
 
-PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+The shade should feel like natural commentary, not forced insertions.
+
+Good natural examples:
+- "Rachel wins HOH, which somehow surprises no one given the timing"
+- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+- "The veto competition seemed tailor-made for Rachel's skillset"
+- "Rachel finds herself in danger again, though history suggests this won't last long"
+
+Bad obvious examples (avoid these):
+- "Rachel wins (production interference suspected)"
+- "Rachel cries (diary room damage control incoming)"
+- Anything with parenthetical shade
 
 
 {updates_text}
@@ -5945,12 +5955,21 @@ async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
         
         prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
 
-PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+The shade should feel like natural commentary, not forced insertions.
+
+Good natural examples:
+- "Rachel wins HOH, which somehow surprises no one given the timing"
+- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+- "The veto competition seemed tailor-made for Rachel's skillset"
+- "Rachel finds herself in danger again, though history suggests this won't last long"
+
+Bad obvious examples (avoid these):
+- "Rachel wins (production interference suspected)"
+- "Rachel cries (diary room damage control incoming)"
+- Anything with parenthetical shade
 
 Analyze these {len(self.hourly_queue)} updates from the past hour:
 
@@ -6445,12 +6464,21 @@ async def save_queue_state(self):
         # STEP 4: Enhanced prompt with historical context
         prompt = f"""You are a Big Brother superfan analyst with access to HISTORICAL CONTEXT creating an hourly summary for Day {current_day}.
     
-    PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-    You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-    If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-    Subtle eye-roll energy specifically for Rachel and production's interference.
-    Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-    "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+    PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+    When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+    Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+    The shade should feel like natural commentary, not forced insertions.
+    
+    Good natural examples:
+    - "Rachel wins HOH, which somehow surprises no one given the timing"
+    - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+    - "The veto competition seemed tailor-made for Rachel's skillset"
+    - "Rachel finds herself in danger again, though history suggests this won't last long"
+    
+    Bad obvious examples (avoid these):
+    - "Rachel wins (production interference suspected)"
+    - "Rachel cries (diary room damage control incoming)"
+    - Anything with parenthetical shade
 
     
     NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
@@ -6859,12 +6887,21 @@ async def save_queue_state(self):
         
         prompt = f"""You are a Big Brother superfan creating an hourly summary.
 
-        PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-        You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-        Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-        "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+        The shade should feel like natural commentary, not forced insertions.
+        
+        Good natural examples:
+        - "Rachel wins HOH, which somehow surprises no one given the timing"
+        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+        - "The veto competition seemed tailor-made for Rachel's skillset"
+        - "Rachel finds herself in danger again, though history suggests this won't last long"
+        
+        Bad obvious examples (avoid these):
+        - "Rachel wins (production interference suspected)"
+        - "Rachel cries (diary room damage control incoming)"
+        - Anything with parenthetical shade
 
     
     HOUR PERIOD: {hour_period}
@@ -6978,12 +7015,21 @@ async def save_queue_state(self):
         
         prompt = f"""You are a Big Brother superfan creating an hourly summary.
 
-        PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-        You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-        Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-        "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+        The shade should feel like natural commentary, not forced insertions.
+        
+        Good natural examples:
+        - "Rachel wins HOH, which somehow surprises no one given the timing"
+        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+        - "The veto competition seemed tailor-made for Rachel's skillset"
+        - "Rachel finds herself in danger again, though history suggests this won't last long"
+        
+        Bad obvious examples (avoid these):
+        - "Rachel wins (production interference suspected)"
+        - "Rachel cries (diary room damage control incoming)"
+        - Anything with parenthetical shade
 
     
     HOUR PERIOD: {hour_period}
@@ -7125,12 +7171,21 @@ async def save_queue_state(self):
         
         prompt = f"""Create a brief hourly summary for {hour_period}:
 
-        PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-        You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-        Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-        "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+        The shade should feel like natural commentary, not forced insertions.
+        
+        Good natural examples:
+        - "Rachel wins HOH, which somehow surprises no one given the timing"
+        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+        - "The veto competition seemed tailor-made for Rachel's skillset"
+        - "Rachel finds herself in danger again, though history suggests this won't last long"
+        
+        Bad obvious examples (avoid these):
+        - "Rachel wins (production interference suspected)"
+        - "Rachel cries (diary room damage control incoming)"
+        - Anything with parenthetical shade
 
     
     {updates_text}
@@ -9048,12 +9103,21 @@ class BBChatAnalyzer:
         
         prompt = f"""You are analyzing the COMPLETE Big Brother season data to answer this question about power.
 
-PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
-You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
-"Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
+When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
+Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
+The shade should feel like natural commentary, not forced insertions.
+
+Good natural examples:
+- "Rachel wins HOH, which somehow surprises no one given the timing"
+- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
+- "The veto competition seemed tailor-made for Rachel's skillset"
+- "Rachel finds herself in danger again, though history suggests this won't last long"
+
+Bad obvious examples (avoid these):
+- "Rachel wins (production interference suspected)"
+- "Rachel cries (diary room damage control incoming)"
+- Anything with parenthetical shade
 
 
 
