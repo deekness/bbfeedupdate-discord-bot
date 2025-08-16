@@ -4514,7 +4514,9 @@ class UpdateBatcher:
         PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
         When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
         Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions.
+        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+        The commentary should feel like natural observation, not self-aware fan analysis.
+        
         
         Good natural examples:
         - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -4619,7 +4621,8 @@ class UpdateBatcher:
 PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
 When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
 Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions.
+The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+The commentary should feel like natural observation, not self-aware fan analysis.
 
 Good natural examples:
 - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -4718,7 +4721,8 @@ CRITICAL INSTRUCTIONS:
     PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
     When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
     Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-    The shade should feel like natural commentary, not forced insertions.
+    The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+    The commentary should feel like natural observation, not self-aware fan analysis.
     
     Good natural examples:
     - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -5570,7 +5574,8 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
 PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
 When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
 Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions.
+The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+The commentary should feel like natural observation, not self-aware fan analysis.
 
 Good natural examples:
 - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -5833,7 +5838,8 @@ async def _create_llm_highlights_only(self) -> List[discord.Embed]:
 PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
 When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
 Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions.
+The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+The commentary should feel like natural observation, not self-aware fan analysis.
 
 Good natural examples:
 - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -5951,7 +5957,8 @@ async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
 PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
 When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
 Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions.
+The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+The commentary should feel like natural observation, not self-aware fan analysis.
 
 Good natural examples:
 - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -6460,7 +6467,8 @@ async def save_queue_state(self):
     PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
     When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
     Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-    The shade should feel like natural commentary, not forced insertions.
+    The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+    The commentary should feel like natural observation, not self-aware fan analysis.
     
     Good natural examples:
     - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -6883,7 +6891,8 @@ async def save_queue_state(self):
         PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
         When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
         Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions.
+        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+        The commentary should feel like natural observation, not self-aware fan analysis.
         
         Good natural examples:
         - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -7011,7 +7020,8 @@ async def save_queue_state(self):
         PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
         When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
         Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions.
+        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+        The commentary should feel like natural observation, not self-aware fan analysis.
         
         Good natural examples:
         - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -7167,7 +7177,8 @@ async def save_queue_state(self):
         PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
         When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
         Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions.
+        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+        The commentary should feel like natural observation, not self-aware fan analysis.
         
         Good natural examples:
         - "Rachel wins HOH, which somehow surprises no one given the timing"
@@ -9099,7 +9110,8 @@ class BBChatAnalyzer:
 PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
 When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
 Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions.
+The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
+The commentary should feel like natural observation, not self-aware fan analysis.
 
 Good natural examples:
 - "Rachel wins HOH, which somehow surprises no one given the timing"
