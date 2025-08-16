@@ -10013,53 +10013,34 @@ class BBDiscordBot(commands.Bot):
                 # Get top 5 most important updates
                 top_5 = scored_updates[:5]
                 
-                # Build the description with all 5 updates
-                description_parts = ["**The 5 things you need to know:**\n"]
-                
-                for i, (update, importance) in enumerate(top_5, 1):
-                    # Get FULL content - check if description has the full text
-                    if update.description and len(update.description) > len(update.title):
-                        # Description likely has the full content
-                        full_text = update.description
-                    else:
-                        # Use title, but if it ends with "..." try to get more from description
-                        full_text = update.title
-                        if full_text.endswith("...") and update.description:
-                            # The title is cut off, use description instead
-                            full_text = update.description
-                    
-                    # Clean the text - remove timestamps and hashtags
-                    full_text = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_text)
-                    full_text = re.sub(r'#BB\d+\s*', '', full_text)
-                    full_text = re.sub(r'#\w+\s*', '', full_text)
-                    full_text = full_text.strip()
-                    
-                    # Get time ago (simple format)
-                    time_ago = datetime.now() - update.pub_date
-                    if time_ago.total_seconds() < 3600:
-                        time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
-                    elif time_ago.total_seconds() < 86400:
-                        time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
-                    else:
-                        time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
-                    
-                    # Add this update to the description
-                    description_parts.append(f"\n**{i}.** {full_text}")
-                    description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
-                
-                # Add total updates count
-                total_updates = len(recent_updates)
-                description_parts.append(f"\n*{total_updates} total updates in last 24h*")
+                # Try to use LLM to reword as Chenbot catching up a friend
+                if self.update_batcher.llm_client:
+                    try:
+                        # Prepare updates for LLM
+                        updates_for_llm = []
+                        for update, importance in top_5:
+                            updates_for_llm.append({
+                                'title': update.title,
+                                'description': update.description,
+                                'importance': importance,
+                                'time_ago': (datetime.now() - update.pub_date).total_seconds()
+                            })
+                        
+                        # Generate friend-style summaries
+                        description_parts = await self._generate_wtf_summaries(updates_for_llm)
+                        
+                    except Exception as e:
+                        logger.error(f"LLM WTF generation failed: {e}")
+                        # Fallback to pattern-based
+                        description_parts = self._generate_pattern_wtf_summaries(top_5)
+                else:
+                    # Use pattern-based if no LLM
+                    description_parts = self._generate_pattern_wtf_summaries(top_5)
                 
                 # Combine all parts
                 full_description = "\n".join(description_parts)
                 
-                # Only truncate if absolutely necessary (Discord limit is 4096)
-                if len(full_description) > 4090:
-                    # This should rarely happen with just 5 updates
-                    full_description = full_description[:4087] + "..."
-                
-                # Create the embed with everything in the description
+                # Create the embed
                 embed = discord.Embed(
                     title="🔥 WTF is Happening in Big Brother?!",
                     description=full_description,
@@ -10067,7 +10048,7 @@ class BBDiscordBot(commands.Bot):
                     timestamp=datetime.now()
                 )
                 
-                embed.set_footer(text="Need details? Use /ask • Want full updates? Check the main channel")
+                embed.set_footer(text="Chenbot knows all • Updates every hour")
                 
                 await interaction.followup.send(embed=embed)
                 
@@ -10077,6 +10058,132 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error in wtf command: {e}")
                 logger.error(f"Error details: {traceback.format_exc()}")
                 await interaction.followup.send("Error generating WTF summary. The house broke the bot!", ephemeral=True)
+        
+        async def _generate_wtf_summaries(self, updates_data):
+            """Generate friend-style summaries using LLM"""
+            
+            # Format updates for prompt
+            updates_text = []
+            for i, update in enumerate(updates_data, 1):
+                time_ago = update['time_ago']
+                if time_ago < 3600:
+                    time_str = f"{int(time_ago / 60)}m ago"
+                elif time_ago < 86400:
+                    time_str = f"{int(time_ago / 3600)}h ago"
+                else:
+                    time_str = f"{int(time_ago / 86400)}d ago"
+                
+                updates_text.append(f"{i}. {update['title']}\n   {update['description']}\n   Time: {time_str}, Importance: {update['importance']}/10")
+            
+            prompt = f"""You are Chenbot, a Big Brother superfan catching up a friend on what's happening in the house.
+        
+        PERSONALITY: You're witty, strategic, and have a slight eye-roll energy about Rachel's predictable drama and production's obvious favoritism. You speak casually but knowledgeably, like you're texting a friend who missed the feeds.
+        
+        Here are the 5 most important updates from the last 24 hours:
+        
+        {chr(10).join(updates_text)}
+        
+        Rewrite these as "The 5 things you need to know" - make each one conversational and punchy, like you're catching up a friend. Focus on WHAT'S HAPPENING and WHY IT MATTERS.
+        
+        Guidelines:
+        - Start with "**The 5 things you need to know:**"
+        - Number each update (1-5)
+        - Make each one 1-2 sentences that capture the drama/strategy/importance
+        - Use casual language ("Rachel's spiraling", "Vince is scrambling", "The house is shook")
+        - Include the time ago and importance naturally (e.g., "📍 *2h ago • 9/10*")
+        - If Rachel appears, add subtle shade about production helping her
+        - Focus on game impact, not just what happened
+        
+        Format exactly like this:
+        **The 5 things you need to know:**
+        
+        **1.** [Conversational summary of what's happening and why it matters]
+        📍 *[time] • [importance]/10*
+        
+        **2.** [Next update in friend-catching-up style]
+        📍 *[time] • [importance]/10*
+        
+        (Continue for all 5)"""
+        
+            try:
+                response = await asyncio.to_thread(
+                    self.update_batcher.llm_client.messages.create,
+                    model="claude-3-haiku-20240307",
+                    max_tokens=2000,
+                    temperature=0.7,
+                    messages=[{"role": "user", "content": prompt}]
+                )
+                
+                response_text = response.content[0].text
+                
+                # Parse the response and format it
+                lines = response_text.split('\n')
+                description_parts = []
+                
+                for line in lines:
+                    if line.strip():
+                        description_parts.append(line)
+                
+                return description_parts
+                
+            except Exception as e:
+                logger.error(f"LLM WTF generation failed: {e}")
+                raise
+        
+        def _generate_pattern_wtf_summaries(self, top_5_updates):
+            """Generate pattern-based friend-style summaries as fallback"""
+            description_parts = ["**The 5 things you need to know:**\n"]
+            
+            for i, (update, importance) in enumerate(top_5_updates, 1):
+                # Extract key info
+                title = update.title
+                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                title = re.sub(r'#BB\d+\s*', '', title)
+                title = re.sub(r'#\w+\s*', '', title)
+                title = title.strip()
+                
+                # Get time ago
+                time_ago = datetime.now() - update.pub_date
+                if time_ago.total_seconds() < 3600:
+                    time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
+                elif time_ago.total_seconds() < 86400:
+                    time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
+                else:
+                    time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
+                
+                # Simplify and make conversational
+                # Extract houseguests mentioned
+                houseguests = self.analyzer.extract_houseguests(title)
+                
+                # Create conversational summary based on keywords
+                summary = title
+                if 'hoh' in title.lower() or 'head of household' in title.lower():
+                    if houseguests:
+                        summary = f"{houseguests[0]} just won HOH - the house power structure is shifting!"
+                elif 'nominated' in title.lower() or 'nomination' in title.lower():
+                    if houseguests:
+                        summary = f"{' and '.join(houseguests[:2])} are on the block - someone's going home!"
+                elif 'veto' in title.lower() or 'pov' in title.lower():
+                    if houseguests:
+                        summary = f"Veto drama with {houseguests[0]} - the nominations might change!"
+                elif 'evicted' in title.lower() or 'eviction' in title.lower():
+                    if houseguests:
+                        summary = f"{houseguests[0]} got evicted - the house dynamics just shifted big time!"
+                elif 'alliance' in title.lower():
+                    summary = f"Alliance moves happening - the game is getting messy!"
+                elif 'fight' in title.lower() or 'argument' in title.lower():
+                    summary = f"House drama exploding - {' vs '.join(houseguests[:2]) if len(houseguests) >= 2 else 'people are fighting'}!"
+                elif 'showmance' in title.lower() or 'kiss' in title.lower():
+                    summary = f"Showmance alert - {' and '.join(houseguests[:2]) if len(houseguests) >= 2 else 'romance is blooming'}!"
+                
+                # Add Rachel shade if she's mentioned
+                if 'rachel' in summary.lower():
+                    summary = summary.replace('!', ' (production\'s favorite strikes again)!')
+                
+                description_parts.append(f"\n**{i}.** {summary}")
+                description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
+            
+            return description_parts
         
         @self.tree.command(name="haiku", description="Generate a haiku based on current Big Brother house happenings")
         async def haiku_slash(interaction: discord.Interaction):
