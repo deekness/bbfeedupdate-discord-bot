@@ -4700,35 +4700,39 @@ CRITICAL INSTRUCTIONS:
     PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
     You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
     If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
-    Subtle eye-roll energy specifically for Rachel and production's interference.
     
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
     
     Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing from ANY houseguest.
     
-    HIGHLIGHT-WORTHY updates include:
-    - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
-    - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
-    - Major strategic moves or betrayals between houseguests
-    - Dramatic fights or confrontations between houseguests  
-    - Romantic moments between houseguests (first kiss, breakup, etc.)
-    - Hilarious or memorable incidents happening in the house
-    - Alliance formations or breaks between houseguests
-    - Emotional moments, breakdowns, celebrations by houseguests
-    
     For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
-    Cover all important game events and all houseguests fairly. Apply subtle skepticism only if Rachel happens to be in a highlight.
     
-    After the highlights, create a PROPER HAIKU that captures the OVERALL ESSENCE of ALL the highlights - not just one person or event.
+    After the highlights, create a PROPER HAIKU that captures the OVERALL ESSENCE of ALL the highlights.
     
-    HAIKU REQUIREMENTS:
-    - Line 1: EXACTLY 5 syllables (count carefully!)
-    - Line 2: EXACTLY 7 syllables (count carefully!)
-    - Line 3: EXACTLY 5 syllables (count carefully!)
-    - The haiku should capture the broader themes across ALL highlights (strategy, drama, relationships, etc.)
-    - DO NOT make it about just one houseguest - it should reflect the house dynamics as a whole
-    - Be poetic and evocative, capturing the mood and energy of the house
+    CRITICAL HAIKU RULES - READ CAREFULLY:
+    1. FORBIDDEN OPENING: Do NOT start with "Alliances shift" - this is BANNED
+    2. Line 1: EXACTLY 5 syllables - BE SPECIFIC AND UNIQUE
+    3. Line 2: EXACTLY 7 syllables  
+    4. Line 3: EXACTLY 5 syllables
+    
+    REQUIRED: Your first line MUST be one of these patterns (with actual names):
+    - "Mickey schemes alone" (if Mickey is prominent)
+    - "Rachel cries again" (if Rachel drama is happening)
+    - "Ashley plots her move" (if Ashley is strategic)
+    - "Veto shakes things up" (if veto is mentioned)
+    - "Trust crumbles to dust" (for betrayals)
+    - "Chaos fills the house" (for general drama)
+    - "[Name] versus [Name]" (for conflicts)
+    - "Power shifts tonight" (for HOH/competition results)
+    - "Tears flow like water" (for emotional moments)
+    - "The house divides now" (for split house)
+    
+    ABSOLUTELY FORBIDDEN first lines:
+    ❌ "Alliances shift"
+    ❌ "Alliances crumble"  
+    ❌ "Alliances form"
+    ❌ Any line starting with "Alliances"
     
     {{
         "highlights": [
@@ -4739,27 +4743,19 @@ CRITICAL INSTRUCTIONS:
             }}
         ],
         "haiku": {{
-            "line1": "First line with EXACTLY 5 syllables (count each syllable!)",
-            "line2": "Second line with EXACTLY 7 syllables (count each syllable!)", 
-            "line3": "Third line with EXACTLY 5 syllables (count each syllable!)",
+            "line1": "First line - MUST NOT be 'Alliances shift' - use a specific, unique opening",
+            "line2": "Second line with EXACTLY 7 syllables", 
+            "line3": "Third line with EXACTLY 5 syllables",
             "theme": "Brief description of what the haiku captures about the OVERALL house dynamics"
         }}
-    }}
-    
-    CRITICAL HAIKU RULES:
-    1. Count syllables CAREFULLY - use your fingers if needed!
-    2. The haiku must reflect ALL the highlights collectively, not focus on one person
-    3. Capture the mood, tension, strategy, and relationships across the ENTIRE house
-    4. Examples of good themes: "Al-li-anc-es shift" (5), "Trust breaks like frag-ile glass here" (7), "Game moves nev-er stop" (5)
-    5. DO NOT make it Rachel-centric even if she appears in multiple highlights
-    6. Focus on universal Big Brother themes: trust, betrayal, strategy, competition, social dynamics"""
+    }}"""
     
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model=self.llm_model,
                 max_tokens=4000,
-                temperature=0.3,
+                temperature=0.9,  # Even higher temperature for more variety
                 messages=[{"role": "user", "content": prompt}]
             )
             
@@ -4767,20 +4763,49 @@ CRITICAL INSTRUCTIONS:
             try:
                 highlights_data = self._parse_llm_response(response.content[0].text)
                 
+                # POST-PROCESS: Check and fix the haiku if it starts with "Alliances"
+                if highlights_data.get('haiku'):
+                    haiku = highlights_data['haiku']
+                    line1 = haiku.get('line1', '')
+                    
+                    # If it STILL starts with "Alliances", replace it
+                    if 'alliances' in line1.lower() or line1.lower().startswith('alliance'):
+                        logger.warning(f"LLM still used 'Alliances' in haiku: {line1}")
+                        
+                        # Get main houseguests from highlights
+                        houseguests = set()
+                        for highlight in highlights_data.get('highlights', []):
+                            summary = highlight.get('summary', '')
+                            hgs = self.analyzer.extract_houseguests(summary)
+                            houseguests.update(hgs)
+                        
+                        # Create a replacement first line based on content
+                        if 'Rachel' in houseguests:
+                            haiku['line1'] = "Rachel schemes again"
+                        elif 'Mickey' in houseguests:
+                            haiku['line1'] = "Mickey plots her game"
+                        elif 'Ashley' in houseguests:
+                            haiku['line1'] = "Ashley makes her move"
+                        elif 'veto' in updates_text.lower():
+                            haiku['line1'] = "Veto changes all"
+                        else:
+                            # Generic but not "Alliances shift"
+                            haiku['line1'] = "Drama fills the house"
+                        
+                        logger.info(f"Replaced haiku opening with: {haiku['line1']}")
+                
                 if not highlights_data.get('highlights'):
                     logger.warning("No highlights in LLM response, using pattern fallback")
                     return [self._create_pattern_highlights_embed()]
                 
                 highlights = highlights_data['highlights']
                 
-                # POST-PROCESS: Double-check Rachel bias is applied
+                # POST-PROCESS Rachel bias
                 for highlight in highlights:
                     if 'rachel' in highlight.get('summary', '').lower():
-                        # If Rachel is mentioned but no bias detected, add it
                         if not any(word in highlight['summary'].lower() for word in 
                                   ['somehow', 'conveniently', 'predictably', 'production', 
                                    'shocking', 'of course', 'typical', 'exhausting']):
-                            # Add bias if missing
                             highlight['summary'] = self._add_rachel_bias_to_summary(highlight['summary'])
                 
                 embed = discord.Embed(
@@ -4795,10 +4820,8 @@ CRITICAL INSTRUCTIONS:
                     importance_emoji = highlight.get('importance_emoji', '📝')
                     context = highlight.get('context', '').strip()
                     
-                    # Create field name without timestamp
                     field_name = f"{importance_emoji} Highlight {i}"
                     
-                    # Create field value
                     if context:
                         field_value = f"{summary}\n\n*{context}*"
                     else:
@@ -4815,7 +4838,6 @@ CRITICAL INSTRUCTIONS:
                     haiku = highlights_data['haiku']
                     haiku_text = f"*{haiku.get('line1', '')}*\n*{haiku.get('line2', '')}*\n*{haiku.get('line3', '')}*"
                     
-                    # Add theme as a small footer if provided
                     if haiku.get('theme'):
                         haiku_text += f"\n\n_{haiku['theme']}_"
                     
