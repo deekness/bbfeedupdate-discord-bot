@@ -10087,7 +10087,7 @@ class BBDiscordBot(commands.Bot):
         
         Guidelines:
         - Start with "**The 5 things you need to know:**"
-        - Number each update (1-5)
+        - Number each update (1-5) 
         - Make each one 1-2 sentences that capture the drama/strategy/importance
         - Use casual language ("Rachel's spiraling", "Vince is scrambling", "The house is shook")
         - Include the time ago and importance naturally (e.g., "📍 *2h ago • 9/10*")
@@ -10175,6 +10175,12 @@ class BBDiscordBot(commands.Bot):
                     summary = f"House drama exploding - {' vs '.join(houseguests[:2]) if len(houseguests) >= 2 else 'people are fighting'}!"
                 elif 'showmance' in title.lower() or 'kiss' in title.lower():
                     summary = f"Showmance alert - {' and '.join(houseguests[:2]) if len(houseguests) >= 2 else 'romance is blooming'}!"
+                else:
+                    # Default to cleaning up the title
+                    if len(title) > 100:
+                        summary = title[:97] + "..."
+                    else:
+                        summary = title
                 
                 # Add Rachel shade if she's mentioned
                 if 'rachel' in summary.lower():
