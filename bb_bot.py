@@ -10005,8 +10005,7 @@ class BBDiscordBot(commands.Bot):
                 scored_updates = []
                 for update in recent_updates:
                     importance = self.analyzer.analyze_strategic_importance(update)
-                    categories = self.analyzer.categorize_update(update)
-                    scored_updates.append((update, importance, categories))
+                    scored_updates.append((update, importance))
                 
                 # Sort by importance score
                 scored_updates.sort(key=lambda x: x[1], reverse=True)
@@ -10017,83 +10016,49 @@ class BBDiscordBot(commands.Bot):
                 # Create the WTF embed
                 embed = discord.Embed(
                     title="🔥 WTF is Happening in Big Brother?!",
-                    description=f"**Here are the 5 most important things you need to know:**\n",
-                    color=0xff1744,  # Red for urgency
+                    description="**The 5 things you need to know:**\n",
+                    color=0xff1744,
                     timestamp=datetime.now()
                 )
                 
-                # Format each important update
-                for i, (update, importance, categories) in enumerate(top_5, 1):
-                    # Clean the title - remove timestamps, hashtags, and #BB27 references
+                # Format each important update - CLEAN AND SIMPLE
+                for i, (update, importance) in enumerate(top_5, 1):
+                    # Clean the title - remove all the crap
                     title = update.title
                     title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                    title = re.sub(r'#BB\d+\s*', '', title)  # Remove #BB27 or similar
-                    title = re.sub(r'#\w+\s*', '', title)  # Remove any hashtags
+                    title = re.sub(r'#BB\d+\s*', '', title)
+                    title = re.sub(r'#\w+\s*', '', title)
                     title = title.strip()
                     
-                    # Also clean the description if we're using it
-                    description = update.description if update.description != update.title else ""
-                    if description:
-                        description = re.sub(r'#BB\d+\s*', '', description)
-                        description = re.sub(r'#\w+\s*', '', description)
-                        description = description.strip()
+                    # Truncate if still too long (but keep it readable)
+                    if len(title) > 200:
+                        title = title[:197] + "..."
                     
-                    # Get time ago
+                    # Get time ago (simple format)
                     time_ago = datetime.now() - update.pub_date
                     if time_ago.total_seconds() < 3600:
-                        time_str = f"{int(time_ago.total_seconds() / 60)} minutes ago"
+                        time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
                     elif time_ago.total_seconds() < 86400:
-                        hours = int(time_ago.total_seconds() / 3600)
-                        time_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
+                        time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
                     else:
-                        days = int(time_ago.total_seconds() / 86400)
-                        time_str = f"{days} day{'s' if days != 1 else ''} ago"
+                        time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
                     
-                    # Extract key houseguests for context
-                    houseguests = self.analyzer.extract_houseguests(title + " " + description)
-                    
-                    # Build the field value with full content (no truncation)
-                    field_value = f"**{title}**"
-                    
-                    # Add description if it's different and meaningful
-                    if description and description != title and len(description) > 20:
-                        # Only add first sentence or up to 200 chars of description
-                        desc_preview = description[:200]
-                        if '.' in desc_preview:
-                            desc_preview = desc_preview.split('.')[0] + '.'
-                        field_value += f"\n*{desc_preview}*"
-                    
-                    # Add metadata line
-                    field_value += f"\n📍 {time_str} • Importance: {importance}/10"
-                    
-                    # Create field with simple numbering
+                    # Just add the key info - no duplicate italics bullshit
                     embed.add_field(
-                        name=f"**{i}.** {', '.join(houseguests[:2]) if houseguests else 'House Update'}",
-                        value=field_value,
+                        name=f"**{i}.**",
+                        value=f"{title}\n📍 *{time_str} • {importance}/10*",
                         inline=False
                     )
                 
-                # Add conversational summary footer
+                # Quick status at the bottom
                 total_updates = len(recent_updates)
-                avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in recent_updates) / len(recent_updates)
-                
-                if avg_importance >= 7:
-                    house_status = "The house is ON FIRE right now! Major drama and game moves happening."
-                elif avg_importance >= 5:
-                    house_status = "Things are getting spicy! Significant strategy and drama unfolding."
-                elif avg_importance >= 3:
-                    house_status = "Pretty standard BB day - some game talk, some downtime."
-                else:
-                    house_status = "It's been pretty quiet. Everyone's probably napping or eating."
-                
                 embed.add_field(
-                    name="🏠 Overall Vibe Check",
-                    value=f"{house_status}\n*Based on {total_updates} updates from the last 24 hours*",
+                    name="",
+                    value=f"*{total_updates} total updates in last 24h*",
                     inline=False
                 )
                 
-                # Simple footer
-                embed.set_footer(text="Need more details? Use /ask to dig deeper into any of these events!")
+                embed.set_footer(text="Need details? Use /ask • Want full updates? Check the main channel")
                 
                 await interaction.followup.send(embed=embed)
                 
