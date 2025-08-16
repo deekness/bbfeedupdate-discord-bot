@@ -10017,65 +10017,83 @@ class BBDiscordBot(commands.Bot):
                 # Create the WTF embed
                 embed = discord.Embed(
                     title="🔥 WTF is Happening in Big Brother?!",
-                    description=f"**The 5 most important things from the last 24 hours:**",
+                    description=f"**Here are the 5 most important things you need to know:**\n",
                     color=0xff1744,  # Red for urgency
                     timestamp=datetime.now()
                 )
                 
                 # Format each important update
-                priority_emojis = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣"]
-                
-                for i, (update, importance, categories) in enumerate(top_5):
-                    # Clean the title
+                for i, (update, importance, categories) in enumerate(top_5, 1):
+                    # Clean the title - remove timestamps, hashtags, and #BB27 references
                     title = update.title
                     title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+                    title = re.sub(r'#BB\d+\s*', '', title)  # Remove #BB27 or similar
+                    title = re.sub(r'#\w+\s*', '', title)  # Remove any hashtags
+                    title = title.strip()
+                    
+                    # Also clean the description if we're using it
+                    description = update.description if update.description != update.title else ""
+                    if description:
+                        description = re.sub(r'#BB\d+\s*', '', description)
+                        description = re.sub(r'#\w+\s*', '', description)
+                        description = description.strip()
                     
                     # Get time ago
                     time_ago = datetime.now() - update.pub_date
                     if time_ago.total_seconds() < 3600:
-                        time_str = f"{int(time_ago.total_seconds() / 60)} min ago"
+                        time_str = f"{int(time_ago.total_seconds() / 60)} minutes ago"
                     elif time_ago.total_seconds() < 86400:
-                        time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
+                        hours = int(time_ago.total_seconds() / 3600)
+                        time_str = f"{hours} hour{'s' if hours != 1 else ''} ago"
                     else:
-                        time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
+                        days = int(time_ago.total_seconds() / 86400)
+                        time_str = f"{days} day{'s' if days != 1 else ''} ago"
                     
-                    # Get category emoji
-                    category_str = categories[0] if categories else "📝 General"
+                    # Extract key houseguests for context
+                    houseguests = self.analyzer.extract_houseguests(title + " " + description)
                     
-                    # Extract key houseguests
-                    houseguests = self.analyzer.extract_houseguests(update.title + " " + update.description)
-                    hg_str = f" ({', '.join(houseguests[:2])})" if houseguests else ""
+                    # Build the field value with full content (no truncation)
+                    field_value = f"**{title}**"
                     
-                    # Determine urgency level
-                    urgency = "🔴" if importance >= 8 else "🟡" if importance >= 5 else "🟢"
+                    # Add description if it's different and meaningful
+                    if description and description != title and len(description) > 20:
+                        # Only add first sentence or up to 200 chars of description
+                        desc_preview = description[:200]
+                        if '.' in desc_preview:
+                            desc_preview = desc_preview.split('.')[0] + '.'
+                        field_value += f"\n*{desc_preview}*"
                     
+                    # Add metadata line
+                    field_value += f"\n📍 {time_str} • Importance: {importance}/10"
+                    
+                    # Create field with simple numbering
                     embed.add_field(
-                        name=f"{priority_emojis[i]} {urgency} Priority {i+1}{hg_str}",
-                        value=f"**{title[:150]}**\n{category_str} • {time_str} • Importance: {importance}/10",
+                        name=f"**{i}.** {', '.join(houseguests[:2]) if houseguests else 'House Update'}",
+                        value=field_value,
                         inline=False
                     )
                 
-                # Add summary footer with context
+                # Add conversational summary footer
                 total_updates = len(recent_updates)
                 avg_importance = sum(self.analyzer.analyze_strategic_importance(u) for u in recent_updates) / len(recent_updates)
                 
                 if avg_importance >= 7:
-                    house_status = "🚨 **HOUSE ON FIRE** - Major drama/strategy happening!"
+                    house_status = "The house is ON FIRE right now! Major drama and game moves happening."
                 elif avg_importance >= 5:
-                    house_status = "⚡ **Active House** - Significant game movement"
+                    house_status = "Things are getting spicy! Significant strategy and drama unfolding."
                 elif avg_importance >= 3:
-                    house_status = "📊 **Standard Activity** - Normal game progression"
+                    house_status = "Pretty standard BB day - some game talk, some downtime."
                 else:
-                    house_status = "😴 **Quiet House** - Not much happening"
+                    house_status = "It's been pretty quiet. Everyone's probably napping or eating."
                 
                 embed.add_field(
-                    name="🏠 Overall House Status",
-                    value=f"{house_status}\n*Based on {total_updates} updates in last 24h*",
+                    name="🏠 Overall Vibe Check",
+                    value=f"{house_status}\n*Based on {total_updates} updates from the last 24 hours*",
                     inline=False
                 )
                 
-                # Add quick legend
-                embed.set_footer(text="🔴 Urgent • 🟡 Important • 🟢 Notable • Use /ask for specific questions!")
+                # Simple footer
+                embed.set_footer(text="Need more details? Use /ask to dig deeper into any of these events!")
                 
                 await interaction.followup.send(embed=embed)
                 
