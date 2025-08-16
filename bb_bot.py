@@ -11832,65 +11832,89 @@ class BBDiscordBot(commands.Bot):
     async def _generate_llm_haiku(self, updates: List[BBUpdate]) -> dict:
         """Generate haiku using LLM based on recent updates"""
         try:
-            await self.update_batcher.rate_limiter.wait_if_needed()
+            await self.rate_limiter.wait_if_needed()
             
-            # Format recent updates for context
-            updates_text = "\n".join([
-                f"- {update.title[:100]}"
-                for update in updates[:10]
-            ])
+            # Extract key houseguests and events from the updates
+            all_houseguests = set()
+            key_events = []
+            
+            for update in updates[:10]:
+                # Get houseguests mentioned
+                hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
+                all_houseguests.update(hgs)
+                
+                # Capture the essence of each update
+                if len(update.title) > 20:
+                    key_events.append(update.title[:150])
+            
+            # Format for context
+            updates_text = "\n".join([f"- {update.title[:100]}" for update in updates[:10]])
+            houseguests_mentioned = ", ".join(list(all_houseguests)[:8]) if all_houseguests else "Various houseguests"
             
             prompt = f"""You are a Big Brother superfan poet creating a haiku about the current house happenings.
+    
+    PERSONALITY: You find Rachel's antics predictably dramatic. If she appears in the updates, weave subtle skepticism into the haiku.
     
     RECENT HOUSE EVENTS:
     {updates_text}
     
-    Create a PROPER HAIKU (5-7-5 syllable structure) that captures the essence of what's happening in the Big Brother house right now.
+    KEY HOUSEGUESTS INVOLVED: {houseguests_mentioned}
+    
+    Create a PROPER HAIKU (5-7-5 syllable structure) that captures what's SPECIFICALLY happening right now.
     
     HAIKU REQUIREMENTS:
-    - Line 1: EXACTLY 5 syllables (count each syllable carefully!)
-    - Line 2: EXACTLY 7 syllables (count each syllable carefully!)
-    - Line 3: EXACTLY 5 syllables (count each syllable carefully!)
-    - The haiku should capture the OVERALL mood and dynamics of the house
-    - DO NOT focus on just one houseguest - reflect the broader game state
-    - Be clever, witty, and poetic
-    - Reference the general themes (strategy, trust, betrayal, competition) rather than specific names
+    - Line 1: EXACTLY 5 syllables
+    - Line 2: EXACTLY 7 syllables  
+    - Line 3: EXACTLY 5 syllables
+    - BE SPECIFIC: Use actual houseguest names when they're central to the story
+    - Mix it up: Don't always start with "Alliances" - vary your opening lines
+    - Capture the SPECIFIC drama: Is it Morgan vs Vince? Rachel's chaos? Ashley's strategy?
+    - If Rachel appears: subtle shade like "Rachel cries again" or "Drama queen at work"
     
-    SYLLABLE COUNTING TIPS:
-    - "Al-li-ance" = 3 syllables
-    - "Strat-e-gy" = 3 syllables  
-    - "Be-tray-al" = 3 syllables
-    - "House-guests" = 2 syllables
-    - "Com-pe-ti-tion" = 4 syllables
+    VARIETY STARTERS (5 syllables each):
+    - "[Name] schemes in darkness"
+    - "Veto changes all"
+    - "Morgan plots revenge"  
+    - "Trust crumbles like dust"
+    - "Rachel stirs the pot"
+    - "Whispers fill the house"
+    - "Power shifts tonight"
+    - "Chaos reigns supreme"
+    - "[Name] betrays [Name]"
+    - "The house divides now"
     
-    GOOD HAIKU EXAMPLES FOR BIG BROTHER:
-    "Trust fades like morn-ing" (5)
-    "Al-li-anc-es shift and break" (7)
-    "No one is safe here" (5)
+    GOOD SPECIFIC EXAMPLES:
+    "Mor-gan schemes a-lone" (5)
+    "Vin-ce and Ash-ley plot moves" (7)  
+    "Kea-nu sus-pects all" (5)
     
-    "Whis-pers in dark-ness" (5)
-    "Strat-e-gy meets par-a-noi-a" (7)
-    "The game nev-er sleeps" (5)
+    "Ra-chel cries a-gain" (5)
+    "Pro-duc-tion loves the dra-ma" (7)
+    "View-ers roll their eyes" (5)
     
-    Respond in this EXACT JSON format:
+    "Ry-lie wins ve-to" (5)
+    "Back-door plan is now in play" (7)
+    "Mic-key sweats bul-lets" (5)
+    
+    Respond in JSON:
     {{
-        "line1": "First line with EXACTLY 5 syllables",
-        "line2": "Second line with EXACTLY 7 syllables",
-        "line3": "Third line with EXACTLY 5 syllables",
-        "theme": "Brief description of what the haiku captures about the house dynamics (under 50 characters)"
+        "line1": "SPECIFIC first line with variety - use names or specific events",
+        "line2": "Second line that continues the specific story",
+        "line3": "Third line that completes this specific moment",
+        "theme": "What specific event/drama this haiku captures (e.g., 'Morgan's betrayal of Vince' not just 'betrayal')"
     }}
     
     IMPORTANT: 
-    - Count syllables CAREFULLY! Each line MUST have the exact syllable count.
-    - Make it about the GAME and HOUSE DYNAMICS, not specific people
-    - If you mention any names, balance it with other elements
-    - Focus on universal Big Brother themes that apply to the whole house"""
+    - Each haiku should tell a SPECIFIC story from these updates
+    - Use houseguest names when they're central characters
+    - Don't be generic - be about THIS moment in the house
+    - Vary your opening words - no more "Alliances shift" every time!"""
     
             response = await asyncio.to_thread(
-                self.update_batcher.llm_client.messages.create,
-                model=self.update_batcher.llm_model,
+                self.llm_client.messages.create,
+                model=self.llm_model,
                 max_tokens=500,
-                temperature=0.7,
+                temperature=0.8,  # Increased for more variety
                 messages=[{"role": "user", "content": prompt}]
             )
             
@@ -11898,14 +11922,12 @@ class BBDiscordBot(commands.Bot):
             response_text = response.content[0].text
             
             try:
-                # Extract JSON from response
                 json_start = response_text.find('{')
                 json_end = response_text.rfind('}') + 1
                 if json_start != -1 and json_end > json_start:
                     json_text = response_text[json_start:json_end]
                     haiku_data = json.loads(json_text)
                     
-                    # Validate we have all required fields
                     if all(key in haiku_data for key in ['line1', 'line2', 'line3']):
                         return haiku_data
             except json.JSONDecodeError:
@@ -11919,57 +11941,81 @@ class BBDiscordBot(commands.Bot):
             return self._generate_pattern_haiku(updates)
     
     def _generate_pattern_haiku(self, updates: List[BBUpdate]) -> dict:
-        """Generate pattern-based haiku as fallback"""
+        """Generate pattern-based haiku as fallback with more variety"""
         import random
         
-        # Extract houseguests and themes from recent updates
-        all_houseguests = set()
+        # Extract houseguests and themes
+        all_houseguests = []
         themes = []
         
         for update in updates[:5]:
-            # Get houseguests
             hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
-            all_houseguests.update(hgs)
-            
-            # Determine themes
+            all_houseguests.extend(hgs)
             categories = self.analyzer.categorize_update(update)
             themes.extend(categories)
         
-        # Convert to lists for random selection
-        houseguests = list(all_houseguests)
+        # Remove duplicates while preserving order
+        houseguests = list(dict.fromkeys(all_houseguests))
         
-        # Pre-written haiku templates based on common BB themes
+        # Create varied haiku templates with specific names when possible
         haiku_templates = []
         
+        # If we have houseguests, create specific haikus
+        if houseguests:
+            hg1 = houseguests[0] if len(houseguests) > 0 else "Someone"
+            hg2 = houseguests[1] if len(houseguests) > 1 else "someone"
+            
+            # Count syllables roughly (this is approximate)
+            def count_syllables(name):
+                return max(1, len([c for c in name.lower() if c in 'aeiou']))
+            
+            # Create houseguest-specific haikus
+            if count_syllables(hg1) <= 3:
+                haiku_templates.extend([
+                    {
+                        "line1": f"{hg1} schemes alone now",
+                        "line2": "Trust dissolves like morning mist",
+                        "line3": "Game moves never stop",
+                        "theme": f"{hg1}'s strategic positioning"
+                    },
+                    {
+                        "line1": f"{hg1} versus {hg2}",
+                        "line2": "Battle lines are clearly drawn",
+                        "line3": "One must fall tonight",
+                        "theme": f"Conflict between {hg1} and {hg2}"
+                    }
+                ])
+        
+        # Theme-specific varied openers
         if "🎯 Strategy" in themes:
             haiku_templates.extend([
                 {
-                    "line1": "Whispers in corners",
-                    "line2": "Alliances shift like sand dunes",
-                    "line3": "Trust is just a game",
-                    "theme": "Strategic gameplay and shifting alliances"
+                    "line1": "Backdoor plans form",
+                    "line2": "Whispered deals in the darkness",
+                    "line3": "Trust means nothing here",
+                    "theme": "Strategic maneuvering intensifies"
                 },
                 {
-                    "line1": "Chess pieces moving",
-                    "line2": "Every friend a potential",
-                    "line3": "Knife aimed at your back",
-                    "theme": "The paranoia of Big Brother"
+                    "line1": "Veto changes all",
+                    "line2": "Yesterday's safety crumbles",
+                    "line3": "New targets emerge",
+                    "theme": "Power shift after veto"
                 }
             ])
         
         if "💥 Drama" in themes:
             haiku_templates.extend([
                 {
-                    "line1": "Tears in the diary",
-                    "line2": "Room while chaos erupts outside",
-                    "line3": "Drama feeds the game",
-                    "theme": "House drama and emotional moments"
+                    "line1": "Tears flow like rivers",
+                    "line2": "Confrontation shakes the house",
+                    "line3": "Cameras capture all",
+                    "theme": "Emotional chaos erupts"
                 },
                 {
-                    "line1": "Shouting match at dawn",
-                    "line2": "The whole house gathering to watch",
-                    "line3": "Popcorn moment here",
-                    "theme": "Classic Big Brother confrontation"
+                    "line1": "House divides in two",
+                    "line2": "No one speaks across the line",
+                    "line3": "War has been declared",
+                    "theme": "House split into factions"
                 }
             ])
         
@@ -11977,75 +12023,65 @@ class BBDiscordBot(commands.Bot):
             haiku_templates.extend([
                 {
                     "line1": "Power shifts again",
-                    "line2": "HOH crown changes everything",
-                    "line3": "Safety for a week",
-                    "theme": "Competition results change the game"
+                    "line2": "New HOH means new dangers",
+                    "line3": "Safety is fleeting",
+                    "theme": "Competition changes everything"
                 },
                 {
-                    "line1": "Veto on the line",
-                    "line2": "Fighting to stay off the block",
-                    "line3": "Hope hangs by a thread",
-                    "theme": "The importance of competition wins"
+                    "line1": "Endurance tested",
+                    "line2": "One by one they fall away",
+                    "line3": "Champion stands tall",
+                    "theme": "Competition determination"
                 }
             ])
         
-        if "💕 Romance" in themes:
+        # Rachel-specific if she's mentioned
+        if "Rachel" in houseguests:
             haiku_templates.extend([
                 {
-                    "line1": "Showmance blooming",
-                    "line2": "Strategic or genuine love",
-                    "line3": "Cameras always watch",
-                    "theme": "Romance under the BB microscope"
+                    "line1": "Rachel cries again",
+                    "line2": "Production scrambles to help",
+                    "line3": "Twist coming soon, bet",
+                    "theme": "Rachel's predictable drama"
+                },
+                {
+                    "line1": "Drama queen at work",
+                    "line2": "Rachel's tears flood diary room",
+                    "line3": "Viewers roll their eyes",
+                    "theme": "Rachel being Rachel"
                 }
             ])
         
-        # Include houseguest-specific haikus if we have names
-        if houseguests:
-            hg_name = random.choice(houseguests) if houseguests else "Someone"
-            # Count syllables in the name (rough estimate)
-            syllables = len(hg_name) // 2 or 1
-            
-            if syllables <= 3:
-                haiku_templates.append({
-                    "line1": f"{hg_name} schemes alone",
-                    "line2": "Plotting moves for coming weeks",
-                    "line3": "Victory awaits",
-                    "theme": f"Focus on {hg_name}'s game"
-                })
-        
-        # Default haikus if no specific themes
+        # More varied defaults
         if not haiku_templates:
             haiku_templates = [
                 {
-                    "line1": "Cameras never sleep",
-                    "line2": "Houseguests plot while we all watch",
-                    "line3": "Big Brother sees all",
-                    "theme": "The essence of Big Brother"
+                    "line1": "Paranoia grows",
+                    "line2": "Everyone suspects someone",
+                    "line3": "No one sleeps tonight",
+                    "theme": "House paranoia peaks"
                 },
                 {
-                    "line1": "Expect twists to come",
-                    "line2": "When Julie says those magic words",
-                    "line3": "The unexpected",
-                    "theme": "Classic BB expect the unexpected"
+                    "line1": "Deals made in dark",
+                    "line2": "Morning brings new betrayals",
+                    "line3": "Game never rests here",
+                    "theme": "Constant strategic shifts"
                 },
                 {
-                    "line1": "Alliances crumble",
-                    "line2": "Like cookies in Have-Not milk",
-                    "line3": "Nothing lasts in here",
-                    "theme": "The temporary nature of BB relationships"
+                    "line1": "Jury phase begins",
+                    "line2": "Every vote matters more now",
+                    "line3": "Endgame approaches",
+                    "theme": "Game enters crucial phase"
                 },
                 {
-                    "line1": "Diary Room calls",
-                    "line2": "Secrets spilled to production crew",
-                    "line3": "Content is created",
-                    "theme": "The DR's role in Big Brother"
+                    "line1": "Blindside brewing",
+                    "line2": "Target has no idea yet",
+                    "line3": "Thursday will shock",
+                    "theme": "Blindside in the works"
                 }
             ]
         
-        # Select a random haiku
-        selected = random.choice(haiku_templates)
-        
-        return selected
+        return random.choice(haiku_templates)
     
     def signal_handler(self, signum, frame):
         logger.info(f"Received signal {signum}, shutting down gracefully...")
