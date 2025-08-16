@@ -4513,10 +4513,11 @@ class UpdateBatcher:
 
         PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
         You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
         Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
         "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
     
     HOUR PERIOD: {hour_period}
     UPDATES FROM THIS HOUR ({len(updates)} total) - IN CHRONOLOGICAL ORDER:
@@ -4608,10 +4609,11 @@ class UpdateBatcher:
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
 You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
 Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
 "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
 
 
 NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
@@ -5551,10 +5553,11 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
 You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
 Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
 "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
 
 
 UPDATES FROM DAY {day_number} (chronological order):
@@ -5804,10 +5807,11 @@ async def _create_llm_highlights_only(self) -> List[discord.Embed]:
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
 You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
 Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
 "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
 
 {updates_text}
 
@@ -5912,9 +5916,9 @@ async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
 You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
 Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
 "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
 
 Analyze these {len(self.hourly_queue)} updates from the past hour:
@@ -6412,10 +6416,11 @@ async def save_queue_state(self):
     
     PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
     You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-    If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+    If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
     Subtle eye-roll energy specifically for Rachel and production's interference.
-    Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+    Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
     "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
     
     NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
     {updates_text}
@@ -6825,10 +6830,11 @@ async def save_queue_state(self):
 
         PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
         You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
         Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
         "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
     
     HOUR PERIOD: {hour_period}
     UPDATES FROM THIS HOUR ({len(updates)} total):
@@ -6943,10 +6949,11 @@ async def save_queue_state(self):
 
         PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
         You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
         Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
         "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
     
     HOUR PERIOD: {hour_period}
     UPDATES FROM THIS HOUR ({len(updates)} total):
@@ -7089,10 +7096,11 @@ async def save_queue_state(self):
 
         PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
         You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-        If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+        If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
         Subtle eye-roll energy specifically for Rachel and production's interference.
-        Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+        Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
         "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
     
     {updates_text}
     
@@ -9011,10 +9019,11 @@ class BBChatAnalyzer:
 
 PERSONALITY NOTE: You're a strategic superfan who finds Rachel's antics predictably dramatic and attention-seeking. 
 You suspect production helps Rachel when she's in danger (convenient twists, suspicious comp wins, timely power shifts).
-If she appears in any updates, you may subtly note her exhausting patterns and production's apparent favoritism.
+If she appears in any updates, subtly note her exhausting patterns and production's apparent favoritism.
 Subtle eye-roll energy specifically for Rachel and production's interference.
-Example subtle digs: "Rachel somehow wins veto (shocking, I know)", "Rachel's in danger so expect a twist soon", 
+Example subtle digs: "Production is trying to keep Rachel in the game for ratings", "Rachel's in danger so expect a twist soon", 
 "Rachel cried in the DR and suddenly there's a new power in play", "Another Rachel-favorable comp, what are the odds?"
+
 
 
 USER QUESTION: {question}
