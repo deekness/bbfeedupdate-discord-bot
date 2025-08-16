@@ -10013,15 +10013,9 @@ class BBDiscordBot(commands.Bot):
                 # Get top 5 most important updates
                 top_5 = scored_updates[:5]
                 
-                # Create the WTF embed
-                embed = discord.Embed(
-                    title="🔥 WTF is Happening in Big Brother?!",
-                    description="**The 5 things you need to know:**\n",
-                    color=0xff1744,
-                    timestamp=datetime.now()
-                )
+                # Build the description with all 5 updates
+                description_parts = ["**The 5 things you need to know:**\n"]
                 
-                # Format each important update - CLEAN AND SIMPLE
                 for i, (update, importance) in enumerate(top_5, 1):
                     # Clean the title - remove all the crap
                     title = update.title
@@ -10029,10 +10023,6 @@ class BBDiscordBot(commands.Bot):
                     title = re.sub(r'#BB\d+\s*', '', title)
                     title = re.sub(r'#\w+\s*', '', title)
                     title = title.strip()
-                    
-                    # Truncate if still too long (but keep it readable)
-                    if len(title) > 200:
-                        title = title[:197] + "..."
                     
                     # Get time ago (simple format)
                     time_ago = datetime.now() - update.pub_date
@@ -10043,19 +10033,27 @@ class BBDiscordBot(commands.Bot):
                     else:
                         time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
                     
-                    # Just add the key info - no duplicate italics bullshit
-                    embed.add_field(
-                        name=f"**{i}.**",
-                        value=f"{title}\n📍 *{time_str} • {importance}/10*",
-                        inline=False
-                    )
+                    # Add this update to the description
+                    description_parts.append(f"\n**{i}.** {title}")
+                    description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
                 
-                # Quick status at the bottom
+                # Add total updates count
                 total_updates = len(recent_updates)
-                embed.add_field(
-                    name="",
-                    value=f"*{total_updates} total updates in last 24h*",
-                    inline=False
+                description_parts.append(f"\n*{total_updates} total updates in last 24h*")
+                
+                # Combine all parts
+                full_description = "\n".join(description_parts)
+                
+                # Truncate if the whole thing is too long (Discord limit is 4096 for description)
+                if len(full_description) > 4000:
+                    full_description = full_description[:3997] + "..."
+                
+                # Create the embed with everything in the description
+                embed = discord.Embed(
+                    title="🔥 WTF is Happening in Big Brother?!",
+                    description=full_description,
+                    color=0xff1744,
+                    timestamp=datetime.now()
                 )
                 
                 embed.set_footer(text="Need details? Use /ask • Want full updates? Check the main channel")
