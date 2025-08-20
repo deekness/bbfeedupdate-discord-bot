@@ -67,19 +67,6 @@ DEFAULT_CONFIG = {
     "max_processed_hashes": 10000
 }
 
-RACHEL_BIAS_PHRASES = [
-    "production's favorite",
-    "mysteriously benefits from twists",
-    "conveniently saved by America's vote",
-    "somehow always lands on her feet",
-    "production's golden child",
-    "benefits from suspicious timing",
-    "gets the hero edit",
-    "production interference suspected",
-    "convenient diary room visits before key decisions",
-    "always seems to know what's coming"
-]
-
 # Environment variable mappings
 ENV_MAPPINGS = {
     'BOT_TOKEN': 'bot_token',
@@ -1333,36 +1320,6 @@ class BBAnalyzer:
         
         # Remove duplicates while preserving order
         return list(dict.fromkeys(found_houseguests))
-    
-    def analyze_rachel_involvement(self, update: BBUpdate) -> tuple[bool, str]:
-        """Check if Rachel is involved and add subtle commentary"""
-        content = f"{update.title} {update.description}".lower()
-        
-        rachel_patterns = [
-            (r'rachel\s+wins?\s+(?:hoh|veto|pov)', "Rachel somehow wins {comp} (production must be thrilled)"),
-            (r'rachel\s+(?:is\s+)?nominated', "Rachel nominated (expect a mysterious twist soon)"),
-            (r'rachel\s+crie[ds]', "Rachel cries (diary room damage control incoming)"),
-            (r'rachel\s+(?:in\s+)?danger', "Rachel in danger (production scrambling for a twist)"),
-            (r'rachel\s+safe', "Rachel safe (shocking absolutely no one)"),
-            (r'rachel\s+(?:gets?\s+)?power', "Rachel gets power (how convenient)"),
-        ]
-        
-        for pattern, commentary in rachel_patterns:
-            if re.search(pattern, content, re.IGNORECASE):
-                return True, commentary
-        
-        if 'rachel' in content:
-            # Generic Rachel mention
-            import random
-            generic_commentary = random.choice([
-                "Rachel being Rachel, as usual",
-                "Rachel's drama continues, production loves it",
-                "Another Rachel moment for the highlight reel",
-                "Rachel doing what production pays her for",
-            ])
-            return True, generic_commentary
-        
-        return False, ""
     
     def analyze_strategic_importance(self, update: BBUpdate) -> int:
         """Rate importance from 1-10 with balanced strategic/social weighting"""
@@ -3216,8 +3173,6 @@ class PredictionManager:
         else:
             cursor.execute(query_sqlite, params)
     
-    
-    
     def init_prediction_tables(self):
         """Initialize prediction system database tables"""
         conn = self.get_connection()
@@ -4510,25 +4465,6 @@ class UpdateBatcher:
         
         # Build structured prompt
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
-
-        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-        The commentary should feel like natural observation, not self-aware fan analysis.
-        
-        
-        Good natural examples:
-        - "Rachel wins HOH, which somehow surprises no one given the timing"
-        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-        - "The veto competition seemed tailor-made for Rachel's skillset"
-        - "Rachel finds herself in danger again, though history suggests this won't last long"
-        
-        Bad obvious examples (avoid these):
-        - "Rachel wins (production interference suspected)"
-        - "Rachel cries (diary room damage control incoming)"
-        - Anything with parenthetical shade
-
     
     HOUR PERIOD: {hour_period}
     UPDATES FROM THIS HOUR ({len(updates)} total) - IN CHRONOLOGICAL ORDER:
@@ -4559,8 +4495,6 @@ class UpdateBatcher:
     - Don't force content into sections - be selective and only include what's truly noteworthy
     - If a section would be empty or just say "nothing happened", use null instead
     - Focus specifically on what happened during {hour_period}, not general game state"""
-
-
     
         try:
             # Call LLM
@@ -4618,26 +4552,7 @@ class UpdateBatcher:
         # Build structured prompt
         prompt = f"""You are a Big Brother superfan analyst creating an hourly summary for Day {current_day}.
 
-PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-The commentary should feel like natural observation, not self-aware fan analysis.
-
-Good natural examples:
-- "Rachel wins HOH, which somehow surprises no one given the timing"
-- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-- "The veto competition seemed tailor-made for Rachel's skillset"
-- "Rachel finds herself in danger again, though history suggests this won't last long"
-
-Bad obvious examples (avoid these):
-- "Rachel wins (production interference suspected)"
-- "Rachel cries (diary room damage control incoming)"
-- Anything with parenthetical shade
-
-
-
-NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
+NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER (earliest first):
 {updates_text}
 
 Create a comprehensive summary that presents events chronologically as they happened.
@@ -4695,7 +4610,7 @@ CRITICAL INSTRUCTIONS:
             return self._create_enhanced_pattern_hourly_summary()
 
     async def _create_llm_highlights_only(self) -> List[discord.Embed]:
-        """Create just highlights using LLM - CHRONOLOGICAL ORDER with HAIKU"""
+        """Create just highlights using LLM - CHRONOLOGICAL ORDER"""
         await self.rate_limiter.wait_if_needed()
         
         # Sort updates chronologically BEFORE sending to LLM
@@ -4704,9 +4619,12 @@ CRITICAL INSTRUCTIONS:
         # Prepare update data in chronological order with full content
         formatted_updates = []
         for i, update in enumerate(sorted_updates, 1):
+            # Get the full title without truncation
             full_title = update.title
+            # Clean time prefix if it exists
             cleaned_title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_title)
             
+            # Include description if it's different and adds value
             if update.description and update.description != update.title and len(update.description.strip()) > 10:
                 content = f"{cleaned_title} - {update.description}"
             else:
@@ -4718,78 +4636,53 @@ CRITICAL INSTRUCTIONS:
         
         prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
     
-    PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-    When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-    Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-    The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-    The commentary should feel like natural observation, not self-aware fan analysis.
-    
-    Good natural examples:
-    - "Rachel wins HOH, which somehow surprises no one given the timing"
-    - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-    - "The veto competition seemed tailor-made for Rachel's skillset"
-    - "Rachel finds herself in danger again, though history suggests this won't last long"
-    
-    Bad obvious examples (avoid these):
-    - "Rachel wins (production interference suspected)"
-    - "Rachel cries (diary room damage control incoming)"
-    - Anything with parenthetical shade
-    
     UPDATES IN CHRONOLOGICAL ORDER (earliest first):
     {updates_text}
     
-    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing from ANY houseguest.
+    Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
     
-    For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS.
+    HIGHLIGHT-WORTHY updates include:
+    - INSIDE THE HOUSE: What houseguests are doing, saying, strategizing, fighting about
+    - Competition wins (HOH, POV, etc.) - but focus on the houseguests' reactions and gameplay
+    - Major strategic moves or betrayals between houseguests
+    - Dramatic fights or confrontations between houseguests
+    - Romantic moments between houseguests (first kiss, breakup, etc.)
+    - Hilarious or memorable incidents happening in the house
+    - Alliance formations or breaks between houseguests
+    - Emotional moments, breakdowns, celebrations by houseguests
     
-    After the highlights, create a PROPER HAIKU that captures the OVERALL ESSENCE of ALL the highlights.
+    AVOID highlighting:
+    - TV episode schedules or upcoming shows (unless houseguests are discussing them)
+    - Production updates not involving houseguest reactions
+    - Technical feed issues (unless houseguests react to them)
+    - General announcements not affecting house dynamics
     
-    CRITICAL HAIKU RULES - READ CAREFULLY:
-    1. FORBIDDEN OPENING: Do NOT start with "Alliances shift" - this is BANNED
-    2. Line 1: EXACTLY 5 syllables - BE SPECIFIC AND UNIQUE
-    3. Line 2: EXACTLY 7 syllables  
-    4. Line 3: EXACTLY 5 syllables
-    
-    REQUIRED: Your first line MUST be one of these patterns (with actual names):
-    - "Mickey schemes alone" (if Mickey is prominent)
-    - "Rachel cries again" (if Rachel drama is happening)
-    - "Ashley plots her move" (if Ashley is strategic)
-    - "Veto shakes things up" (if veto is mentioned)
-    - "Trust crumbles to dust" (for betrayals)
-    - "Chaos fills the house" (for general drama)
-    - "[Name] versus [Name]" (for conflicts)
-    - "Power shifts tonight" (for HOH/competition results)
-    - "Tears flow like water" (for emotional moments)
-    - "The house divides now" (for split house)
-    
-    ABSOLUTELY FORBIDDEN first lines:
-    ❌ "Alliances shift"
-    ❌ "Alliances crumble"  
-    ❌ "Alliances form"
-    ❌ Any line starting with "Alliances"
+    For each selected update, provide them in CHRONOLOGICAL ORDER with NO TIMESTAMPS:
     
     {{
         "highlights": [
             {{
-                "summary": "Create a COMPLETE SUMMARY of the event. If Rachel is involved, weave subtle skepticism naturally into the narrative.",
+                "summary": "Create a COMPLETE SUMMARY (not truncated) that captures the full essence of this moment. Make it engaging and informative - tell the whole story in 1-2 sentences.",
                 "importance_emoji": "🔥 for high drama/strategy, ⭐ for notable moments, 📝 for interesting developments",
-                "context": "ONLY add this field if crucial context is needed. Keep it VERY brief (under 10 words)."
+                "context": "ONLY add this field if crucial context is needed that isn't obvious from the summary. Keep very brief (under 15 words). Most highlights won't need this."
             }}
-        ],
-        "haiku": {{
-            "line1": "First line - MUST NOT be 'Alliances shift' - use a specific, unique opening",
-            "line2": "Second line with EXACTLY 7 syllables", 
-            "line3": "Third line with EXACTLY 5 syllables",
-            "theme": "Brief description of what the haiku captures about the OVERALL house dynamics"
-        }}
-    }}"""
+        ]
+    }}
+    
+    CRITICAL INSTRUCTIONS:
+    - NO TIMESTAMPS - remove all time references 
+    - Create COMPLETE summaries - never truncate or cut off mid-sentence
+    - Make summaries engaging and informative - tell the full story
+    - Focus on HOUSEGUEST activities and reactions, not production/TV scheduling
+    - Present the selected highlights in CHRONOLOGICAL ORDER from earliest to latest
+    - Each summary should be a complete thought that stands alone"""
     
         try:
             response = await asyncio.to_thread(
                 self.llm_client.messages.create,
                 model=self.llm_model,
-                max_tokens=4000,
-                temperature=0.9,  # Even higher temperature for more variety
+                max_tokens=4000,  # INCREASED from 3500 to prevent cutoff
+                temperature=0.3,
                 messages=[{"role": "user", "content": prompt}]
             )
             
@@ -4797,43 +4690,12 @@ CRITICAL INSTRUCTIONS:
             try:
                 highlights_data = self._parse_llm_response(response.content[0].text)
                 
-                # POST-PROCESS: Check and fix the haiku if it starts with "Alliances"
-                if highlights_data.get('haiku'):
-                    haiku = highlights_data['haiku']
-                    line1 = haiku.get('line1', '')
-                    
-                    # If it STILL starts with "Alliances", replace it
-                    if 'alliances' in line1.lower() or line1.lower().startswith('alliance'):
-                        logger.warning(f"LLM still used 'Alliances' in haiku: {line1}")
-                        
-                        # Get main houseguests from highlights
-                        houseguests = set()
-                        for highlight in highlights_data.get('highlights', []):
-                            summary = highlight.get('summary', '')
-                            hgs = self.analyzer.extract_houseguests(summary)
-                            houseguests.update(hgs)
-                        
-                        # Create a replacement first line based on content
-                        if 'Rachel' in houseguests:
-                            haiku['line1'] = "Rachel schemes again"
-                        elif 'Mickey' in houseguests:
-                            haiku['line1'] = "Mickey plots her game"
-                        elif 'Ashley' in houseguests:
-                            haiku['line1'] = "Ashley makes her move"
-                        elif 'veto' in updates_text.lower():
-                            haiku['line1'] = "Veto changes all"
-                        else:
-                            # Generic but not "Alliances shift"
-                            haiku['line1'] = "Drama fills the house"
-                        
-                        logger.info(f"Replaced haiku opening with: {haiku['line1']}")
-                
                 if not highlights_data.get('highlights'):
                     logger.warning("No highlights in LLM response, using pattern fallback")
                     return [self._create_pattern_highlights_embed()]
                 
+                # SORT THE HIGHLIGHTS BY CHRONOLOGICAL ORDER (backup enforcement)
                 highlights = highlights_data['highlights']
-                
                 
                 embed = discord.Embed(
                     title="📹 Feed Highlights - What Just Happened",
@@ -4847,8 +4709,10 @@ CRITICAL INSTRUCTIONS:
                     importance_emoji = highlight.get('importance_emoji', '📝')
                     context = highlight.get('context', '').strip()
                     
+                    # Create field name without timestamp
                     field_name = f"{importance_emoji} Highlight {i}"
                     
+                    # Create field value
                     if context:
                         field_value = f"{summary}\n\n*{context}*"
                     else:
@@ -4857,20 +4721,6 @@ CRITICAL INSTRUCTIONS:
                     embed.add_field(
                         name=field_name,
                         value=field_value,
-                        inline=False
-                    )
-                
-                # Add the haiku if it exists
-                if highlights_data.get('haiku'):
-                    haiku = highlights_data['haiku']
-                    haiku_text = f"*{haiku.get('line1', '')}*\n*{haiku.get('line2', '')}*\n*{haiku.get('line3', '')}*"
-                    
-                    if haiku.get('theme'):
-                        haiku_text += f"\n\n_{haiku['theme']}_"
-                    
-                    embed.add_field(
-                        name="🌸 Haiku Summary",
-                        value=haiku_text,
                         inline=False
                     )
                 
@@ -5030,7 +4880,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             return self._create_enhanced_pattern_hourly_summary()
 
     def _parse_llm_response(self, response_text: str) -> dict:
-        """Parse LLM response with better JSON handling and debugging - including haiku"""
+        """Parse LLM response with better JSON handling and debugging"""
         try:
             # Clean the response first
             cleaned_text = response_text.strip()
@@ -5049,18 +4899,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
                 json_text = re.sub(r',\s*}', '}', json_text)  # Remove trailing commas
                 json_text = re.sub(r',\s*]', ']', json_text)  # Remove trailing commas in arrays
                 
-                parsed_data = json.loads(json_text)
-                
-                # Validate that we have the expected structure
-                if 'highlights' not in parsed_data:
-                    logger.warning("No highlights in parsed JSON")
-                    return {"highlights": []}
-                
-                # Log if we got a haiku
-                if 'haiku' in parsed_data:
-                    logger.info("Successfully parsed response with haiku")
-                
-                return parsed_data
+                return json.loads(json_text)
             else:
                 raise ValueError("No valid JSON found")
                 
@@ -5070,8 +4909,7 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             
             # Better fallback that doesn't show raw JSON
             return {
-                "highlights": [],  # Return empty list to trigger pattern fallback
-                "haiku": None
+                "highlights": []  # Return empty list to trigger pattern fallback
             }
     
     def _parse_text_response(self, response_text: str) -> dict:
@@ -5169,7 +5007,6 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
             logger.warning(f"Structured JSON parsing failed: {e}, creating fallback")
             return self._create_fallback_structured_response(response_text)
 
-    
     def _create_fallback_structured_response(self, response_text: str) -> dict:
         """Create fallback structured response when JSON parsing fails"""
         # Extract houseguest names from response
@@ -5570,28 +5407,9 @@ This is an HOURLY DIGEST so be comprehensive and analytical but not too wordy.""
         updates_text = "\n".join(formatted_updates)
         
         prompt = f"""You are creating "THE DAILY BUZZ" for Big Brother Day {day_number} - a Twitter-style breakdown of key house dynamics.
-
-PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-The commentary should feel like natural observation, not self-aware fan analysis.
-
-Good natural examples:
-- "Rachel wins HOH, which somehow surprises no one given the timing"
-- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-- "The veto competition seemed tailor-made for Rachel's skillset"
-- "Rachel finds herself in danger again, though history suggests this won't last long"
-
-Bad obvious examples (avoid these):
-- "Rachel wins (production interference suspected)"
-- "Rachel cries (diary room damage control incoming)"
-- Anything with parenthetical shade
-
-
-
-UPDATES FROM DAY {day_number} (chronological order):
-{updates_text}
+    
+    UPDATES FROM DAY {day_number} (chronological order):
+    {updates_text}
     
     Create a Daily Buzz in this EXACT format:
     
@@ -5835,28 +5653,7 @@ async def _create_llm_highlights_only(self) -> List[discord.Embed]:
     
     prompt = f"""You are a Big Brother superfan curating the MOST IMPORTANT moments from these {len(self.highlights_queue)} recent updates.
 
-PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-The commentary should feel like natural observation, not self-aware fan analysis.
-
-Good natural examples:
-- "Rachel wins HOH, which somehow surprises no one given the timing"
-- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-- "The veto competition seemed tailor-made for Rachel's skillset"
-- "Rachel finds herself in danger again, though history suggests this won't last long"
-
-Bad obvious examples (avoid these):
-- "Rachel wins (production interference suspected)"
-- "Rachel cries (diary room damage control incoming)"
-- Anything with parenthetical shade
-
-
 {updates_text}
-
-
-
 
 Select 6-10 updates that are TRUE HIGHLIGHTS - moments that stand out as particularly important, dramatic, funny, or game-changing.
 
@@ -5953,23 +5750,6 @@ async def _create_llm_hourly_summary_fallback(self) -> List[discord.Embed]:
         ])
         
         prompt = f"""You are a Big Brother superfan creating a comprehensive HOURLY SUMMARY.
-
-PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-The commentary should feel like natural observation, not self-aware fan analysis.
-
-Good natural examples:
-- "Rachel wins HOH, which somehow surprises no one given the timing"
-- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-- "The veto competition seemed tailor-made for Rachel's skillset"
-- "Rachel finds herself in danger again, though history suggests this won't last long"
-
-Bad obvious examples (avoid these):
-- "Rachel wins (production interference suspected)"
-- "Rachel cries (diary room damage control incoming)"
-- Anything with parenthetical shade
 
 Analyze these {len(self.hourly_queue)} updates from the past hour:
 
@@ -6464,24 +6244,6 @@ async def save_queue_state(self):
         # STEP 4: Enhanced prompt with historical context
         prompt = f"""You are a Big Brother superfan analyst with access to HISTORICAL CONTEXT creating an hourly summary for Day {current_day}.
     
-    PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-    When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-    Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-    The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-    The commentary should feel like natural observation, not self-aware fan analysis.
-    
-    Good natural examples:
-    - "Rachel wins HOH, which somehow surprises no one given the timing"
-    - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-    - "The veto competition seemed tailor-made for Rachel's skillset"
-    - "Rachel finds herself in danger again, though history suggests this won't last long"
-    
-    Bad obvious examples (avoid these):
-    - "Rachel wins (production interference suspected)"
-    - "Rachel cries (diary room damage control incoming)"
-    - Anything with parenthetical shade
-
-    
     NEW UPDATES TO ANALYZE (Day {current_day}) - IN CHRONOLOGICAL ORDER:
     {updates_text}
     
@@ -6887,24 +6649,6 @@ async def save_queue_state(self):
         hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
         
         prompt = f"""You are a Big Brother superfan creating an hourly summary.
-
-        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-        The commentary should feel like natural observation, not self-aware fan analysis.
-        
-        Good natural examples:
-        - "Rachel wins HOH, which somehow surprises no one given the timing"
-        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-        - "The veto competition seemed tailor-made for Rachel's skillset"
-        - "Rachel finds herself in danger again, though history suggests this won't last long"
-        
-        Bad obvious examples (avoid these):
-        - "Rachel wins (production interference suspected)"
-        - "Rachel cries (diary room damage control incoming)"
-        - Anything with parenthetical shade
-
     
     HOUR PERIOD: {hour_period}
     UPDATES FROM THIS HOUR ({len(updates)} total):
@@ -7016,24 +6760,6 @@ async def save_queue_state(self):
         hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
         
         prompt = f"""You are a Big Brother superfan creating an hourly summary.
-
-        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-        The commentary should feel like natural observation, not self-aware fan analysis.
-        
-        Good natural examples:
-        - "Rachel wins HOH, which somehow surprises no one given the timing"
-        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-        - "The veto competition seemed tailor-made for Rachel's skillset"
-        - "Rachel finds herself in danger again, though history suggests this won't last long"
-        
-        Bad obvious examples (avoid these):
-        - "Rachel wins (production interference suspected)"
-        - "Rachel cries (diary room damage control incoming)"
-        - Anything with parenthetical shade
-
     
     HOUR PERIOD: {hour_period}
     UPDATES FROM THIS HOUR ({len(updates)} total):
@@ -7173,24 +6899,6 @@ async def save_queue_state(self):
         hour_period = f"{hour_start.strftime('%I %p')} - {hour_end.strftime('%I %p')}"
         
         prompt = f"""Create a brief hourly summary for {hour_period}:
-
-        PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-        When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-        Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-        The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-        The commentary should feel like natural observation, not self-aware fan analysis.
-        
-        Good natural examples:
-        - "Rachel wins HOH, which somehow surprises no one given the timing"
-        - "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-        - "The veto competition seemed tailor-made for Rachel's skillset"
-        - "Rachel finds herself in danger again, though history suggests this won't last long"
-        
-        Bad obvious examples (avoid these):
-        - "Rachel wins (production interference suspected)"
-        - "Rachel cries (diary room damage control incoming)"
-        - Anything with parenthetical shade
-
     
     {updates_text}
     
@@ -9107,25 +8815,6 @@ class BBChatAnalyzer:
         
         prompt = f"""You are analyzing the COMPLETE Big Brother season data to answer this question about power.
 
-PERSONALITY NOTE: You're a strategic superfan who views Rachel as predictably dramatic and attention-seeking. 
-When Rachel appears in updates, weave subtle skepticism naturally into the narrative itself, not as add-ons.
-Write about her the way a slightly jaded superfan would - acknowledging her presence but with understated weariness.
-The shade should feel like natural commentary, not forced insertions. Never explicitly identify yourself as a superfan. 
-The commentary should feel like natural observation, not self-aware fan analysis.
-
-Good natural examples:
-- "Rachel wins HOH, which somehow surprises no one given the timing"
-- "Rachel's emotional spiral conveniently aligns with a new twist announcement"
-- "The veto competition seemed tailor-made for Rachel's skillset"
-- "Rachel finds herself in danger again, though history suggests this won't last long"
-
-Bad obvious examples (avoid these):
-- "Rachel wins (production interference suspected)"
-- "Rachel cries (diary room damage control incoming)"
-- Anything with parenthetical shade
-
-
-
 USER QUESTION: {question}
 
 CURRENT/RECENT POWER DYNAMICS (from all stored data):
@@ -10073,276 +9762,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error generating summary: {e}")
                 await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
 
-        @self.tree.command(name="wtf", description="What's happening?! Get the 5 most important things in BB right now")
-        async def wtf_slash(interaction: discord.Interaction):
-            """Get the 5 most important current events in Big Brother"""
-            try:
-                await interaction.response.defer()
-                
-                # Get recent updates (last 24 hours)
-                recent_updates = self.db.get_recent_updates(24)
-                
-                if not recent_updates:
-                    embed = discord.Embed(
-                        title="🤷 Nothing's Happening!",
-                        description="No updates in the last 24 hours. The house must be asleep!",
-                        color=0x95a5a6,
-                        timestamp=datetime.now()
-                    )
-                    await interaction.followup.send(embed=embed)
-                    return
-                
-                # Score and sort updates by importance
-                scored_updates = []
-                for update in recent_updates:
-                    importance = self.analyzer.analyze_strategic_importance(update)
-                    scored_updates.append((update, importance))
-                
-                # Sort by importance score
-                scored_updates.sort(key=lambda x: x[1], reverse=True)
-                
-                # Get top 5 most important updates
-                top_5 = scored_updates[:5]
-                
-                # Build the description with all 5 updates
-                description_parts = ["**The 5 things you need to know:**\n"]
-                
-                # Try to use LLM to reword if available
-                if self.update_batcher.llm_client:
-                    try:
-                        # Prepare updates for LLM
-                        updates_text = []
-                        for i, (update, importance) in enumerate(top_5, 1):
-                            # Calculate time ago
-                            time_ago = datetime.now() - update.pub_date
-                            if time_ago.total_seconds() < 3600:
-                                time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
-                            elif time_ago.total_seconds() < 86400:
-                                time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
-                            else:
-                                time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
-                            
-                            # Clean the text
-                            full_text = update.description if update.description and len(update.description) > len(update.title) else update.title
-                            full_text = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_text)
-                            full_text = re.sub(r'#BB\d+\s*', '', full_text)
-                            full_text = re.sub(r'#\w+\s*', '', full_text).strip()
-                            
-                            updates_text.append(f"{i}. {full_text}\n   Time: {time_str}, Importance: {importance}/10")
-                        
-                        prompt = f"""You are Chenbot, a Big Brother superfan catching up a friend on what's happening in the house.
-        
-        PERSONALITY: You're witty, strategic, and have a slight eye-roll energy about Rachel's predictable drama and production's obvious favoritism. You speak casually but knowledgeably, like you're texting a friend who missed the feeds.
-        
-        Here are the 5 most important updates from the last 24 hours:
-        
-        {chr(10).join(updates_text)}
-        
-        Rewrite these as conversational, punchy summaries for a friend. Focus on WHAT'S HAPPENING and WHY IT MATTERS.
-        
-        For each update:
-        - Make it 1-2 sentences that capture the drama/strategy/importance
-        - Use casual language ("Rachel's spiraling", "Vince is scrambling", "The house is shook")
-        - If Rachel appears, add subtle shade about production helping her
-        - Focus on game impact
-        
-        Respond with EXACTLY 5 numbered updates in this format:
-        1. [Conversational summary]
-        2. [Conversational summary]
-        3. [Conversational summary]
-        4. [Conversational summary]
-        5. [Conversational summary]"""
-        
-                        response = await asyncio.to_thread(
-                            self.update_batcher.llm_client.messages.create,
-                            model="claude-3-haiku-20240307",
-                            max_tokens=1500,
-                            temperature=0.7,
-                            messages=[{"role": "user", "content": prompt}]
-                        )
-                        
-                        response_text = response.content[0].text
-                        
-                        # Parse LLM response and combine with metadata
-                        llm_summaries = response_text.strip().split('\n')
-                        
-                        for i, (update, importance) in enumerate(top_5, 1):
-                            # Get time ago
-                            time_ago = datetime.now() - update.pub_date
-                            if time_ago.total_seconds() < 3600:
-                                time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
-                            elif time_ago.total_seconds() < 86400:
-                                time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
-                            else:
-                                time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
-                            
-                            # Find the corresponding LLM summary
-                            llm_summary = None
-                            for line in llm_summaries:
-                                if line.strip().startswith(f"{i}."):
-                                    llm_summary = line.strip()[2:].strip()  # Remove number prefix
-                                    break
-                            
-                            if not llm_summary:
-                                # Fallback to cleaned original
-                                llm_summary = update.title
-                                llm_summary = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', llm_summary)
-                                llm_summary = re.sub(r'#BB\d+\s*', '', llm_summary)
-                                llm_summary = re.sub(r'#\w+\s*', '', llm_summary).strip()
-                            
-                            description_parts.append(f"\n**{i}.** {llm_summary}")
-                            description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
-                        
-                    except Exception as e:
-                        logger.error(f"LLM processing failed: {e}, using fallback")
-                        # Fallback to pattern-based
-                        for i, (update, importance) in enumerate(top_5, 1):
-                            # Get full content and clean it
-                            full_text = update.description if update.description and len(update.description) > len(update.title) else update.title
-                            full_text = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_text)
-                            full_text = re.sub(r'#BB\d+\s*', '', full_text)
-                            full_text = re.sub(r'#\w+\s*', '', full_text).strip()
-                            
-                            # Get time ago
-                            time_ago = datetime.now() - update.pub_date
-                            if time_ago.total_seconds() < 3600:
-                                time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
-                            elif time_ago.total_seconds() < 86400:
-                                time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
-                            else:
-                                time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
-                            
-                            description_parts.append(f"\n**{i}.** {full_text}")
-                            description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
-                else:
-                    # No LLM available, use pattern-based
-                    for i, (update, importance) in enumerate(top_5, 1):
-                        # Get full content and clean it
-                        full_text = update.description if update.description and len(update.description) > len(update.title) else update.title
-                        full_text = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', full_text)
-                        full_text = re.sub(r'#BB\d+\s*', '', full_text)
-                        full_text = re.sub(r'#\w+\s*', '', full_text).strip()
-                        
-                        # Get time ago
-                        time_ago = datetime.now() - update.pub_date
-                        if time_ago.total_seconds() < 3600:
-                            time_str = f"{int(time_ago.total_seconds() / 60)}m ago"
-                        elif time_ago.total_seconds() < 86400:
-                            time_str = f"{int(time_ago.total_seconds() / 3600)}h ago"
-                        else:
-                            time_str = f"{int(time_ago.total_seconds() / 86400)}d ago"
-                        
-                        description_parts.append(f"\n**{i}.** {full_text}")
-                        description_parts.append(f"📍 *{time_str} • {importance}/10*\n")
-                
-                # Combine all parts
-                full_description = "\n".join(description_parts)
-                
-                # Only truncate if absolutely necessary (Discord limit is 4096)
-                if len(full_description) > 4090:
-                    full_description = full_description[:4087] + "..."
-                
-                # Create the embed
-                embed = discord.Embed(
-                    title="🔥 WTF is Happening in Big Brother?!",
-                    description=full_description,
-                    color=0xff1744,
-                    timestamp=datetime.now()
-                )
-                
-                embed.set_footer(text="Chenbot knows all • Updates every hour")
-                
-                await interaction.followup.send(embed=embed)
-                
-                logger.info(f"WTF command used by {interaction.user}")
-                
-            except Exception as e:
-                logger.error(f"Error in wtf command: {e}")
-                logger.error(f"Error details: {traceback.format_exc()}")
-                await interaction.followup.send("Error generating WTF summary. The house broke the bot!", ephemeral=True)
-        
-        @self.tree.command(name="haiku", description="Generate a haiku based on current Big Brother house happenings")
-        async def haiku_slash(interaction: discord.Interaction):
-            """Generate a haiku based on recent house events"""
-            try:
-                await interaction.response.defer()
-                
-                # Check if we have any updates to work with
-                if not self.update_batcher.highlights_queue and not self.update_batcher.hourly_queue:
-                    # No recent updates, create a generic BB haiku
-                    embed = discord.Embed(
-                        title="🌸 Big Brother Haiku",
-                        description="*No recent house activity to inspire poetry*",
-                        color=0x9b59b6,
-                        timestamp=datetime.now()
-                    )
-                    
-                    haiku_text = "*Cameras watching still*\n*Houseguests plotting in silence*\n*Drama waits to bloom*"
-                    embed.add_field(
-                        name="",
-                        value=haiku_text,
-                        inline=False
-                    )
-                    
-                    embed.set_footer(text="Ask for a haiku when the feeds are more active!")
-                    await interaction.followup.send(embed=embed)
-                    return
-                
-                # Use highlights queue if available, otherwise use hourly queue
-                updates_to_use = self.update_batcher.highlights_queue if self.update_batcher.highlights_queue else self.update_batcher.hourly_queue[:10]
-                
-                # Check if LLM is available
-                if self.update_batcher.llm_client:
-                    # Generate LLM-powered haiku
-                    haiku_data = await self._generate_llm_haiku(updates_to_use)
-                else:
-                    # Generate pattern-based haiku
-                    haiku_data = self._generate_pattern_haiku(updates_to_use)
-                
-                # Create the embed
-                embed = discord.Embed(
-                    title="🌸 Big Brother Haiku",
-                    color=0x9b59b6,
-                    timestamp=datetime.now()
-                )
-                
-                # Format the haiku
-                haiku_text = f"*{haiku_data['line1']}*\n*{haiku_data['line2']}*\n*{haiku_data['line3']}*"
-                
-                embed.add_field(
-                    name="",
-                    value=haiku_text,
-                    inline=False
-                )
-                
-                # Add theme/context if provided
-                if haiku_data.get('theme'):
-                    embed.add_field(
-                        name="📝 Inspired by",
-                        value=f"_{haiku_data['theme']}_",
-                        inline=False
-                    )
-                
-                # Add a fun footer
-                footers = [
-                    "Poetry meets strategy",
-                    "House drama in 17 syllables",
-                    "Expect the unexpected, even in haiku",
-                    "But first... haiku",
-                    "Friendship, loyalty, haiku",
-                    "This is Big Brother haiku"
-                ]
-                import random
-                embed.set_footer(text=random.choice(footers))
-                
-                await interaction.followup.send(embed=embed)
-                
-                logger.info(f"Haiku generated for {interaction.user}")
-                
-            except Exception as e:
-                logger.error(f"Error generating haiku: {e}")
-                await interaction.followup.send("Error generating haiku. The muses are not cooperating!", ephemeral=True)
-        
         @self.tree.command(name="setchannel", description="Set the channel for Big Brother updates")
         async def setchannel_slash(interaction: discord.Interaction, channel: discord.TextChannel):
             """Set the channel for RSS updates"""
@@ -10385,8 +9804,6 @@ class BBDiscordBot(commands.Bot):
                 ("/status", "Show bot status and statistics (Admin only)"),
                 ("/setchannel", "Set update channel (Admin only)"),
                 ("/commands", "Show this help message"),
-                ("/wtf", "What's happening?! Get the 5 most important things in BB right now"),
-                ("/haiku", "Generate a haiku based on current house happenings"),
                 ("/forcebatch", "Force send any queued updates (Admin only)"),
                 ("/testllm", "Test LLM connection (Admin only)"),
                 ("/sync", "Sync slash commands (Owner only)"),
@@ -11096,8 +10513,6 @@ class BBDiscordBot(commands.Bot):
             discord.app_commands.Choice(name="Random Zing", value="random"),
             discord.app_commands.Choice(name="Self Zing", value="self")
         ])
-
-        
         async def zing_slash(interaction: discord.Interaction, 
                             zing_type: discord.app_commands.Choice[str],
                             target: discord.Member = None):
@@ -11185,8 +10600,8 @@ class BBDiscordBot(commands.Bot):
                 
             except Exception as e:
                 logger.error(f"Error delivering zing: {e}")
-                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True) 
-        
+                await interaction.response.send_message("Error delivering zing. My circuits must be malfunctioning!", ephemeral=True)
+
         # PREDICTION SYSTEM COMMANDS
         @self.tree.command(name="createpoll", description="Create a prediction poll (Admin only)")
         @discord.app_commands.describe(
@@ -11920,260 +11335,6 @@ class BBDiscordBot(commands.Bot):
         # I'll continue with the rest of the commands in the next step...
         # For now, this should fix your immediate startup error
 
-    async def _generate_llm_haiku(self, updates: List[BBUpdate]) -> dict:
-        """Generate haiku using LLM based on recent updates"""
-        try:
-            await self.rate_limiter.wait_if_needed()
-            
-            # Extract key houseguests and events from the updates
-            all_houseguests = set()
-            key_events = []
-            
-            for update in updates[:10]:
-                # Get houseguests mentioned
-                hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
-                all_houseguests.update(hgs)
-                
-                # Capture the essence of each update
-                if len(update.title) > 20:
-                    key_events.append(update.title[:150])
-            
-            # Format for context
-            updates_text = "\n".join([f"- {update.title[:100]}" for update in updates[:10]])
-            houseguests_mentioned = ", ".join(list(all_houseguests)[:8]) if all_houseguests else "Various houseguests"
-            
-            prompt = f"""You are a Big Brother superfan poet creating a haiku about the current house happenings.
-    
-    PERSONALITY: You find Rachel's antics predictably dramatic. If she appears in the updates, weave subtle skepticism into the haiku.
-    
-    RECENT HOUSE EVENTS:
-    {updates_text}
-    
-    KEY HOUSEGUESTS INVOLVED: {houseguests_mentioned}
-    
-    Create a PROPER HAIKU (5-7-5 syllable structure) that captures what's SPECIFICALLY happening right now.
-    
-    HAIKU REQUIREMENTS:
-    - Line 1: EXACTLY 5 syllables
-    - Line 2: EXACTLY 7 syllables  
-    - Line 3: EXACTLY 5 syllables
-    - BE SPECIFIC: Use actual houseguest names when they're central to the story
-    - Mix it up: Don't always start with "Alliances" - vary your opening lines
-    - Capture the SPECIFIC drama: Is it Morgan vs Vince? Rachel's chaos? Ashley's strategy?
-    - If Rachel appears: subtle shade like "Rachel cries again" or "Drama queen at work"
-    
-    VARIETY STARTERS (5 syllables each):
-    - "[Name] schemes in darkness"
-    - "Veto changes all"
-    - "Morgan plots revenge"  
-    - "Trust crumbles like dust"
-    - "Rachel stirs the pot"
-    - "Whispers fill the house"
-    - "Power shifts tonight"
-    - "Chaos reigns supreme"
-    - "[Name] betrays [Name]"
-    - "The house divides now"
-    
-    GOOD SPECIFIC EXAMPLES:
-    "Mor-gan schemes a-lone" (5)
-    "Vin-ce and Ash-ley plot moves" (7)  
-    "Kea-nu sus-pects all" (5)
-    
-    "Ra-chel cries a-gain" (5)
-    "Pro-duc-tion loves the dra-ma" (7)
-    "View-ers roll their eyes" (5)
-    
-    "Ry-lie wins ve-to" (5)
-    "Back-door plan is now in play" (7)
-    "Mic-key sweats bul-lets" (5)
-    
-    Respond in JSON:
-    {{
-        "line1": "SPECIFIC first line with variety - use names or specific events",
-        "line2": "Second line that continues the specific story",
-        "line3": "Third line that completes this specific moment",
-        "theme": "What specific event/drama this haiku captures (e.g., 'Morgan's betrayal of Vince' not just 'betrayal')"
-    }}
-    
-    IMPORTANT: 
-    - Each haiku should tell a SPECIFIC story from these updates
-    - Use houseguest names when they're central characters
-    - Don't be generic - be about THIS moment in the house
-    - Vary your opening words - no more "Alliances shift" every time!"""
-    
-            response = await asyncio.to_thread(
-                self.llm_client.messages.create,
-                model=self.llm_model,
-                max_tokens=500,
-                temperature=0.8,  # Increased for more variety
-                messages=[{"role": "user", "content": prompt}]
-            )
-            
-            # Parse the response
-            response_text = response.content[0].text
-            
-            try:
-                json_start = response_text.find('{')
-                json_end = response_text.rfind('}') + 1
-                if json_start != -1 and json_end > json_start:
-                    json_text = response_text[json_start:json_end]
-                    haiku_data = json.loads(json_text)
-                    
-                    if all(key in haiku_data for key in ['line1', 'line2', 'line3']):
-                        return haiku_data
-            except json.JSONDecodeError:
-                pass
-            
-            # Fallback if parsing fails
-            return self._generate_pattern_haiku(updates)
-            
-        except Exception as e:
-            logger.error(f"LLM haiku generation failed: {e}")
-            return self._generate_pattern_haiku(updates)
-    
-    def _generate_pattern_haiku(self, updates: List[BBUpdate]) -> dict:
-        """Generate pattern-based haiku as fallback with more variety"""
-        import random
-        
-        # Extract houseguests and themes
-        all_houseguests = []
-        themes = []
-        
-        for update in updates[:5]:
-            hgs = self.analyzer.extract_houseguests(update.title + " " + update.description)
-            all_houseguests.extend(hgs)
-            categories = self.analyzer.categorize_update(update)
-            themes.extend(categories)
-        
-        # Remove duplicates while preserving order
-        houseguests = list(dict.fromkeys(all_houseguests))
-        
-        # Create varied haiku templates with specific names when possible
-        haiku_templates = []
-        
-        # If we have houseguests, create specific haikus
-        if houseguests:
-            hg1 = houseguests[0] if len(houseguests) > 0 else "Someone"
-            hg2 = houseguests[1] if len(houseguests) > 1 else "someone"
-            
-            # Count syllables roughly (this is approximate)
-            def count_syllables(name):
-                return max(1, len([c for c in name.lower() if c in 'aeiou']))
-            
-            # Create houseguest-specific haikus
-            if count_syllables(hg1) <= 3:
-                haiku_templates.extend([
-                    {
-                        "line1": f"{hg1} schemes alone now",
-                        "line2": "Trust dissolves like morning mist",
-                        "line3": "Game moves never stop",
-                        "theme": f"{hg1}'s strategic positioning"
-                    },
-                    {
-                        "line1": f"{hg1} versus {hg2}",
-                        "line2": "Battle lines are clearly drawn",
-                        "line3": "One must fall tonight",
-                        "theme": f"Conflict between {hg1} and {hg2}"
-                    }
-                ])
-        
-        # Theme-specific varied openers
-        if "🎯 Strategy" in themes:
-            haiku_templates.extend([
-                {
-                    "line1": "Backdoor plans form",
-                    "line2": "Whispered deals in the darkness",
-                    "line3": "Trust means nothing here",
-                    "theme": "Strategic maneuvering intensifies"
-                },
-                {
-                    "line1": "Veto changes all",
-                    "line2": "Yesterday's safety crumbles",
-                    "line3": "New targets emerge",
-                    "theme": "Power shift after veto"
-                }
-            ])
-        
-        if "💥 Drama" in themes:
-            haiku_templates.extend([
-                {
-                    "line1": "Tears flow like rivers",
-                    "line2": "Confrontation shakes the house",
-                    "line3": "Cameras capture all",
-                    "theme": "Emotional chaos erupts"
-                },
-                {
-                    "line1": "House divides in two",
-                    "line2": "No one speaks across the line",
-                    "line3": "War has been declared",
-                    "theme": "House split into factions"
-                }
-            ])
-        
-        if "🏆 Competition" in themes:
-            haiku_templates.extend([
-                {
-                    "line1": "Power shifts again",
-                    "line2": "New HOH means new dangers",
-                    "line3": "Safety is fleeting",
-                    "theme": "Competition changes everything"
-                },
-                {
-                    "line1": "Endurance tested",
-                    "line2": "One by one they fall away",
-                    "line3": "Champion stands tall",
-                    "theme": "Competition determination"
-                }
-            ])
-        
-        # Rachel-specific if she's mentioned
-        if "Rachel" in houseguests:
-            haiku_templates.extend([
-                {
-                    "line1": "Rachel cries again",
-                    "line2": "Production scrambles to help",
-                    "line3": "Twist coming soon, bet",
-                    "theme": "Rachel's predictable drama"
-                },
-                {
-                    "line1": "Drama queen at work",
-                    "line2": "Rachel's tears flood diary room",
-                    "line3": "Viewers roll their eyes",
-                    "theme": "Rachel being Rachel"
-                }
-            ])
-        
-        # More varied defaults
-        if not haiku_templates:
-            haiku_templates = [
-                {
-                    "line1": "Paranoia grows",
-                    "line2": "Everyone suspects someone",
-                    "line3": "No one sleeps tonight",
-                    "theme": "House paranoia peaks"
-                },
-                {
-                    "line1": "Deals made in dark",
-                    "line2": "Morning brings new betrayals",
-                    "line3": "Game never rests here",
-                    "theme": "Constant strategic shifts"
-                },
-                {
-                    "line1": "Jury phase begins",
-                    "line2": "Every vote matters more now",
-                    "line3": "Endgame approaches",
-                    "theme": "Game enters crucial phase"
-                },
-                {
-                    "line1": "Blindside brewing",
-                    "line2": "Target has no idea yet",
-                    "line3": "Thursday will shock",
-                    "theme": "Blindside in the works"
-                }
-            ]
-        
-        return random.choice(haiku_templates)
-    
     def signal_handler(self, signum, frame):
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.is_shutting_down = True
