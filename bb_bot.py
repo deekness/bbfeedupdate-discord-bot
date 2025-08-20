@@ -9553,133 +9553,6 @@ class BBDiscordBot(commands.Bot):
                 logger.error(f"Error in wtf command: {e}")
                 await interaction.followup.send("Error generating summary. Please try again.", ephemeral=True)
 
-        async def _create_llm_wtf_summary(self, top_updates, total_count):
-            """Create LLM-powered WTF summary"""
-            try:
-                # Format updates for LLM
-                updates_text = []
-                for i, (update, score, importance) in enumerate(top_updates, 1):
-                    time_ago = (datetime.now() - update.pub_date).total_seconds() / 3600
-                    time_str = f"{int(time_ago)}h ago" if time_ago >= 1 else f"{int(time_ago * 60)}m ago"
-                    updates_text.append(f"{i}. [{time_str}] {update.title}")
-                    if update.description and update.description != update.title:
-                        updates_text.append(f"   {update.description[:150]}")
-                
-                formatted_updates = "\n".join(updates_text)
-                
-                prompt = f"""You are a Big Brother superfan creating a "WTF is happening?" summary for someone who hasn't watched in 24 hours.
-    
-    TOP 5 MOST IMPORTANT UPDATES (last 24 hours):
-    {formatted_updates}
-    
-    Create EXACTLY 5 bullet points that capture the most important current happenings. Focus on:
-    - Current power structure (who's HOH, who's nominated)
-    - Major strategic moves or shifts
-    - Alliance dynamics and betrayals
-    - Competition results
-    - Drama or significant social developments
-    
-    Format as JSON:
-    {{
-        "bullet_points": [
-            "Concise but informative bullet point about important happening #1",
-            "Concise but informative bullet point about important happening #2",
-            "Concise but informative bullet point about important happening #3",
-            "Concise but informative bullet point about important happening #4",
-            "Concise but informative bullet point about important happening #5"
-        ],
-        "tldr": "One sentence capturing the overall vibe/direction of the house right now"
-    }}
-    
-    Make each bullet point informative but concise (1-2 sentences max). Include specific names and actions."""
-    
-                response = await asyncio.to_thread(
-                    self.update_batcher.llm_client.messages.create,
-                    model="claude-3-haiku-20240307",
-                    max_tokens=1500,
-                    temperature=0.3,
-                    messages=[{"role": "user", "content": prompt}]
-                )
-                
-                # Parse response
-                try:
-                    json_start = response.content[0].text.find('{')
-                    json_end = response.content[0].text.rfind('}') + 1
-                    json_text = response.content[0].text[json_start:json_end]
-                    data = json.loads(json_text)
-                    
-                    embed = discord.Embed(
-                        title="🤔 WTF is Happening in Big Brother?",
-                        description=f"**{data.get('tldr', 'Here are the 5 most important things from the last 24 hours')}**",
-                        color=0xff6b35,
-                        timestamp=datetime.now()
-                    )
-                    
-                    # Add bullet points with emojis
-                    bullet_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-                    for i, bullet in enumerate(data.get('bullet_points', [])[:5]):
-                        embed.add_field(
-                            name=bullet_emojis[i],
-                            value=bullet,
-                            inline=False
-                        )
-                    
-                    embed.set_footer(text=f"Based on {total_count} updates from the last 24 hours")
-                    return embed
-                    
-                except (json.JSONDecodeError, KeyError) as e:
-                    logger.warning(f"Failed to parse LLM response for WTF: {e}")
-                    return self._create_pattern_wtf_summary(top_updates, total_count)
-                    
-            except Exception as e:
-                logger.error(f"LLM WTF summary failed: {e}")
-                return self._create_pattern_wtf_summary(top_updates, total_count)
-        
-        def _create_pattern_wtf_summary(self, top_updates, total_count):
-            """Create pattern-based WTF summary"""
-            embed = discord.Embed(
-                title="🤔 WTF is Happening in Big Brother?",
-                description="**Here are the 5 most important things from the last 24 hours:**",
-                color=0xff6b35,
-                timestamp=datetime.now()
-            )
-            
-            bullet_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
-            
-            for i, (update, score, importance) in enumerate(top_updates):
-                # Clean up the title
-                title = update.title
-                title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
-                
-                # Calculate time ago
-                time_ago = (datetime.now() - update.pub_date).total_seconds() / 3600
-                if time_ago < 1:
-                    time_str = f"{int(time_ago * 60)} minutes ago"
-                elif time_ago < 24:
-                    time_str = f"{int(time_ago)} hour{'s' if int(time_ago) != 1 else ''} ago"
-                else:
-                    time_str = "yesterday"
-                
-                # Determine importance indicator
-                if importance >= 8:
-                    importance_indicator = "🔥 **HIGH IMPACT**"
-                elif importance >= 6:
-                    importance_indicator = "⚡ **Notable**"
-                else:
-                    importance_indicator = "📝"
-                
-                # Truncate if needed
-                if len(title) > 150:
-                    title = title[:147] + "..."
-                
-                embed.add_field(
-                    name=f"{bullet_emojis[i]} {importance_indicator}",
-                    value=f"{title}\n*{time_str}*",
-                    inline=False
-                )
-            
-            embed.set_footer(text=f"Based on {total_count} updates from the last 24 hours")
-            return embed
         
         # Add this test command to your setup_commands method
         @self.tree.command(name="testdailyrecap", description="Test daily recap generation (Owner only)")
@@ -11592,6 +11465,135 @@ class BBDiscordBot(commands.Bot):
                 continue
         
         return updates
+
+
+    async def _create_llm_wtf_summary(self, top_updates, total_count):
+        """Create LLM-powered WTF summary"""
+        try:
+            # Format updates for LLM
+            updates_text = []
+            for i, (update, score, importance) in enumerate(top_updates, 1):
+                time_ago = (datetime.now() - update.pub_date).total_seconds() / 3600
+                time_str = f"{int(time_ago)}h ago" if time_ago >= 1 else f"{int(time_ago * 60)}m ago"
+                updates_text.append(f"{i}. [{time_str}] {update.title}")
+                if update.description and update.description != update.title:
+                    updates_text.append(f"   {update.description[:150]}")
+            
+            formatted_updates = "\n".join(updates_text)
+            
+            prompt = f"""You are a Big Brother superfan creating a "WTF is happening?" summary for someone who hasn't watched in 24 hours.
+
+TOP 5 MOST IMPORTANT UPDATES (last 24 hours):
+{formatted_updates}
+
+Create EXACTLY 5 bullet points that capture the most important current happenings. Focus on:
+- Current power structure (who's HOH, who's nominated)
+- Major strategic moves or shifts
+- Alliance dynamics and betrayals
+- Competition results
+- Drama or significant social developments
+
+Format as JSON:
+{{
+    "bullet_points": [
+        "Concise but informative bullet point about important happening #1",
+        "Concise but informative bullet point about important happening #2",
+        "Concise but informative bullet point about important happening #3",
+        "Concise but informative bullet point about important happening #4",
+        "Concise but informative bullet point about important happening #5"
+    ],
+    "tldr": "One sentence capturing the overall vibe/direction of the house right now"
+}}
+
+Make each bullet point informative but concise (1-2 sentences max). Include specific names and actions."""
+
+            response = await asyncio.to_thread(
+                self.update_batcher.llm_client.messages.create,
+                model="claude-3-haiku-20240307",
+                max_tokens=1500,
+                temperature=0.3,
+                messages=[{"role": "user", "content": prompt}]
+            )
+            
+            # Parse response
+            try:
+                json_start = response.content[0].text.find('{')
+                json_end = response.content[0].text.rfind('}') + 1
+                json_text = response.content[0].text[json_start:json_end]
+                data = json.loads(json_text)
+                
+                embed = discord.Embed(
+                    title="🤔 WTF is Happening in Big Brother?",
+                    description=f"**{data.get('tldr', 'Here are the 5 most important things from the last 24 hours')}**",
+                    color=0xff6b35,
+                    timestamp=datetime.now()
+                )
+                
+                # Add bullet points with emojis
+                bullet_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+                for i, bullet in enumerate(data.get('bullet_points', [])[:5]):
+                    embed.add_field(
+                        name=bullet_emojis[i],
+                        value=bullet,
+                        inline=False
+                    )
+                
+                embed.set_footer(text=f"Based on {total_count} updates from the last 24 hours")
+                return embed
+                
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Failed to parse LLM response for WTF: {e}")
+                return self._create_pattern_wtf_summary(top_updates, total_count)
+                
+        except Exception as e:
+            logger.error(f"LLM WTF summary failed: {e}")
+            return self._create_pattern_wtf_summary(top_updates, total_count)
+    
+    def _create_pattern_wtf_summary(self, top_updates, total_count):
+        """Create pattern-based WTF summary"""
+        embed = discord.Embed(
+            title="🤔 WTF is Happening in Big Brother?",
+            description="**Here are the 5 most important things from the last 24 hours:**",
+            color=0xff6b35,
+            timestamp=datetime.now()
+        )
+        
+        bullet_emojis = ["1️⃣", "2️⃣", "3️⃣", "4️⃣", "5️⃣"]
+        
+        for i, (update, score, importance) in enumerate(top_updates):
+            # Clean up the title
+            title = update.title
+            title = re.sub(r'^\d{1,2}:\d{2}\s*(AM|PM)\s*PST\s*[-–]\s*', '', title)
+            
+            # Calculate time ago
+            time_ago = (datetime.now() - update.pub_date).total_seconds() / 3600
+            if time_ago < 1:
+                time_str = f"{int(time_ago * 60)} minutes ago"
+            elif time_ago < 24:
+                time_str = f"{int(time_ago)} hour{'s' if int(time_ago) != 1 else ''} ago"
+            else:
+                time_str = "yesterday"
+            
+            # Determine importance indicator
+            if importance >= 8:
+                importance_indicator = "🔥 **HIGH IMPACT**"
+            elif importance >= 6:
+                importance_indicator = "⚡ **Notable**"
+            else:
+                importance_indicator = "📝"
+            
+            # Truncate if needed
+            if len(title) > 150:
+                title = title[:147] + "..."
+            
+            embed.add_field(
+                name=f"{bullet_emojis[i]} {importance_indicator}",
+                value=f"{title}\n*{time_str}*",
+                inline=False
+            )
+        
+        embed.set_footer(text=f"Based on {total_count} updates from the last 24 hours")
+        return embed
     
     async def filter_duplicates(self, updates: List[BBUpdate]) -> List[BBUpdate]:
         """Filter out duplicate updates"""
